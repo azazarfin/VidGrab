@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VidGrab Video Downloader</title>
+  <link rel="stylesheet" href="popup.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo-area">
+        <svg class="logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="url(#logo-grad)" />
+          <path d="M2 17L12 22L22 17" stroke="url(#logo-grad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M2 12L12 17L22 12" stroke="url(#logo-grad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          <defs>
+            <linearGradient id="logo-grad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+              <stop stop-color="#a29bfe" />
+              <stop offset="1" stop-color="#6c5ce7" />
+            </linearGradient>
+          </defs>
+        </svg>
+        <span class="logo-text">VidGrab</span>
+      </div>
+      <div class="header-actions">
+        <div class="connection-status" id="connection-status" title="Connecting to backend...">
+          <span class="status-dot"></span>
+          <span class="status-text">Connecting</span>
+        </div>
+        <button class="icon-button" id="settings-btn" title="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Tab Bar -->
+    <nav class="tab-bar">
+      <button class="tab-btn active" data-tab="downloads">
+        Downloads <span class="tab-badge" id="badge-downloads">0</span>
+      </button>
+      <button class="tab-btn" data-tab="queue">
+        Queue <span class="tab-badge" id="badge-queue">0</span>
+      </button>
+      <button class="tab-btn" data-tab="history">
+        History <span class="tab-badge" id="badge-history">0</span>
+      </button>
+    </nav>
+
+    <!-- Content Panels -->
+    <main class="content-panel">
+      <!-- Downloads Panel -->
+      <section class="tab-content active" id="panel-downloads">
+        <div class="download-list" id="active-download-list">
+          <!-- Active download cards will be injected here -->
+        </div>
+        <div class="empty-state" id="downloads-empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="empty-icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          <p>No active downloads</p>
+          <span class="empty-hint">Paste a video URL below to start downloading</span>
+        </div>
+      </section>
+
+      <!-- Queue Panel -->
+      <section class="tab-content" id="panel-queue">
+        <div class="download-list" id="queue-list">
+          <!-- Queued items will be injected here -->
+        </div>
+        <div class="empty-state" id="queue-empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="empty-icon"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+          <p>Queue is empty</p>
+        </div>
+      </section>
+
+      <!-- History Panel -->
+      <section class="tab-content" id="panel-history">
+        <div class="panel-header-actions" id="history-actions" style="display: none;">
+          <button class="text-button danger" id="clear-history-btn">Clear All</button>
+        </div>
+        <div class="download-list" id="history-list">
+          <!-- History items will be injected here -->
+        </div>
+        <div class="empty-state" id="history-empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="empty-icon"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+          <p>No download history</p>
+        </div>
+      </section>
+    </main>
+
+    <!-- Quick Download Bar -->
+    <footer class="footer-bar">
+      <div class="input-group">
+        <input type="text" id="video-url-input" placeholder="Paste video URL here..." autocomplete="off">
+        <button class="action-btn secondary" id="paste-btn" title="Paste from clipboard">
+          Paste
+        </button>
+        <button class="action-btn primary" id="download-btn">
+          Download
+        </button>
+      </div>
+    </footer>
+
+    <!-- Format Selection Modal -->
+    <div class="modal-overlay" id="format-modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3 id="modal-header-title">Download Options</h3>
+          <button class="close-btn" id="modal-close-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="ffmpeg-warning" id="modal-ffmpeg-warning" style="display: none; margin-bottom: 12px; padding: 8px 12px; background: rgba(255, 192, 72, 0.15); border: 1px solid var(--warning); border-radius: 6px; font-size: 12px; color: var(--warning); line-height: 1.4;">
+            <strong>Warning:</strong> FFmpeg is not installed on the backend server. Audio extraction, video recoding, and subtitle embedding are disabled.
+          </div>
+          <!-- Single Video Content -->
+          <div id="modal-single-video-content">
+            <div class="video-preview-card">
+              <img class="preview-thumbnail" id="modal-thumbnail" src="" alt="Thumbnail">
+              <div class="preview-info">
+                <h4 class="preview-title" id="modal-title">Loading video details...</h4>
+                <p class="preview-author" id="modal-author"></p>
+                <p class="preview-duration" id="modal-duration"></p>
+              </div>
+            </div>
+            
+            <div class="form-group" id="video-title-group" style="margin-top: 10px;">
+              <label for="custom-title-input">Title</label>
+              <input type="text" id="custom-title-input" class="form-input" placeholder="Custom video title...">
+            </div>
+
+            <div class="form-group" id="video-quality-group" style="margin-top: 10px;">
+              <label for="format-select">Quality</label>
+              <select id="format-select" class="form-select">
+                <option value="bestvideo+bestaudio/best">Best Quality (Default)</option>
+                <!-- Dynamic formats will be injected here -->
+              </select>
+            </div>
+
+            <div class="form-group" id="audio-format-group" style="display: none; margin-top: 10px;">
+              <div style="display: flex; gap: 12px;">
+                <div style="flex: 1;">
+                  <label for="audio-format-select" style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; display: block; margin-bottom: 5px;">Audio Format</label>
+                  <select id="audio-format-select" class="form-select" style="width: 100%;">
+                    <option value="mp3">MP3 (320kbps)</option>
+                    <option value="m4a">M4A (AAC)</option>
+                    <option value="flac">FLAC (Lossless)</option>
+                    <option value="opus">Opus</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div class="options-grid" style="margin-top: 12px;">
+              <label class="checkbox-container">
+                <input type="checkbox" id="option-audio-only">
+                <span class="checkbox-checkmark"></span>
+                Audio Only
+              </label>
+              <label class="checkbox-container">
+                <input type="checkbox" id="option-subtitles">
+                <span class="checkbox-checkmark"></span>
+                Download Subtitles
+              </label>
+              <label class="checkbox-container">
+                <input type="checkbox" id="option-thumbnail">
+                <span class="checkbox-checkmark"></span>
+                Embed Thumbnail
+              </label>
+            </div>
+
+            <!-- Subtitle options sub-group -->
+            <div id="subtitle-options-group" style="display: none; margin-top: 12px; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+              <div class="form-group">
+                <label for="subtitle-lang-select">Subtitle Languages</label>
+                <select id="subtitle-lang-select" class="form-select" multiple style="height: 60px; width: 100%;">
+                  <!-- Dynamically populated -->
+                </select>
+                <span style="font-size: 9px; color: var(--text-muted); margin-top: 4px; display: block;">Hold Ctrl/Cmd to select multiple</span>
+              </div>
+              <div style="display: flex; gap: 12px; margin-top: 8px; align-items: center;">
+                <div style="flex: 1;">
+                  <label for="subtitle-format-select" style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; display: block; margin-bottom: 5px;">Subtitle Format</label>
+                  <select id="subtitle-format-select" class="form-select" style="width: 100%;">
+                    <option value="srt">SRT</option>
+                    <option value="vtt">VTT</option>
+                    <option value="ass">ASS</option>
+                  </select>
+                </div>
+                <div style="flex: 1; display: flex; align-items: flex-end; padding-top: 16px;">
+                  <label class="checkbox-container">
+                    <input type="checkbox" id="option-embed-subtitles">
+                    <span class="checkbox-checkmark"></span>
+                    Embed in Video
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <!-- Scheduler Options Group -->
+            <div class="scheduler-options" style="margin-top: 12px; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+              <label class="checkbox-container">
+                <input type="checkbox" id="chk-schedule-later">
+                <span class="checkbox-checkmark"></span>
+                Schedule for later
+              </label>
+              
+              <div id="schedule-inputs" style="display: none; margin-top: 10px; flex-direction: column; gap: 8px;">
+                <label for="input-schedule-time" style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase;">Download Time</label>
+                <input type="datetime-local" id="input-schedule-time" class="form-input" style="width: 100%; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); color: #fff; padding: 8px 12px; border-radius: 6px; outline: none; box-sizing: border-box;">
+                
+                <div class="preset-buttons" style="display: flex; gap: 8px; margin-top: 4px;">
+                  <button class="btn btn-secondary" id="btn-preset-tonight" style="padding: 4px 8px; font-size: 11px;" type="button">Tonight 11 PM</button>
+                  <button class="btn btn-secondary" id="btn-preset-tomorrow" style="padding: 4px 8px; font-size: 11px;" type="button">Tomorrow 6 AM</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Playlist Content -->
+          <div id="modal-playlist-content" style="display: none;">
+            <div class="playlist-preview-card" style="display: flex; gap: 12px; margin-bottom: 12px; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+              <div class="playlist-info">
+                <h4 class="playlist-title" id="playlist-title" style="margin: 0; font-size: 14px; font-weight: 600;">Playlist Title</h4>
+                <p class="playlist-meta" id="playlist-meta" style="margin: 4px 0 0 0; font-size: 12px; color: var(--text-secondary);"></p>
+              </div>
+            </div>
+            
+            <div class="playlist-actions" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+              <span class="selected-count" id="playlist-selected-count" style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">0 items selected</span>
+              <div class="action-buttons-row" style="display: flex; gap: 8px;">
+                <button class="text-button" id="playlist-select-all" style="font-size: 11px;">Select All</button>
+                <button class="text-button" id="playlist-deselect-all" style="font-size: 11px;">Deselect All</button>
+              </div>
+            </div>
+
+            <div class="playlist-entries-list" id="playlist-entries-list" style="max-height: 180px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; background: rgba(0,0,0,0.2); padding: 4px;">
+              <!-- Playlist items will be dynamically added here -->
+            </div>
+
+            <div class="playlist-settings-group" style="margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 12px;">
+              <div style="display: flex; gap: 12px;">
+                <div style="flex: 1;" id="playlist-quality-col">
+                  <label for="playlist-format-select" style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; display: block; margin-bottom: 5px;">Shared Quality</label>
+                  <select id="playlist-format-select" class="form-select" style="width: 100%;">
+                    <option value="bestvideo+bestaudio/best">Best Quality</option>
+                    <option value="1080">1080p</option>
+                    <option value="720">720p</option>
+                    <option value="480">480p</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="action-btn secondary" id="modal-cancel-btn">Cancel</button>
+          <button class="action-btn primary" id="modal-start-btn">Start Download</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Connection Error Overlay -->
+    <div class="connection-error-overlay" id="backend-error-overlay">
+      <div class="error-card" style="max-width: 340px; text-align: left; padding: 20px;">
+        <div style="text-align: center; margin-bottom: 12px;">
+          <svg class="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 8px auto;"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+          <h3 style="margin-top: 8px; margin-bottom: 4px; font-size: 18px;">Backend Offline</h3>
+          <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 0;">VidGrab requires the local backend service to be running.</p>
+        </div>
+        
+        <div style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 6px; font-size: 11px; margin-bottom: 15px; border: 1px solid rgba(255,255,255,0.06); line-height: 1.4;">
+          <strong style="display: block; margin-bottom: 4px; color: var(--text-primary);">Start the backend server:</strong>
+          <code style="display: block; font-family: monospace; word-break: break-all; color: var(--accent); margin-bottom: 8px; background: rgba(0,0,0,0.2); padding: 4px 6px; border-radius: 4px;">cd /home/azaz/AntigravityData/VideoDownloadedExtension && ./venv/bin/python -m uvicorn backend.main:app --port 8000</code>
+          <span style="color: var(--text-secondary); font-size: 10px;">Or run the installer script: <code style="font-family: monospace; background: rgba(0,0,0,0.2); padding: 1px 4px; border-radius: 2px;">./installer/install.sh</code></span>
+        </div>
+
+        <button class="action-btn primary" id="retry-backend-btn" style="width: 100%;">Retry Connection</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="../lib/api.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

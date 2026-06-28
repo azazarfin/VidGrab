@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>VidGrab Overlay Test</title>
+  <link rel="stylesheet" href="/extension/content/content.css">
+  <style>
+    body {
+      background: #141414;
+      color: #fff;
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+    }
+    .video-container {
+      position: relative;
+      width: 640px;
+      height: 360px;
+      background: #000;
+      border: 2px solid #333;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      border-radius: 6px;
+    }
+    h1 {
+      margin-bottom: 20px;
+      font-size: 24px;
+    }
+  </style>
+</head>
+<body>
+  <h1>VidGrab Floating Download Button Test</h1>
+  <div class="video-container">
+    <!-- Static mock video element to trigger the overlay -->
+    <video id="mock-video" controls src="https://www.w3schools.com/html/mov_bbb.mp4"></video>
+  </div>
+
+  <script src="/extension/content/detector.js"></script>
+  <script src="/extension/content/overlay.js"></script>
+</body>
+</html>

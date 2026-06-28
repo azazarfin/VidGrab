@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "VidGrab",
+  "version": "1.0.0",
+  "description": "Download videos from various websites using a local yt-dlp backend.",
+  "permissions": [
+    "activeTab",
+    "contextMenus",
+    "storage",
+    "notifications",
+    "cookies"
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "host_permissions": [
+    "http://localhost:*/*",
+    "http://127.0.0.1:*/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "scripts": ["background/service-worker.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/detector.js", "content/overlay.js"],
+      "css": ["content/content.css"],
+      "run_at": "document_end"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "VidGrab Video Downloader",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png"
+    }
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "vidgrab@azaz.local",
+      "strict_min_version": "109.0"
+    }
+  }
+}
