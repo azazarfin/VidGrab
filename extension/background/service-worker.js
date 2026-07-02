@@ -9,6 +9,11 @@ const DEFAULT_SETTINGS = {
   notificationPreference: "both",
 };
 
+// Listen for tab removals to clean up tab-specific detected videos
+chrome.tabs?.onRemoved?.addListener((tabId) => {
+  chrome.storage.local.remove(`detected_videos_${tabId}`);
+});
+
 // Initialize settings and context menus on install
 chrome.runtime.onInstalled.addListener(() => {
   console.log("VidGrab Service Worker installed.");
@@ -23,6 +28,14 @@ chrome.runtime.onInstalled.addListener(() => {
     }
     if (Object.keys(updates).length > 0) {
       chrome.storage.local.set(updates);
+    }
+  });
+
+  // Clear any old detected video keys on startup/install
+  chrome.storage.local.get(null, (items) => {
+    const keysToRemove = Object.keys(items).filter(k => k.startsWith("detected_videos_"));
+    if (keysToRemove.length > 0) {
+      chrome.storage.local.remove(keysToRemove);
     }
   });
 
@@ -157,13 +170,31 @@ function showNotification(id, title, message, contextMessage = "", buttons = [])
 
 // --- Handle messages from content scripts ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === "video_count") {
-    // Update badge with number of detected videos on the active tab
-    const count = message.count || 0;
+  if (message.type === "video_detected") {
+    const newVideos = message.videos || [];
     if (sender.tab && sender.tab.id) {
-      const text = count > 0 ? String(count) : "";
-      chrome.action.setBadgeText({ text, tabId: sender.tab.id });
-      chrome.action.setBadgeBackgroundColor({ color: "#7C6BF0", tabId: sender.tab.id });
+      const tabId = sender.tab.id;
+      const storageKey = `detected_videos_${tabId}`;
+      
+      chrome.storage.local.get([storageKey], (result) => {
+        const accumulated = result[storageKey] || [];
+        const updated = [...accumulated];
+        
+        newVideos.forEach(newVid => {
+          if (!updated.some(v => v.url === newVid.url)) {
+            updated.push(newVid);
+          }
+        });
+
+        // Update badge count
+        const total = updated.length;
+        const text = total > 0 ? String(total) : "";
+        chrome.action.setBadgeText({ text, tabId: tabId });
+        chrome.action.setBadgeBackgroundColor({ color: "#7C6BF0", tabId: tabId });
+
+        // Save back
+        chrome.storage.local.set({ [storageKey]: updated });
+      });
     }
   } else if (message.type === "download_request") {
     // Triggered from the floating overlay button on a page (legacy quick download)

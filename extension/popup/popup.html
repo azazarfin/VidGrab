@@ -41,6 +41,9 @@
       <button class="tab-btn active" data-tab="downloads">
         Downloads <span class="tab-badge" id="badge-downloads">0</span>
       </button>
+      <button class="tab-btn" data-tab="detected">
+        Detected <span class="tab-badge" id="badge-detected">0</span>
+      </button>
       <button class="tab-btn" data-tab="queue">
         Queue <span class="tab-badge" id="badge-queue">0</span>
       </button>
@@ -60,6 +63,31 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="empty-icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
           <p>No active downloads</p>
           <span class="empty-hint">Paste a video URL below to start downloading</span>
+        </div>
+      </section>
+
+      <!-- Detected Panel -->
+      <section class="tab-content" id="panel-detected">
+        <div class="panel-header-actions" id="detected-actions" style="display: none; justify-content: space-between; align-items: center; padding: 6px 8px; background: rgba(255,255,255,0.02); border-radius: 6px; margin-bottom: 8px; border: 1px solid rgba(255,255,255,0.04);">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <label class="checkbox-container" style="margin: 0; padding-left: 20px;">
+              <input type="checkbox" id="detected-select-all">
+              <span class="checkbox-checkmark"></span>
+            </label>
+            <span id="detected-selected-count" style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">0 selected</span>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="text-button" id="detected-download-btn" style="color: var(--accent);" disabled>Download</button>
+            <button class="text-button danger" id="detected-remove-btn" disabled>Remove</button>
+          </div>
+        </div>
+        <div class="download-list" id="detected-list">
+          <!-- Detected video cards will be injected here -->
+        </div>
+        <div class="empty-state" id="detected-empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="empty-icon"><path d="M15 10l5 5-5 5M4 4v7a4 4 0 004 4h12"></path></svg>
+          <p>No videos detected on this tab</p>
+          <span class="empty-hint">Play a video or navigate to a video page to detect.</span>
         </div>
       </section>
 
@@ -127,6 +155,16 @@
             <div class="form-group" id="video-title-group" style="margin-top: 10px;">
               <label for="custom-title-input">Title</label>
               <input type="text" id="custom-title-input" class="form-input" placeholder="Custom video title...">
+            </div>
+
+            <div class="form-group" id="download-dir-group" style="margin-top: 10px;">
+              <label for="modal-download-dir-input">Download Path (Optional)</label>
+              <input type="text" id="modal-download-dir-input" class="form-input" placeholder="Leave empty for default folder...">
+            </div>
+
+            <div class="form-group" id="output-template-group" style="margin-top: 10px;">
+              <label for="modal-output-template-input">Output Filename Template</label>
+              <input type="text" id="modal-output-template-input" class="form-input" placeholder="%(title)s.%(ext)s">
             </div>
 
             <div class="form-group" id="video-quality-group" style="margin-top: 10px;">
@@ -239,15 +277,19 @@
             </div>
 
             <div class="playlist-settings-group" style="margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 12px;">
-              <div style="display: flex; gap: 12px;">
+              <div style="display: flex; gap: 12px; flex-direction: column;">
                 <div style="flex: 1;" id="playlist-quality-col">
                   <label for="playlist-format-select" style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; display: block; margin-bottom: 5px;">Shared Quality</label>
                   <select id="playlist-format-select" class="form-select" style="width: 100%;">
                     <option value="bestvideo+bestaudio/best">Best Quality</option>
-                    <option value="1080">1080p</option>
-                    <option value="720">720p</option>
-                    <option value="480">480p</option>
+                    <option value="bestvideo[height<=?1080]+bestaudio/best">1080p</option>
+                    <option value="bestvideo[height<=?720]+bestaudio/best">720p</option>
+                    <option value="bestvideo[height<=?480]+bestaudio/best">480p</option>
                   </select>
+                </div>
+                <div style="flex: 1; margin-top: 10px;">
+                  <label for="playlist-download-dir-input" style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; display: block; margin-bottom: 5px;">Download Path (Optional)</label>
+                  <input type="text" id="playlist-download-dir-input" class="form-input" style="width: 100%;" placeholder="Leave empty for default folder...">
                 </div>
               </div>
             </div>
@@ -256,6 +298,43 @@
         <div class="modal-footer">
           <button class="action-btn secondary" id="modal-cancel-btn">Cancel</button>
           <button class="action-btn primary" id="modal-start-btn">Start Download</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Batch Download Modal -->
+    <div class="modal-overlay" id="batch-modal">
+      <div class="modal-card" style="max-height: 320px;">
+        <div class="modal-header">
+          <h3 class="modal-header-title">Batch Download Options</h3>
+          <button class="close-btn" id="batch-modal-close-btn">&times;</button>
+        </div>
+        <div class="modal-body" style="padding: 12px 16px;">
+          <div class="form-group" style="margin-top: 5px;">
+            <label for="batch-quality-select" style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; display: block; margin-bottom: 5px;">Shared Quality</label>
+            <select id="batch-quality-select" class="form-select" style="width: 100%;">
+              <option value="bestvideo+bestaudio/best">Best Quality (Default)</option>
+              <option value="bestvideo[height<=?1080]+bestaudio/best">1080p</option>
+              <option value="bestvideo[height<=?720]+bestaudio/best">720p</option>
+              <option value="bestvideo[height<=?480]+bestaudio/best">480p</option>
+              <option value="bestvideo[height<=?360]+bestaudio/best">360p</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin-top: 10px;">
+            <label for="batch-download-dir-input" style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; display: block; margin-bottom: 5px;">Download Path (Optional)</label>
+            <input type="text" id="batch-download-dir-input" class="form-input" style="width: 100%;" placeholder="Leave empty for default folder...">
+          </div>
+          <div class="options-grid" style="margin-top: 15px;">
+            <label class="checkbox-container">
+              <input type="checkbox" id="batch-option-audio-only">
+              <span class="checkbox-checkmark"></span>
+              Audio Only
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer" style="padding: 12px 16px;">
+          <button class="action-btn secondary" id="batch-modal-cancel-btn">Cancel</button>
+          <button class="action-btn primary" id="batch-modal-start-btn">Start Downloads</button>
         </div>
       </div>
     </div>

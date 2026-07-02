@@ -38,6 +38,7 @@ class DownloadRequest(BaseModel):
     scheduled_at: Optional[str] = None
     extra_args: Optional[Dict[str, Any]] = None
     duration: Optional[int] = None
+    download_dir: Optional[str] = None
 
 class DownloadTask(BaseModel):
     id: str
@@ -137,7 +138,8 @@ class QueueManager:
         cookies: Optional[List[Dict[str, Any]]] = None,
         scheduled_at: Optional[str] = None,
         extra_args: Optional[Dict[str, Any]] = None,
-        duration: Optional[int] = None
+        duration: Optional[int] = None,
+        download_dir: Optional[str] = None
     ) -> str:
         task_id = str(uuid4())
         created_at = datetime.now(timezone.utc).isoformat()
@@ -158,7 +160,8 @@ class QueueManager:
             "is_playlist": is_playlist,
             "output_template": output_template,
             "extra_args": extra_args,
-            "duration": duration
+            "duration": duration,
+            "download_dir": download_dir
         }
         options_json = json.dumps(options)
         
@@ -362,7 +365,7 @@ class QueueManager:
                 await asyncio.sleep(5)
 
     async def _run_task(self, task_id: str, url: str, format_id: str, config: Dict[str, Any], options: Dict[str, Any]):
-        download_dir = config.get("download_dir")
+        download_dir = options.get("download_dir") or config.get("download_dir")
         filename_template = options.get("output_template") or config.get("filename_template")
         speed_limit = config.get("speed_limit", 0)
 
@@ -506,7 +509,8 @@ async def create_download(req: DownloadRequest):
         cookies=req.cookies,
         scheduled_at=req.scheduled_at,
         extra_args=req.extra_args,
-        duration=req.duration
+        duration=req.duration,
+        download_dir=req.download_dir
     )
     return {"task_id": task_id}
 

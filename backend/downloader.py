@@ -157,6 +157,7 @@ def run_download(
         'format': format_id,
         'outtmpl': outtmpl,
         'progress_hooks': [make_progress_hook(task_id, progress_callback, is_cancelled_cb)],
+        'merge_output_format': 'mkv',
         'quiet': True,
         'no_warnings': True,
     }
@@ -201,7 +202,11 @@ def run_download(
     if postprocess_normalize_audio:
         if 'postprocessor_args' not in ydl_opts:
             ydl_opts['postprocessor_args'] = {}
-        ydl_opts['postprocessor_args']['ffmpeg'] = ['-af', 'loudnorm=I=-16:TP=-1.5:LRA=11']
+        # Apply loudnorm filter only to postprocessors that re-encode audio to avoid breaking merger stream copying.
+        # For merger, we copy video but re-encode audio to aac to allow applying the loudnorm filter.
+        ydl_opts['postprocessor_args']['merger'] = ['-c:v', 'copy', '-c:a', 'aac', '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11']
+        ydl_opts['postprocessor_args']['extractaudio'] = ['-af', 'loudnorm=I=-16:TP=-1.5:LRA=11']
+        ydl_opts['postprocessor_args']['videoconvertor'] = ['-af', 'loudnorm=I=-16:TP=-1.5:LRA=11']
         
     # Subtitle download and embed configuration
     if download_subtitles:

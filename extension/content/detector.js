@@ -32,21 +32,57 @@
     return KNOWN_VIDEO_DOMAINS.some((d) => hostname.includes(d));
   }
 
+  let lastVideosJson = "";
+
   /**
    * Scan the DOM for <video> elements.
    */
   function scanForVideos() {
     const videos = document.querySelectorAll("video");
-    const newCount = videos.length + (isKnownVideoPage() ? 1 : 0);
+    const videoDetails = [];
+    const seenUrls = new Set();
 
-    if (newCount !== detectedVideoCount) {
-      detectedVideoCount = newCount;
-      // Notify background script of detected video count
+    // Check if the page itself is a known video page
+    if (isKnownVideoPage() && !seenUrls.has(window.location.href)) {
+      seenUrls.add(window.location.href);
+      videoDetails.push({
+        url: window.location.href,
+        title: document.title || "Video Page",
+        src: window.location.href,
+        type: "page"
+      });
+    }
+
+    videos.forEach((vid, index) => {
+      if (vid.offsetWidth > 150 && vid.offsetHeight > 100) {
+        let src = vid.currentSrc || vid.src || "";
+        if (src.startsWith("blob:")) {
+          src = window.location.href;
+        }
+        if (src && !seenUrls.has(src)) {
+          seenUrls.add(src);
+          let videoTitle = document.title || "Embedded Video";
+          if (videos.length > 1) {
+            videoTitle += ` (Video ${index + 1})`;
+          }
+          videoDetails.push({
+            url: src,
+            title: videoTitle,
+            src: src,
+            type: "element"
+          });
+        }
+      }
+    });
+
+    const videosJson = JSON.stringify(videoDetails);
+    if (videosJson !== lastVideosJson) {
+      lastVideosJson = videosJson;
+      detectedVideoCount = videoDetails.length;
       try {
         chrome.runtime.sendMessage({
-          type: "video_count",
-          count: detectedVideoCount,
-          url: window.location.href,
+          type: "video_detected",
+          videos: videoDetails
         });
       } catch (e) {
         // Extension context may be invalidated

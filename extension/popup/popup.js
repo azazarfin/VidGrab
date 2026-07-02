@@ -63,6 +63,26 @@ document.addEventListener("DOMContentLoaded", () => {
   const badgeDownloads = document.getElementById("badge-downloads");
   const badgeQueue = document.getElementById("badge-queue");
   const badgeHistory = document.getElementById("badge-history");
+  const badgeDetected = document.getElementById("badge-detected");
+
+  const detectedList = document.getElementById("detected-list");
+  const detectedEmpty = document.getElementById("detected-empty");
+
+  // Batch / Selection DOM Elements
+  const detectedActions = document.getElementById("detected-actions");
+  const detectedSelectAll = document.getElementById("detected-select-all");
+  const detectedSelectedCountText = document.getElementById("detected-selected-count");
+  const detectedDownloadBtn = document.getElementById("detected-download-btn");
+  const detectedRemoveBtn = document.getElementById("detected-remove-btn");
+
+  const batchModal = document.getElementById("batch-modal");
+  const batchModalCloseBtn = document.getElementById("batch-modal-close-btn");
+  const batchModalCancelBtn = document.getElementById("batch-modal-cancel-btn");
+  const batchModalStartBtn = document.getElementById("batch-modal-start-btn");
+  const batchQualitySelect = document.getElementById("batch-quality-select");
+  const batchOptionAudioOnly = document.getElementById("batch-option-audio-only");
+
+  let selectedDetectedUrls = new Set();
   
   const videoUrlInput = document.getElementById("video-url-input");
   const pasteBtn = document.getElementById("paste-btn");
@@ -111,11 +131,17 @@ document.addEventListener("DOMContentLoaded", () => {
   const playlistFormatSelect = document.getElementById("playlist-format-select");
   const customTitleInput = document.getElementById("custom-title-input");
 
+  const modalDownloadDirInput = document.getElementById("modal-download-dir-input");
+  const modalOutputTemplateInput = document.getElementById("modal-output-template-input");
+  const playlistDownloadDirInput = document.getElementById("playlist-download-dir-input");
+  const batchDownloadDirInput = document.getElementById("batch-download-dir-input");
+
   // App State
   let tasksMap = new Map();
   let currentProbedUrl = "";
   let currentProbedData = null;
   let renderAllTimer = null;
+  let activeTabId = null;
 
   // HTML escaping to prevent XSS from untrusted video titles
   function escapeHtml(str) {
@@ -748,6 +774,10 @@ document.addEventListener("DOMContentLoaded", () => {
     formatModal.classList.remove("active");
     currentProbedUrl = "";
     currentProbedData = null;
+    if (customTitleInput) customTitleInput.value = "";
+    if (modalDownloadDirInput) modalDownloadDirInput.value = "";
+    if (modalOutputTemplateInput) modalOutputTemplateInput.value = "";
+    if (playlistDownloadDirInput) playlistDownloadDirInput.value = "";
     
     // Reset Scheduler
     if (chkScheduleLater) {
@@ -842,10 +872,15 @@ document.addEventListener("DOMContentLoaded", () => {
           options.scheduled_at = scheduledAt;
         }
 
+        const customDownloadDir = playlistDownloadDirInput ? playlistDownloadDirInput.value.trim() : "";
+
         const promises = Array.from(selectedCBs).map(cb => {
           const itemOptions = { ...options };
           if (cb.dataset.duration) {
             itemOptions.duration = parseInt(cb.dataset.duration);
+          }
+          if (customDownloadDir) {
+            itemOptions.download_dir = customDownloadDir;
           }
           return api.startDownload(
             cb.dataset.url,
@@ -871,6 +906,18 @@ document.addEventListener("DOMContentLoaded", () => {
       const audioOnly = optionAudioOnly.checked;
       const audioFormat = audioFormatSelect.value;
       const downloadSubtitles = optionSubtitles.checked;
+
+      // If it's a video-only format, automatically append +bestaudio/best so yt-dlp merges them
+      if (!audioOnly && currentProbedData && currentProbedData.formats) {
+        const selectedFormat = currentProbedData.formats.find(f => f.format_id === formatId);
+        if (selectedFormat) {
+          const hasVideo = selectedFormat.vcodec && selectedFormat.vcodec !== 'none';
+          const hasAudio = selectedFormat.acodec && selectedFormat.acodec !== 'none';
+          if (hasVideo && !hasAudio) {
+            formatId = `${formatId}+bestaudio/best`;
+          }
+        }
+      }
       
       const subtitleLangs = Array.from(subtitleLangSelect.selectedOptions).map(opt => opt.value);
       const subtitleFormat = subtitleFormatSelect.value;
@@ -886,6 +933,16 @@ document.addEventListener("DOMContentLoaded", () => {
         embed_subtitles: embedSubtitles,
         embed_thumbnail: embedThumbnail
       };
+
+      const customDownloadDir = modalDownloadDirInput ? modalDownloadDirInput.value.trim() : "";
+      const customOutputTemplate = modalOutputTemplateInput ? modalOutputTemplateInput.value.trim() : "";
+
+      if (customDownloadDir) {
+        options.download_dir = customDownloadDir;
+      }
+      if (customOutputTemplate) {
+        options.output_template = customOutputTemplate;
+      }
 
       try {
         let scheduledAt = null;
@@ -953,8 +1010,240 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // --- Detected Videos Handling ---
+  function loadDetectedVideos() {
+    if (!activeTabId) return;
+    const storageKey = `detected_videos_${activeTabId}`;
+    chrome.storage.local.get([storageKey], (result) => {
+      renderDetectedVideos(result[storageKey] || []);
+    });
+  }
+
+  function renderDetectedVideos(videos) {
+    if (!detectedList) return;
+
+    badgeDetected.textContent = videos.length;
+    detectedList.innerHTML = "";
+
+    // Sync selection Set to only contain URLs that are actually in the current list
+    const currentUrls = new Set(videos.map(v => v.url));
+    for (const url of selectedDetectedUrls) {
+      if (!currentUrls.has(url)) {
+        selectedDetectedUrls.delete(url);
+      }
+    }
+
+    if (videos.length === 0) {
+      detectedEmpty.style.display = "flex";
+      detectedList.style.display = "none";
+      if (detectedActions) detectedActions.style.display = "none";
+    } else {
+      detectedEmpty.style.display = "none";
+      detectedList.style.display = "block";
+      if (detectedActions) detectedActions.style.display = "flex";
+
+      videos.forEach((video, index) => {
+        const card = document.createElement("div");
+        card.className = "download-card";
+        card.style.paddingLeft = "8px";
+        
+        let hostname = "";
+        try {
+          hostname = new URL(video.url).hostname;
+        } catch(e) {
+          hostname = video.url;
+        }
+
+        const isChecked = selectedDetectedUrls.has(video.url);
+
+        card.innerHTML = `
+          <label class="checkbox-container" style="margin: 0; padding-left: 16px; align-self: center; width: 16px; height: 16px;">
+            <input type="checkbox" class="detected-item-checkbox" data-url="${escapeHtml(video.url)}" ${isChecked ? 'checked' : ''}>
+            <span class="checkbox-checkmark" style="left: 0;"></span>
+          </label>
+          <img class="card-thumbnail" src="../icons/icon128.png" alt="Thumbnail">
+          <div class="card-content">
+            <div class="card-title" title="${escapeHtml(video.title)}">${escapeHtml(video.title)}</div>
+            <div class="card-meta">
+              <span class="card-status-badge complete" style="background: rgba(124, 107, 240, 0.15); color: #9b8fff; border-color: rgba(124, 107, 240, 0.3);">
+                Detected
+              </span>
+              <span class="meta-details" style="text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 160px;" title="${escapeHtml(video.url)}">
+                ${escapeHtml(hostname)}
+              </span>
+              <div class="card-actions">
+                <button class="icon-button download-detected-btn" title="Download Video">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+
+        const checkbox = card.querySelector(".detected-item-checkbox");
+        checkbox.addEventListener("change", () => {
+          if (checkbox.checked) {
+            selectedDetectedUrls.add(video.url);
+          } else {
+            selectedDetectedUrls.delete(video.url);
+          }
+          updateDetectedSelectionUI(videos);
+        });
+
+        const downloadBtn = card.querySelector(".download-detected-btn");
+        downloadBtn.addEventListener("click", () => {
+          triggerProbe(video.url);
+        });
+
+        detectedList.appendChild(card);
+      });
+    }
+
+    updateDetectedSelectionUI(videos);
+  }
+
+  function updateDetectedSelectionUI(videos) {
+    if (!detectedSelectedCountText) return;
+    detectedSelectedCountText.textContent = `${selectedDetectedUrls.size} selected`;
+    
+    const hasSelection = selectedDetectedUrls.size > 0;
+    detectedDownloadBtn.disabled = !hasSelection;
+    detectedRemoveBtn.disabled = !hasSelection;
+
+    if (videos.length > 0 && videos.every(v => selectedDetectedUrls.has(v.url))) {
+      detectedSelectAll.checked = true;
+    } else {
+      detectedSelectAll.checked = false;
+    }
+  }
+
+  function closeBatchModal() {
+    if (batchModal) batchModal.classList.remove("active");
+    if (batchDownloadDirInput) batchDownloadDirInput.value = "";
+  }
+
+  // --- Batch Event Listeners ---
+  if (detectedSelectAll) {
+    detectedSelectAll.addEventListener("change", () => {
+      if (!activeTabId) return;
+      const storageKey = `detected_videos_${activeTabId}`;
+      chrome.storage.local.get([storageKey], (result) => {
+        const videos = result[storageKey] || [];
+        if (detectedSelectAll.checked) {
+          videos.forEach(v => selectedDetectedUrls.add(v.url));
+        } else {
+          videos.forEach(v => selectedDetectedUrls.delete(v.url));
+        }
+        
+        detectedList.querySelectorAll(".detected-item-checkbox").forEach(cb => {
+          cb.checked = detectedSelectAll.checked;
+        });
+        
+        updateDetectedSelectionUI(videos);
+      });
+    });
+  }
+
+  if (detectedRemoveBtn) {
+    detectedRemoveBtn.addEventListener("click", () => {
+      if (!activeTabId || selectedDetectedUrls.size === 0) return;
+      const storageKey = `detected_videos_${activeTabId}`;
+      chrome.storage.local.get([storageKey], (result) => {
+        const videos = result[storageKey] || [];
+        const filtered = videos.filter(v => !selectedDetectedUrls.has(v.url));
+        
+        selectedDetectedUrls.clear();
+        
+        chrome.storage.local.set({ [storageKey]: filtered });
+        
+        const total = filtered.length;
+        const text = total > 0 ? String(total) : "";
+        chrome.action.setBadgeText({ text, tabId: activeTabId });
+        chrome.action.setBadgeBackgroundColor({ color: "#7C6BF0", tabId: activeTabId });
+      });
+    });
+  }
+
+  if (detectedDownloadBtn) {
+    detectedDownloadBtn.addEventListener("click", () => {
+      if (selectedDetectedUrls.size === 0) return;
+      if (batchModal) batchModal.classList.add("active");
+    });
+  }
+
+  if (batchModalCloseBtn) batchModalCloseBtn.addEventListener("click", closeBatchModal);
+  if (batchModalCancelBtn) batchModalCancelBtn.addEventListener("click", closeBatchModal);
+
+  if (batchModalStartBtn) {
+    batchModalStartBtn.addEventListener("click", async () => {
+      const quality = batchQualitySelect.value;
+      const audioOnly = batchOptionAudioOnly.checked;
+      const customDownloadDir = batchDownloadDirInput ? batchDownloadDirInput.value.trim() : "";
+      
+      closeBatchModal();
+      
+      if (!activeTabId) return;
+      const storageKey = `detected_videos_${activeTabId}`;
+      chrome.storage.local.get([storageKey], async (result) => {
+        const videos = result[storageKey] || [];
+        const selectedVideos = videos.filter(v => selectedDetectedUrls.has(v.url));
+        
+        selectedDetectedUrls.clear();
+        renderDetectedVideos(videos);
+        
+        for (const video of selectedVideos) {
+          try {
+            let formatId = quality;
+            let options = {};
+            
+            if (audioOnly) {
+              formatId = "bestaudio/best";
+              options.audio_only = true;
+            }
+            if (customDownloadDir) {
+              options.download_dir = customDownloadDir;
+            }
+
+            const cookies = await getCookiesForUrl(video.url);
+            if (cookies) {
+              options.cookies = cookies;
+            }
+
+            await api.startDownload(
+              video.url,
+              formatId,
+              video.title,
+              null,
+              options
+            );
+          } catch (e) {
+            console.error(`Failed to start batch download for ${video.url}:`, e);
+          }
+        }
+        
+        document.querySelector('[data-tab="downloads"]').click();
+      });
+    });
+  }
+
   // --- Startup ---
   connect();
+
+  // Retrieve active tab details for Detected tab tracking
+  if (typeof chrome !== 'undefined' && chrome.tabs) {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs && tabs[0]) {
+        activeTabId = tabs[0].id;
+        loadDetectedVideos();
+      }
+    });
+
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName === "local" && activeTabId && changes[`detected_videos_${activeTabId}`]) {
+        renderDetectedVideos(changes[`detected_videos_${activeTabId}`].newValue || []);
+      }
+    });
+  }
 
   // Check for any pending video URL from the content script floating button click
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
