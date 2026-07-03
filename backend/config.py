@@ -25,6 +25,8 @@ DEFAULT_CONFIG = {
     "postprocess_codec": "none",
     "postprocess_normalize_audio": False,
     "custom_ytdlp_args": "",
+    "download_threads": 4,
+    "gpu_accelerated_conversion": False,
 }
 
 class ConfigModel(BaseModel):
@@ -41,6 +43,8 @@ class ConfigModel(BaseModel):
     postprocess_codec: str = Field(default=DEFAULT_CONFIG["postprocess_codec"])
     postprocess_normalize_audio: bool = Field(default=DEFAULT_CONFIG["postprocess_normalize_audio"])
     custom_ytdlp_args: str = Field(default=DEFAULT_CONFIG["custom_ytdlp_args"])
+    download_threads: int = Field(default=DEFAULT_CONFIG["download_threads"], ge=1, le=32)
+    gpu_accelerated_conversion: bool = Field(default=DEFAULT_CONFIG["gpu_accelerated_conversion"])
 
 router = APIRouter(prefix="/config", tags=["config"])
 

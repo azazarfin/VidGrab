@@ -372,10 +372,18 @@ document.addEventListener("DOMContentLoaded", () => {
       cancelBtn.addEventListener("click", () => api.cancelDownload(task.id));
     }
     
-    const retryBtn = card.querySelector(".retry-btn");
-    if (retryBtn) {
-      retryBtn.addEventListener("click", () => api.retryDownload(task.id));
-    }
+     const retryBtn = card.querySelector(".retry-btn");
+     if (retryBtn) {
+       retryBtn.addEventListener("click", async () => {
+         let cookies = null;
+         try {
+           cookies = await getCookiesForUrl(task.url);
+         } catch (err) {
+           console.warn("Failed to get cookies on retry:", err);
+         }
+         api.retryDownload(task.id, cookies);
+       });
+     }
 
     const deleteBtn = card.querySelector(".delete-btn");
     if (deleteBtn) {

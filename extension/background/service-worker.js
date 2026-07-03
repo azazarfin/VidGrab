@@ -330,7 +330,17 @@ chrome.notifications.onButtonClicked.addListener(async (notificationId, buttonIn
     }
   } else if (status === "failure" && buttonIndex === 0) {
     try {
-      await self.vidGrabAPI.retryDownload(taskId);
+      let cookies = null;
+      try {
+        const downloads = await self.vidGrabAPI.listDownloads();
+        const task = downloads.find(d => d.id === taskId);
+        if (task && task.url) {
+          cookies = await getCookiesForUrl(task.url);
+        }
+      } catch (err) {
+        console.warn("Failed to get cookies on retry via notification:", err);
+      }
+      await self.vidGrabAPI.retryDownload(taskId, cookies);
       chrome.notifications.clear(notificationId);
     } catch (err) {
       console.error("Failed to retry download via notification:", err);

@@ -14,6 +14,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const inputFilenameTemplate = document.getElementById("input-filename-template");
   const selectDefaultQuality = document.getElementById("select-default-quality");
   const selectDefaultFormat = document.getElementById("select-default-format");
+  const inputDownloadThreads = document.getElementById("input-download-threads");
+  const downloadThreadsValue = document.getElementById("download-threads-value");
   
   // DOM Elements - SponsorBlock settings
   const chkSponsorblockEnabled = document.getElementById("chk-sponsorblock-enabled");
@@ -24,6 +26,8 @@ document.addEventListener("DOMContentLoaded", () => {
   // DOM Elements - Postprocessing settings
   const selectPostprocessCodec = document.getElementById("select-postprocess-codec");
   const chkPostprocessNormalize = document.getElementById("chk-postprocess-normalize");
+  const chkGpuAccelerated = document.getElementById("chk-gpu-accelerated");
+  const gpuConversionSection = document.getElementById("gpu-conversion-section");
   
   // DOM Elements - Advanced settings
   const inputBackendUrl = document.getElementById("input-backend-url");
@@ -110,6 +114,25 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // --- Dynamic Postprocessing GPU Section ---
+  selectPostprocessCodec.addEventListener("change", () => {
+    toggleGpuSection();
+  });
+
+  function toggleGpuSection() {
+    if (selectPostprocessCodec.value === "mp4") {
+      gpuConversionSection.style.display = "flex";
+    } else {
+      gpuConversionSection.style.display = "none";
+      chkGpuAccelerated.checked = false;
+    }
+  }
+
+  // Update thread slider text
+  inputDownloadThreads.addEventListener("input", (e) => {
+    downloadThreadsValue.textContent = e.target.value;
+  });
+
   // --- Load Settings ---
   async function loadSettings() {
     showStatus("Loading settings...", "");
@@ -187,11 +210,14 @@ document.addEventListener("DOMContentLoaded", () => {
   function populateBackendSettings(config) {
     if (!config) return;
     
+    // General
     inputDownloadDir.value = config.download_dir || "";
     inputMaxConcurrent.value = config.max_concurrent || 3;
     inputFilenameTemplate.value = config.filename_template || "";
     selectDefaultQuality.value = config.default_quality || "1080";
     selectDefaultFormat.value = config.default_format || "";
+    inputDownloadThreads.value = config.download_threads || 4;
+    downloadThreadsValue.textContent = inputDownloadThreads.value;
     
     if (chkAutoUpdateYtdlp) {
       chkAutoUpdateYtdlp.checked = config.auto_update_ytdlp || false;
@@ -210,6 +236,8 @@ document.addEventListener("DOMContentLoaded", () => {
     // Post-processing
     selectPostprocessCodec.value = config.postprocess_codec || "none";
     chkPostprocessNormalize.checked = config.postprocess_normalize_audio || false;
+    chkGpuAccelerated.checked = config.gpu_accelerated_conversion || false;
+    toggleGpuSection();
     
     // Speed limit
     const speed = config.speed_limit || 0;
@@ -355,7 +383,9 @@ document.addEventListener("DOMContentLoaded", () => {
       sponsorblock_mode: selectSponsorblockMode.value,
       postprocess_codec: selectPostprocessCodec.value,
       postprocess_normalize_audio: chkPostprocessNormalize.checked,
-      custom_ytdlp_args: inputCustomYtdlpArgs ? inputCustomYtdlpArgs.value.trim() : ""
+      custom_ytdlp_args: inputCustomYtdlpArgs ? inputCustomYtdlpArgs.value.trim() : "",
+      download_threads: parseInt(inputDownloadThreads.value) || 4,
+      gpu_accelerated_conversion: chkGpuAccelerated.checked
     };
     
     try {

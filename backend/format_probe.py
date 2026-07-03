@@ -54,10 +54,19 @@ def _run_probe(url: str) -> Dict[str, Any]:
         'skip_download': True,
         'quiet': True,
         'no_warnings': True,
+        'js_runtimes': {'deno': {'path': None}, 'node': {'path': None}},
+        'remote_components': ['ejs:github'],
     }
+    # Read cookies directly from Brave for authenticated video probing
+    try:
+        ydl_opts['cookiesfrombrowser'] = ('brave', '/home/azaz/.var/app/com.brave.Browser/config/BraveSoftware/Brave-Browser')
+    except Exception:
+        pass
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         try:
             info = ydl.extract_info(url, download=False)
+            if info is None:
+                raise ValueError("Failed to extract video information (returned None)")
             return info
         except Exception as e:
             logger.error(f"yt-dlp extraction failed for {url}: {e}")

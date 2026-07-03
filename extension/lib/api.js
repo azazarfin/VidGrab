@@ -98,8 +98,8 @@ class VidGrabAPI extends EventTarget {
     return this._request(`/downloads/${taskId}`, "DELETE");
   }
 
-  async retryDownload(taskId) {
-    return this._request(`/downloads/${taskId}/retry`, "POST");
+  async retryDownload(taskId, cookies = null) {
+    return this._request(`/downloads/${taskId}/retry`, "POST", { cookies });
   }
 
   async openFolder(taskId) {

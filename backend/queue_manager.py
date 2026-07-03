@@ -8,7 +8,7 @@ import subprocess
 from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Dict, Any, List, Optional
-from fastapi import WebSocket, APIRouter, HTTPException
+from fastapi import WebSocket, APIRouter, HTTPException, Request
 from pydantic import BaseModel
 import aiosqlite
 
@@ -39,6 +39,9 @@ class DownloadRequest(BaseModel):
     extra_args: Optional[Dict[str, Any]] = None
     duration: Optional[int] = None
     download_dir: Optional[str] = None
+
+class RetryRequest(BaseModel):
+    cookies: Optional[List[Dict[str, Any]]] = None
 
 class DownloadTask(BaseModel):
     id: str
@@ -139,7 +142,8 @@ class QueueManager:
         scheduled_at: Optional[str] = None,
         extra_args: Optional[Dict[str, Any]] = None,
         duration: Optional[int] = None,
-        download_dir: Optional[str] = None
+        download_dir: Optional[str] = None,
+        user_agent: Optional[str] = None
     ) -> str:
         task_id = str(uuid4())
         created_at = datetime.now(timezone.utc).isoformat()
@@ -161,7 +165,8 @@ class QueueManager:
             "output_template": output_template,
             "extra_args": extra_args,
             "duration": duration,
-            "download_dir": download_dir
+            "download_dir": download_dir,
+            "user_agent": user_agent
         }
         options_json = json.dumps(options)
         
@@ -376,6 +381,9 @@ class QueueManager:
         postprocess_codec = config.get("postprocess_codec", "none")
         postprocess_normalize_audio = config.get("postprocess_normalize_audio", False)
         custom_ytdlp_args = config.get("custom_ytdlp_args", "")
+        download_threads = config.get("download_threads", 4)
+        gpu_accelerated_conversion = config.get("gpu_accelerated_conversion", False)
+        user_agent = options.get("user_agent")
 
         # Retrieve and write cookies if present
         cookies = self.task_cookies.pop(task_id, None)
@@ -415,7 +423,10 @@ class QueueManager:
                 postprocess_codec=postprocess_codec,
                 postprocess_normalize_audio=postprocess_normalize_audio,
                 custom_args_str=custom_ytdlp_args,
-                extra_args=options.get("extra_args")
+                download_threads=download_threads,
+                gpu_accelerated_conversion=gpu_accelerated_conversion,
+                extra_args=options.get("extra_args"),
+                user_agent=user_agent
             )
             
             filepath = result.get("filepath")
@@ -490,7 +501,8 @@ queue_manager = QueueManager()
 
 # REST Endpoints for Downloads
 @router.post("", response_model=Dict[str, str])
-async def create_download(req: DownloadRequest):
+async def create_download(req: DownloadRequest, request: Request):
+    user_agent = request.headers.get("user-agent")
     task_id = await queue_manager.enqueue(
         url=req.url,
         format_id=req.format_id,
@@ -510,7 +522,8 @@ async def create_download(req: DownloadRequest):
         scheduled_at=req.scheduled_at,
         extra_args=req.extra_args,
         duration=req.duration,
-        download_dir=req.download_dir
+        download_dir=req.download_dir,
+        user_agent=user_agent
     )
     return {"task_id": task_id}
 
@@ -587,7 +600,10 @@ async def list_downloads(status: Optional[str] = None):
             return [DownloadTask(**dict(row)) for row in rows]
 
 @router.post("/{task_id}/retry", response_model=Dict[str, str])
-async def retry_download(task_id: str):
+async def retry_download(task_id: str, req: RetryRequest, request: Request):
+    user_agent = request.headers.get("user-agent")
+    if req.cookies:
+        queue_manager.task_cookies[task_id] = req.cookies
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM downloads WHERE id = ?", (task_id,)) as cursor:
@@ -599,10 +615,19 @@ async def retry_download(task_id: str):
             if task_dict["status"] not in ("failed", "cancelled"):
                 raise HTTPException(status_code=400, detail="Only failed or cancelled downloads can be retried")
 
+            # Extract options and update user_agent if present
+            try:
+                opts = json.loads(task_dict.get("download_options") or "{}")
+                if user_agent:
+                    opts["user_agent"] = user_agent
+                options_json = json.dumps(opts)
+            except Exception:
+                options_json = task_dict.get("download_options")
+
             # Update status back to queued in database
             await db.execute(
-                "UPDATE downloads SET status = ?, error_message = NULL, progress = 0.0, speed = 0.0, eta = NULL WHERE id = ?",
-                ("queued", task_id)
+                "UPDATE downloads SET status = ?, error_message = NULL, progress = 0.0, speed = 0.0, eta = NULL, download_options = ? WHERE id = ?",
+                ("queued", options_json, task_id)
             )
             await db.commit()
 
@@ -619,7 +644,7 @@ async def retry_download(task_id: str):
         "file_size": None,
         "format_selected": task_dict["format_selected"],
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "download_options": task_dict.get("download_options")
+        "download_options": options_json
     }
 
     # Broadcast task queued event

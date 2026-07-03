@@ -91,6 +91,15 @@
                 <input type="text" id="input-filename-template" class="form-input" placeholder="%(title)s.%(ext)s">
               </div>
             </div>
+            
+            <div class="form-group" style="margin-top: 15px;">
+              <label for="input-download-threads">Concurrent Connections Per Download</label>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <input type="range" id="input-download-threads" min="1" max="16" value="4" style="flex: 1;">
+                <span id="download-threads-value" style="font-family: monospace; font-weight: 600; min-width: 25px; text-align: center;">4</span>
+              </div>
+              <span class="input-hint">Number of simultaneous connections per file to boost download speed.</span>
+            </div>
           </div>
 
           <div class="card">
@@ -192,6 +201,17 @@
                 <option value="mkv">Convert to MKV (Matroska container)</option>
                 <option value="webm">Convert to WebM (VP9 / Opus web format)</option>
               </select>
+            </div>
+            
+            <div class="switch-row" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255, 255, 255, 0.05);" id="gpu-conversion-section">
+              <div class="switch-text">
+                <label for="chk-gpu-accelerated" class="switch-title">Hardware Accelerated Encoding</label>
+                <span class="switch-desc">Use dedicated GPU (NVENC) to forcefully encode web-playable MP4s quickly. Only applies when converting to MP4.</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="chk-gpu-accelerated">
+                <span class="slider round"></span>
+              </label>
             </div>
           </div>
 
