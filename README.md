@@ -2,6 +2,10 @@
 
 VidGrab is a premium, local-first video downloader extension for Google Chrome and Mozilla Firefox. It is powered by a high-performance Python backend wrapping `yt-dlp` and `ffmpeg`, providing a unified queue manager, download history, automated SponsorBlock segment cutting, subtitles/thumbnail integration, custom command-line arguments, and schedule-for-later planning.
 
+## Desktop companion roadmap
+
+A standalone download-manager app is planned for **Linux and Windows first**, with macOS following. See [the implementation plan](docs/PLAN.md), [target architecture](docs/ARCHITECTURE.md), and [HANDOFF.md](HANDOFF.md) to continue development across agents or devices. The desktop app is not implemented yet; the setup below describes the existing extension/backend.
+
 ---
 
 ## 🏗️ Architecture Overview
