@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, Callable, Optional, List
 import yt_dlp
 from backend.sanitizer import sanitize_text
+from backend.runtime import RuntimeConfig
 
 logger = logging.getLogger("vidgrab.downloader")
 
@@ -140,6 +141,7 @@ def run_download(
     download_dir: str,
     filename_template: str,
     progress_callback: Callable[[str, Dict[str, Any]], None],
+    runtime: RuntimeConfig,
     speed_limit: int = 0,
     cookies_file_path: str = None,
     is_cancelled_cb: Optional[Callable[[], bool]] = None,
@@ -165,11 +167,9 @@ def run_download(
 ) -> Dict[str, Any]:
     """Synchronous function to execute the yt-dlp download. Run inside a thread."""
     
-    # Expand and ensure download directory exists
-    out_dir = Path(download_dir).expanduser()
+    # Recheck at execution time, including paths restored from a legacy queue.
+    out_dir, outtmpl = runtime.validate_output(download_dir, filename_template)
     out_dir.mkdir(parents=True, exist_ok=True)
-    
-    outtmpl = str(out_dir / filename_template)
     
     postprocessors = []
     
@@ -200,7 +200,7 @@ def run_download(
         'no_warnings': False,
         'logger': YtDlpLogger(),
         'js_runtimes': {'deno': {'path': None}, 'node': {'path': None}},
-        'remote_components': ['ejs:github'],
+        'remote_components': [],
     }
     
     if user_agent:
@@ -225,6 +225,10 @@ def run_download(
             else:
                 ydl_opts[k] = v
     
+    # Enforce the injected cache/component policy after merging legacy options.
+    ydl_opts['remote_components'] = []
+    ydl_opts['cachedir'] = str(runtime.temp_dir / 'yt-dlp-cache')
+
     if download_threads > 1:
         ydl_opts['concurrent_fragment_downloads'] = download_threads
 

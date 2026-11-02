@@ -42,12 +42,14 @@ graph TD
 - **SponsorBlock Integration**: Cut out sponsors, intros, outros, or self-promotions from YouTube videos automatically during download.
 - **Cookie Jar Forwarding**: Securely forwards active browser cookies to download age-gated, private, or member-only videos.
 - **Task Scheduler**: Schedule downloads to start automatically during off-peak hours (e.g. overnight).
-- **Auto-Updating Engine**: Automatically audits PyPI on startup to update `yt-dlp` to the latest version.
+- **Pinned Engine**: Uses a locked `yt-dlp` release; startup and status checks stay offline. Install a newer VidGrab release to update the engine.
 - **Custom yt-dlp Flags**: Input custom CLI flags with warning verification and sanitization blocks to filter dangerous inputs.
 
 ---
 
 ## 🚀 Installation & Setup
+
+Backend development requires Python 3.11+. For locked setup, isolated tests, runtime paths and explicit legacy-state import, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). The standalone desktop app is still planned; the commands below are the legacy extension/backend workflow. Keep the current unauthenticated backend bound to loopback only.
 
 ### 1. Run the Backend Installer
 
@@ -56,7 +58,7 @@ VidGrab provides automated install scripts to set up Python virtual environments
 #### 🐧 Linux & 🍎 macOS
 Open your terminal and run:
 ```bash
-./installer/install.sh
+bash installer/install.sh
 ```
 *On Linux, this automatically configures and starts a user-level background systemd service (`vidgrab-backend.service`).*
 
@@ -72,16 +74,16 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 
 ### 2. Load the Extension in Your Browser
 
-Before loading, you must compile the browser distribution:
+Load `extension/` directly as the unpacked Chrome source. To produce browser archives:
 ```bash
-./build.sh
+bash build.sh
 ```
-This builds and creates `.zip` extension archives in the `dist/` directory.
+This replaces all of `dist/` with browser ZIPs; it leaves no unpacked browser folders. Do not run it when preserving locally modified archives.
 
 #### Google Chrome / Chromium-based:
 1. Open Chrome and go to `chrome://extensions/`.
 2. Toggle **Developer mode** in the top right.
-3. Drag and drop the `dist/vidgrab-chrome-extension.zip` file (or extract and click **Load unpacked** pointing to the folder).
+3. Click **Load unpacked** and select `extension/`.
 
 #### Mozilla Firefox:
 1. Open Firefox and enter `about:debugging` in the address bar.

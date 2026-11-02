@@ -74,10 +74,14 @@ document.addEventListener("DOMContentLoaded", () => {
     item.addEventListener("click", () => {
       const tabId = item.dataset.tab;
       
-      navItems.forEach(nav => nav.classList.remove("active"));
+      navItems.forEach(nav => {
+        nav.classList.remove("active");
+        nav.setAttribute("aria-pressed", "false");
+      });
       tabPanels.forEach(panel => panel.classList.remove("active"));
       
       item.classList.add("active");
+      item.setAttribute("aria-pressed", "true");
       document.getElementById(tabId).classList.add("active");
       
       // Update header
@@ -201,7 +205,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (latest && hasUpdate) {
       ytdlpVersionStatus.innerHTML = `${current} &rarr; <span style="color: var(--warning);">${latest} available</span>`;
     } else if (latest) {
-      ytdlpVersionStatus.innerHTML = `${current} <span style="color: var(--success); font-size: 11px; margin-left: 5px;">(Up to date)</span>`;
+      ytdlpVersionStatus.innerHTML = `${current} <span style="color: var(--success); font-size: 12px; margin-left: 5px;">(Up to date)</span>`;
     } else {
       ytdlpVersionStatus.textContent = current;
     }
@@ -220,7 +224,8 @@ document.addEventListener("DOMContentLoaded", () => {
     downloadThreadsValue.textContent = inputDownloadThreads.value;
     
     if (chkAutoUpdateYtdlp) {
-      chkAutoUpdateYtdlp.checked = config.auto_update_ytdlp || false;
+      chkAutoUpdateYtdlp.checked = false;
+      chkAutoUpdateYtdlp.disabled = true;
     }
     
     // SponsorBlock
@@ -377,7 +382,7 @@ document.addEventListener("DOMContentLoaded", () => {
       default_quality: selectDefaultQuality.value,
       filename_template: inputFilenameTemplate.value.trim() || "%(title)s.%(ext)s",
       speed_limit: speedLimitBytes,
-      auto_update_ytdlp: chkAutoUpdateYtdlp ? chkAutoUpdateYtdlp.checked : true,
+      auto_update_ytdlp: false,
       sponsorblock_enabled: chkSponsorblockEnabled.checked,
       sponsorblock_categories: sbCategories,
       sponsorblock_mode: selectSponsorblockMode.value,

@@ -29,12 +29,16 @@ echo -e "\n${BLUE}[1/4] Auditing system dependencies...${NC}"
 # Check Python 3
 if ! command -v python3 &> /dev/null; then
     echo -e "${RED}Error: Python 3 is not installed or not in PATH.${NC}"
-    echo "Please install Python 3.10+ and try again."
+    echo "Please install Python 3.11+ and try again."
     exit 1
 fi
 
 PYTHON_VERSION=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
 echo -e "Found Python: ${GREEN}v$PYTHON_VERSION${NC}"
+if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
+    echo -e "${RED}VidGrab requires Python 3.11 or newer.${NC}"
+    exit 1
+fi
 
 # Check FFmpeg (Warning only)
 if ! command -v ffmpeg &> /dev/null; then
@@ -60,7 +64,7 @@ fi
 # 4. Install dependencies
 echo -e "\n${BLUE}[3/4] Installing Python libraries...${NC}"
 "$VENV_DIR/bin/pip" install --upgrade pip
-"$VENV_DIR/bin/pip" install -r "$PROJECT_ROOT/backend/requirements.txt"
+"$VENV_DIR/bin/pip" install --require-hashes -r "$PROJECT_ROOT/backend/requirements.txt"
 echo -e "Dependencies installed ${GREEN}successfully${NC}."
 
 # 5. Configure systemd user service (Linux only)

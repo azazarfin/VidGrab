@@ -1,6 +1,6 @@
 # VidGrab desktop-companion plan
 
-Status: planning checkpoint; the desktop application is not implemented.
+Status: P01 runtime implementation and checks are complete; its separate database-index cleanup is pending. The desktop application is not implemented.
 
 ## Approach
 
@@ -26,11 +26,12 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 
 ### [ ] P01 — Isolate runtime state and establish deterministic checks
 
-- Add `backend/runtime.py` and an injectable app factory; move database, logs, temporary files, and downloads outside the source/install tree. Replace imported `DB_PATH` globals with one injected runtime configuration.
-- Introduce explicit schema versions and migrations; import a selected legacy database through a backup-and-copy operation. Stop tracking runtime databases in a separate, reviewed cleanup without deleting local data.
-- Add `pyproject.toml`, a dependency lock, and `tests/` with temporary databases and fake extractor/clock/process boundaries. Remove startup pip upgrades; make health checks local-only.
-- Add partial-settings update coverage, bounded/non-null numeric validation, and a source/runtime compatibility check. Existing Python 3.10 setup prose must be reconciled with the selected yt-dlp version, whose current upstream minimum is 3.11.
-- Acceptance: importing the app and running tests performs no external requests, starts no downloads, and never changes `backend/vidgrab.db`. Record actual commands after adding the tooling.
+- [x] Add `backend/runtime.py` and `backend/app.py:create_app`; place runtime directories outside source/install and media outside application storage. Replace imported `DB_PATH` globals with injected configuration; isolate settings, queue, cookies, probes and connections.
+- [x] Introduce schema versions 0/1 → 2 with transactional migration, snapshots/rollback, validated explicit legacy import and newer-schema rejection.
+- [ ] Stop tracking the legacy runtime database in a separate reviewed cleanup, preserving and hash-verifying the local file.
+- [x] Add `pyproject.toml`, `uv.lock`, hashed requirements and isolated tests with fake extractor/download/clock/process boundaries. Remove startup pip mutation and remote EJS fetches; make health/status local-only.
+- [x] Cover partial settings, strict bounded/non-null integers and runtime/output-path compatibility. VidGrab's baseline is Python 3.11+; pinned yt-dlp 2026.6.9 itself declares >=3.10. Execution evidence is Linux/Python 3.14.8; do not invent Python 3.11 or Windows results.
+- [x] Acceptance evidence: import/app creation and 35 deterministic tests perform no external requests or real downloads and preserve the legacy DB. A mocked settings check passes 12 viewport/tab combinations. Exact commands/results and limits are in [DEVELOPMENT.md](DEVELOPMENT.md) and [VALIDATION.md](VALIDATION.md).
 - Suggested commit: `refactor(backend): isolate runtime state and deterministic app setup`.
 
 ### [ ] P02 — Prove packaged lifecycle and browser connection on both target OSes

@@ -20,12 +20,17 @@ Write-Host "`n[1/4] Auditing system dependencies..." -ForegroundColor Blue
 $PythonCheck = Get-Command python -ErrorAction SilentlyContinue
 if (-not $PythonCheck) {
     Write-Host "Error: Python is not installed or not in PATH." -ForegroundColor Red
-    Write-Host "Please install Python 3.10+ and try again." -ForegroundColor Red
+    Write-Host "Please install Python 3.11+ and try again." -ForegroundColor Red
     Exit 1
 }
 
 $PythonVersion = & python -c "import sys; print('.'.join(map(str, sys.version_info[:2])))"
 Write-Host "Found Python: v$PythonVersion" -ForegroundColor Green
+& python -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "VidGrab requires Python 3.11 or newer." -ForegroundColor Red
+    Exit 1
+}
 
 # Check FFmpeg (Warning only)
 $FfmpegCheck = Get-Command ffmpeg -ErrorAction SilentlyContinue
@@ -54,7 +59,7 @@ $PipPath = Join-Path $VenvDir "Scripts\pip.exe"
 $PythonExePath = Join-Path $VenvDir "Scripts\python.exe"
 
 & $PipPath install --upgrade pip
-& $PipPath install -r (Join-Path $ProjectRoot "backend\requirements.txt")
+& $PipPath install --require-hashes -r (Join-Path $ProjectRoot "backend\requirements.txt")
 Write-Host "Dependencies installed successfully." -ForegroundColor Green
 
 # 5. Configure Task Scheduler for background execution

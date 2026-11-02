@@ -33,10 +33,20 @@ Record new decisions here with date, status, rationale, and the milestone that v
 
 ## ADR-005 — Application state and release components are explicit
 
-- **Date:** 2026-11-03. **Status:** proposed, P01/P07 gates.
+- **Date:** 2026-11-03. **Status:** P01 runtime/migration/partial-settings pieces implemented and checked; reviewed index cleanup pending. Revisions and release-component ownership remain P04/P07 proposals.
 - **Decision:** keep mutable data outside the repo/install directory; use versioned migrations and partial settings with revisions. Bundle verified media tools; update complete tested component sets through the app instead of startup pip mutation.
 - **Why:** clean installations, offline use, rollback, and reproducible diagnosis require a known runtime. A tracked SQLite file is not portable user-state management.
 - **Consequence:** migration imports are explicit and backed up. Cookie-dependent jobs need fresh authorization after restart. Initial app release and engine bundle can share a release cadence; independent engine updates can follow once their compatibility gate exists.
+
+## ADR-007 — P01 runtime and compatibility boundaries
+
+- **Date:** 2026-11-03. **Status:** implemented engineering decisions, verified on Linux; not a desktop/Windows support claim.
+- **Decision:** immutable `RuntimeConfig` supplies data/media/log/temp paths; app creation is side-effect-free and each factory instance owns its services. Defaults use per-user data, never automatic source-DB import. Output settings exclude installation and application storage while retaining safe nested/absolute templates.
+- **Migrations:** SQLite `user_version` 0/1 → 2; validate schema/settings under a transaction, snapshot before upgrades, roll back failures, reject newer schemas. Explicit import snapshots/stages a selected source, includes committed WAL data, validates final-runtime paths and atomically refuses destination replacement. Filesystem hard-link support and Windows behavior still need target-native evidence.
+- **Compatibility:** VidGrab requires Python >=3.11. The selected yt-dlp 2026.6.9 metadata says >=3.10; the older plan's upstream-minimum wording was not accurate for this pin. Tests actually ran under Python 3.14.8. Runtime requirements are hashed exports of `uv.lock`; uv also installs the current TestClient's development HTTP client.
+- **Offline/update policy:** startup and health/status never contact PyPI or run pip; remote EJS downloads are disabled. Legacy update fields remain non-authoritative; the app's updater route refuses runtime mutation. Bundled matching media tools and signed updates are later gates.
+- **UI scope:** keep the incumbent settings typeface/dark-violet identity while correcting measurable accessibility/overflow issues. The Inter warning is waived only for `extension/options/options.html`, with evidence in `.impeccable/config.json`. No broad detector suppression. The cookie-copy correction was raised for approval and remains outstanding; cookie persistence behavior was not changed to match that inaccurate claim.
+- **Limits:** P01 checks literal output paths, not race-free artifact ownership or arbitrary legacy argument safety. Thread cancellation/retries/sanitizer behavior is preserved for P03/P05; authenticated clients and revision conflicts remain P04. See [VALIDATION.md](VALIDATION.md).
 
 ## ADR-006 — Git is the cross-agent/device handoff source
 

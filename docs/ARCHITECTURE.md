@@ -43,6 +43,8 @@ flowchart TD
 
 Keep moves incremental and reviewable. Do not duplicate queue/business logic in Rust or the UI. The existing vanilla extension can consume a generated classic-script client; introducing the desktop frontend does not require rewriting all extension screens.
 
+P01 implements `backend/app.py`, `backend/runtime.py`, `backend/db/` and isolated `tests/`; `backend.main:app` is now an import-safe adapter. Runtime paths and all process-local service state are injected. Existing URLs remain unversioned: `/config`, `/probe`, `/downloads`, `/ws/progress`, local `/health` and legacy `/status`. `/update-ytdlp` returns 409; it does not run pip. See [DEVELOPMENT.md](DEVELOPMENT.md) for actual interfaces. The desktop, native host, worker processes and `/v1` contract in this document remain proposals.
+
 The engine remains Python to retain yt-dlp integration. A frozen engine executable supports distinct service and worker entrypoints; worker startup must bypass server initialization. Start with PyInstaller one-folder packaging inside the application installer to avoid repeated extraction and make hidden dependencies inspectable. Bundle its support directory as resources; `externalBin` alone does not collect it.
 
 ## 3. Installation and lifecycle
@@ -169,8 +171,8 @@ Publish signatures/checksums and notices for the exact FFmpeg, yt-dlp and relate
 | `queue_manager.py` cancels an asyncio wrapper around `to_thread`, then cleans up state/files in `finally` | Owned process termination/reaping before cleanup |
 | Automatic failures requeue immediately with no deadline/backoff | Typed failures, persisted retry schedule and shared request budget |
 | `format_probe.py` accepts only a URL; caches by URL; starts independent threads for misses | Shared auth context, bounded/coalesced probes and context-aware cache |
-| `main.py` updates through pip at startup and `/status` contacts PyPI | Local health and explicit signed component updates |
-| `config.py` stores state beside source and PATCH writes all model defaults | Injectable user-state paths, migrations, partial updates and revisions |
+| Baseline `main.py` updated through pip at startup and `/status` contacted PyPI | P01 implements local health/status and disables runtime updates; signed component updates remain P07 |
+| Baseline settings lived beside source and PATCH wrote all defaults | P01 implements injected paths, migrations and partial updates; settings revisions remain P04 |
 | Browser quick-download defaults in storage can diverge from backend settings | One authoritative settings model and explicit browser-local fields |
 | Firefox manifest uses background scripts while shared code assumes `importScripts` and `chrome.alarms`; Firefox lacks `alarms` permission | Browser-specific bootstrap and permission/lifecycle tests in P02 |
 | `test_gpu.py` imports a missing module; the sanity script is network-dependent | Controlled integration fixtures and capability tests |

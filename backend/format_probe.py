@@ -2,18 +2,15 @@ import time
 import logging
 import asyncio
 from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import yt_dlp
 
 from backend.sanitizer import sanitize_text
+from backend.runtime import RuntimeConfig
 
 logger = logging.getLogger("vidgrab.format_probe")
 
-router = APIRouter(tags=["probe"])
-
-# In-memory cache for probe results: URL -> (timestamp, data)
-PROBE_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
 CACHE_TTL = 300  # 5 minutes
 
 class ProbeRequest(BaseModel):
@@ -49,7 +46,7 @@ class ProbeResponse(BaseModel):
     formats: Optional[List[FormatInfo]] = None
     subtitles: Optional[Dict[str, List[Dict[str, str]]]] = None
 
-def _run_probe(url: str) -> Dict[str, Any]:
+def _run_probe(url: str, runtime: RuntimeConfig) -> Dict[str, Any]:
     """Synchronous yt-dlp call to extract info. Run in thread executor."""
     ydl_opts = {
         'extract_flat': 'in_playlist',  # Don't resolve playlist entries fully immediately
@@ -57,7 +54,8 @@ def _run_probe(url: str) -> Dict[str, Any]:
         'quiet': True,
         'no_warnings': True,
         'js_runtimes': {'deno': {'path': None}, 'node': {'path': None}},
-        'remote_components': ['ejs:github'],
+        'remote_components': [],
+        'cachedir': str(runtime.temp_dir / 'yt-dlp-cache'),
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -135,36 +133,43 @@ def _parse_probe_result(url: str, info: Dict[str, Any]) -> ProbeResponse:
         subtitles=subtitles if not is_playlist else None
     )
 
-@router.post("/probe", response_model=ProbeResponse)
-async def probe_url(req: ProbeRequest):
-    url = req.url.strip()
-    if not url:
-        raise HTTPException(status_code=400, detail="URL cannot be empty")
+class ProbeService:
+    def __init__(self, runtime: RuntimeConfig, *, runner=None, clock=time.time):
+        self.runtime = runtime
+        self.runner = _run_probe if runner is None else runner
+        self.clock = clock
+        self.cache = {}
 
-    # Check cache
-    now = time.time()
-    if url in PROBE_CACHE:
-        ts, cached_data = PROBE_CACHE[url]
-        if now - ts < CACHE_TTL:
-            logger.info(f"Returning cached probe result for {url}")
-            return cached_data
-
-    # Evict expired entries if cache is large
-    if len(PROBE_CACHE) > 500:
-        expired = [k for k, (ts, _) in PROBE_CACHE.items() if now - ts >= CACHE_TTL]
-        for k in expired:
-            del PROBE_CACHE[k]
-
-    try:
-        # Run yt-dlp in a thread pool to avoid blocking the event loop
-        info = await asyncio.to_thread(_run_probe, url)
+    async def probe(self, url: str) -> ProbeResponse:
+        url = url.strip()
+        if not url:
+            raise ValueError("URL cannot be empty")
+        now = self.clock()
+        if url in self.cache:
+            timestamp, data = self.cache[url]
+            if now - timestamp < CACHE_TTL:
+                return data
+        info = await asyncio.to_thread(self.runner, url, self.runtime)
         parsed = _parse_probe_result(url, info)
-        
-        # Cache the result
-        PROBE_CACHE[url] = (now, parsed)
+        self.cache[url] = (now, parsed)
+        if len(self.cache) > 500:
+            expired = [key for key, (timestamp, _) in self.cache.items() if now - timestamp >= CACHE_TTL]
+            for key in expired:
+                del self.cache[key]
         return parsed
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Failed to extract video info: {str(e)}")
-    except Exception as e:
-        logger.error(f"Unexpected error during probing: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error during video probing")
+
+
+def create_probe_router(service: ProbeService) -> APIRouter:
+    router = APIRouter(tags=["probe"])
+
+    @router.post("/probe", response_model=ProbeResponse)
+    async def probe_url(req: ProbeRequest):
+        try:
+            return await service.probe(req.url)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=f"Failed to extract video info: {error}") from error
+        except Exception:
+            logger.exception("Unexpected error during probing")
+            raise HTTPException(status_code=500, detail="Internal server error during video probing")
+
+    return router

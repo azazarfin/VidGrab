@@ -3,10 +3,11 @@ import tempfile
 import time
 import logging
 from typing import List, Dict, Any
+from pathlib import Path
 
 logger = logging.getLogger("vidgrab.cookie_manager")
 
-def write_cookies_to_netscape_format(cookies: List[Dict[str, Any]]) -> str:
+def write_cookies_to_netscape_format(cookies: List[Dict[str, Any]], temp_dir: Path) -> str:
     """
     Writes a list of Chrome/Firefox style cookies to a temporary file
     in Netscape cookie jar format. Returns the absolute file path,
@@ -17,7 +18,10 @@ def write_cookies_to_netscape_format(cookies: List[Dict[str, Any]]) -> str:
 
     # Create a temporary file that won't be deleted automatically on close,
     # so yt-dlp can read it. The caller must clean it up after download.
-    temp_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt', prefix='vidgrab_cookies_')
+    temp_file = tempfile.NamedTemporaryFile(
+        mode='w', encoding='utf-8', delete=False, dir=temp_dir,
+        suffix='.txt', prefix='vidgrab_cookies_',
+    )
     
     try:
         temp_file.write("# Netscape HTTP Cookie File\n")

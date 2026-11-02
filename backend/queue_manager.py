@@ -13,13 +13,13 @@ from fastapi import WebSocket, APIRouter, HTTPException, Request
 from pydantic import BaseModel
 import aiosqlite
 
-from backend.config import DB_PATH, get_all_config
+from backend.config import SettingsStore
+from backend.runtime import OutputPathError, RuntimeConfig
 from backend.downloader import run_download
 from backend.cookie_manager import write_cookies_to_netscape_format
 from backend.sanitizer import sanitize_text
 
 logger = logging.getLogger("vidgrab.queue_manager")
-router = APIRouter(prefix="/downloads", tags=["downloads"])
 
 class DownloadRequest(BaseModel):
     url: str
@@ -86,11 +86,16 @@ class ConnectionManager:
                 logger.warning(f"Failed to send WS message, removing stale connection: {e}")
                 self.disconnect(connection)
 
-ws_manager = ConnectionManager()
-
 # Queue Manager State
 class QueueManager:
-    def __init__(self):
+    def __init__(self, runtime: RuntimeConfig, settings: SettingsStore, connections: ConnectionManager,
+                 download_runner=run_download, clock=time.time, open_folder=None):
+        self.runtime = runtime
+        self.settings = settings
+        self.connections = connections
+        self.download_runner = download_runner
+        self.clock = clock
+        self.open_folder = open_folder
         self.active_tasks: Dict[str, asyncio.Task] = {}
         self.cancelled_tasks: set = set()
         self.in_memory_progress: Dict[str, Dict[str, Any]] = {}
@@ -147,11 +152,21 @@ class QueueManager:
         download_dir: Optional[str] = None,
         user_agent: Optional[str] = None
     ) -> str:
+        config = await self.settings.get_all()
+        try:
+            directory, _ = self.runtime.validate_output(
+                download_dir if download_dir is not None else config["download_dir"],
+                output_template if output_template is not None else config["filename_template"],
+            )
+        except OutputPathError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        if download_dir is not None:
+            download_dir = str(directory)
         task_id = str(uuid4())
         title = sanitize_text(title)
-        created_at = datetime.now(timezone.utc).isoformat()
+        created_at = datetime.fromtimestamp(self.clock(), timezone.utc).isoformat()
         status = "scheduled" if scheduled_at else "queued"
-        
+
         if cookies:
             self.task_cookies[task_id] = cookies
 
@@ -172,8 +187,8 @@ class QueueManager:
             "user_agent": user_agent
         }
         options_json = json.dumps(options)
-        
-        async with aiosqlite.connect(DB_PATH) as db:
+
+        async with aiosqlite.connect(self.runtime.db_path) as db:
             await db.execute(
                 """
                 INSERT INTO downloads (id, url, title, thumbnail_url, status, progress, created_at, format_selected, download_options, scheduled_at)
@@ -200,7 +215,7 @@ class QueueManager:
         }
 
         # Broadcast event
-        await ws_manager.broadcast({
+        await self.connections.broadcast({
             "event": "task_scheduled" if scheduled_at else "task_queued",
             "data": self.in_memory_progress[task_id]
         })
@@ -212,21 +227,21 @@ class QueueManager:
 
     async def cancel(self, task_id: str):
         self.cancelled_tasks.add(task_id)
-        
+
         # If running, cancel the asyncio task
         if task_id in self.active_tasks:
             self.active_tasks[task_id].cancel()
-            
-        async with aiosqlite.connect(DB_PATH) as db:
+
+        async with aiosqlite.connect(self.runtime.db_path) as db:
             await db.execute(
                 "UPDATE downloads SET status = ?, completed_at = ? WHERE id = ?",
-                ("cancelled", datetime.now(timezone.utc).isoformat(), task_id)
+                ("cancelled", datetime.fromtimestamp(self.clock(), timezone.utc).isoformat(), task_id)
             )
             await db.commit()
 
         if task_id in self.in_memory_progress:
             self.in_memory_progress[task_id]["status"] = "cancelled"
-            await ws_manager.broadcast({
+            await self.connections.broadcast({
                 "event": "task_cancelled",
                 "data": self.in_memory_progress[task_id]
             })
@@ -235,13 +250,13 @@ class QueueManager:
         """Callback from downloader. Updates in-memory state and broadcasts."""
         if task_id not in self.in_memory_progress:
             return
-            
+
         self.in_memory_progress[task_id].update(payload)
-        
+
         # Schedule the broadcast on the running event loop safely from worker thread
         if self.loop and self.loop.is_running():
             asyncio.run_coroutine_threadsafe(
-                ws_manager.broadcast({
+                self.connections.broadcast({
                     "event": "task_progress",
                     "data": self.in_memory_progress[task_id]
                 }),
@@ -253,9 +268,9 @@ class QueueManager:
         while True:
             try:
                 await asyncio.sleep(30)
-                now_str = datetime.now(timezone.utc).isoformat()
-                
-                async with aiosqlite.connect(DB_PATH) as db:
+                now_str = datetime.fromtimestamp(self.clock(), timezone.utc).isoformat()
+
+                async with aiosqlite.connect(self.runtime.db_path) as db:
                     db.row_factory = aiosqlite.Row
                     # Fetch scheduled downloads that are due
                     async with db.execute(
@@ -263,7 +278,7 @@ class QueueManager:
                         ("scheduled", now_str)
                     ) as cursor:
                         rows = await cursor.fetchall()
-                        
+
                     if rows:
                         logger.info(f"Scheduler found {len(rows)} due scheduled download(s). Enqueueing...")
                         for row in rows:
@@ -273,19 +288,19 @@ class QueueManager:
                                 "UPDATE downloads SET status = ?, scheduled_at = NULL WHERE id = ?",
                                 ("queued", task_id)
                             )
-                            
+
                             # Update in-memory and broadcast
                             if task_id not in self.in_memory_progress:
                                 self.in_memory_progress[task_id] = dict(row)
-                            
+
                             self.in_memory_progress[task_id]["status"] = "queued"
                             self.in_memory_progress[task_id]["scheduled_at"] = None
-                            
-                            await ws_manager.broadcast({
+
+                            await self.connections.broadcast({
                                 "event": "task_queued",
                                 "data": self.in_memory_progress[task_id]
                             })
-                            
+
                         await db.commit()
                         # Wake up worker
                         self.wakeup_event.set()
@@ -296,7 +311,7 @@ class QueueManager:
 
     async def _worker_loop(self):
         # Reset any stuck tasks from previous crash
-        async with aiosqlite.connect(DB_PATH) as db:
+        async with aiosqlite.connect(self.runtime.db_path) as db:
             await db.execute(
                 "UPDATE downloads SET status = ? WHERE status IN (?, ?)",
                 ("queued", "downloading", "probing")
@@ -305,50 +320,50 @@ class QueueManager:
 
         while True:
             try:
-                config = await get_all_config()
+                config = await self.settings.get_all()
                 max_concurrent = config.get("max_concurrent", 3)
-                
+
                 # Clean up finished tasks from active list
                 self.active_tasks = {tid: t for tid, t in self.active_tasks.items() if not t.done()}
-                
+
                 if len(self.active_tasks) >= max_concurrent:
                     # Wait for at least one active task to finish
                     await asyncio.wait(self.active_tasks.values(), return_when=asyncio.FIRST_COMPLETED)
                     continue
-                
+
                 # Fetch next queued item
-                async with aiosqlite.connect(DB_PATH) as db:
+                async with aiosqlite.connect(self.runtime.db_path) as db:
                     db.row_factory = aiosqlite.Row
                     async with db.execute(
                         "SELECT * FROM downloads WHERE status = ? ORDER BY created_at ASC LIMIT 1",
                         ("queued",)
                     ) as cursor:
                         row = await cursor.fetchone()
-                
+
                 if not row:
                     # No queued items, wait for wakeup signal
                     self.wakeup_event.clear()
                     await self.wakeup_event.wait()
                     continue
-                
+
                 task_id = row["id"]
                 url = row["url"]
                 format_id = row["format_selected"]
                 options_str = row["download_options"]
-                
+
                 options = {}
                 if options_str:
                     try:
                         options = json.loads(options_str)
                     except Exception:
                         pass
-                
+
                 # Initialize in-memory progress if not present
                 if task_id not in self.in_memory_progress:
                     self.in_memory_progress[task_id] = dict(row)
-                
+
                 # Atomically claim the task to prevent race conditions
-                async with aiosqlite.connect(DB_PATH) as db2:
+                async with aiosqlite.connect(self.runtime.db_path) as db2:
                     await db2.execute(
                         "UPDATE downloads SET status = ? WHERE id = ? AND status = ?",
                         ("downloading", task_id, "queued")
@@ -356,8 +371,8 @@ class QueueManager:
                     await db2.commit()
                     if db2.total_changes == 0:
                         continue  # Another worker iteration already claimed it
-                    
-                await ws_manager.broadcast({
+
+                await self.connections.broadcast({
                     "event": "task_started",
                     "data": self.in_memory_progress[task_id]
                 })
@@ -365,7 +380,7 @@ class QueueManager:
                 # Start the download task
                 task = asyncio.create_task(self._run_task(task_id, url, format_id, config, options, dict(row).get("retry_count", 0)))
                 self.active_tasks[task_id] = task
-                
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -393,15 +408,20 @@ class QueueManager:
         cookies_file_path = None
         if cookies:
             try:
-                cookies_file_path = write_cookies_to_netscape_format(cookies)
+                cookies_file_path = write_cookies_to_netscape_format(cookies, self.runtime.temp_dir)
             except Exception as e:
                 logger.warning(f"Failed to generate Netscape cookies for task {task_id}: {e}")
 
+        paths_validated = False
         try:
+            directory, _ = self.runtime.validate_output(download_dir, filename_template)
+            download_dir = str(directory)
+            paths_validated = True
             # Run the blocking download in a separate thread
             # Pass a lambda that checks if the task is cancelled
             result = await asyncio.to_thread(
-                run_download,
+                self.download_runner,
+                runtime=self.runtime,
                 task_id=task_id,
                 url=url,
                 format_id=format_id,
@@ -431,14 +451,14 @@ class QueueManager:
                 extra_args=options.get("extra_args"),
                 user_agent=user_agent
             )
-            
+
             filepath = sanitize_text(result.get("filepath"))
             extracted_title = sanitize_text(result.get("title"))
             extracted_thumbnail = result.get("thumbnail_url")
-            
+
             if self.is_cancelled(task_id):
                 raise Exception("Download cancelled by user")
-                
+
             if not filepath or not os.path.exists(filepath):
                 # yt-dlp might have changed the extension during postprocessing
                 if filepath:
@@ -453,16 +473,16 @@ class QueueManager:
                         raise Exception(f"Final file was not created. Download failed or was aborted by yt-dlp.")
                 else:
                     raise Exception(f"Final file was not created. Download failed or was aborted by yt-dlp.")
-            
+
             # Download completed successfully
-            completed_at = datetime.now(timezone.utc).isoformat()
-            async with aiosqlite.connect(DB_PATH) as db:
+            completed_at = datetime.fromtimestamp(self.clock(), timezone.utc).isoformat()
+            async with aiosqlite.connect(self.runtime.db_path) as db:
                 await db.execute(
                     "UPDATE downloads SET status = ?, file_path = ?, completed_at = ?, progress = 100.0, title = COALESCE(title, ?), thumbnail_url = COALESCE(thumbnail_url, ?) WHERE id = ?",
                     ("complete", filepath, completed_at, extracted_title, extracted_thumbnail, task_id)
                 )
                 await db.commit()
-                
+
             if task_id in self.in_memory_progress:
                 self.in_memory_progress[task_id].update({
                     "status": "complete",
@@ -475,23 +495,26 @@ class QueueManager:
                     self.in_memory_progress[task_id]["title"] = extracted_title
                 if not self.in_memory_progress[task_id].get("thumbnail_url") and extracted_thumbnail:
                     self.in_memory_progress[task_id]["thumbnail_url"] = extracted_thumbnail
-                    
-                await ws_manager.broadcast({
+
+                await self.connections.broadcast({
                     "event": "task_complete",
                     "data": self.in_memory_progress[task_id]
                 })
-                
+
         except Exception as e:
             # Handle failure or cancellation
             is_cancelled = self.is_cancelled(task_id)
             error_msg = sanitize_text(str(e))
-            completed_at = datetime.now(timezone.utc).isoformat()
-            
+            completed_at = datetime.fromtimestamp(self.clock(), timezone.utc).isoformat()
+
             max_retries = config.get("max_retries", 3)
-            
+
             if is_cancelled:
                 status = "cancelled"
                 logger.error(f"Task {task_id} ended with status {status}: {error_msg}")
+            elif isinstance(e, OutputPathError):
+                status = "failed"
+                logger.error(f"Task {task_id} has an unsafe output path: {error_msg}")
             elif retry_count < max_retries:
                 status = "queued"
                 retry_count += 1
@@ -499,8 +522,8 @@ class QueueManager:
             else:
                 status = "failed"
                 logger.error(f"Task {task_id} ended with status {status}: {error_msg}")
-            
-            async with aiosqlite.connect(DB_PATH) as db:
+
+            async with aiosqlite.connect(self.runtime.db_path) as db:
                 if status == "queued":
                     await db.execute(
                         "UPDATE downloads SET status = ?, error_message = ?, retry_count = ? WHERE id = ?",
@@ -512,7 +535,7 @@ class QueueManager:
                         (status, error_msg, completed_at, task_id)
                     )
                 await db.commit()
-                
+
             if task_id in self.in_memory_progress:
                 self.in_memory_progress[task_id].update({
                     "status": status,
@@ -520,18 +543,18 @@ class QueueManager:
                 })
                 if status != "queued":
                     self.in_memory_progress[task_id]["completed_at"] = completed_at
-                
-                await ws_manager.broadcast({
+
+                await self.connections.broadcast({
                     "event": f"task_{status}",
                     "data": self.in_memory_progress[task_id]
                 })
-                
+
             # If we queued it for retry, wake up the worker
             if status == "queued":
                 self.wakeup_event.set()
-                
+
             # Clean up orphaned .part files if the task has permanently failed or was cancelled
-            if status in ("failed", "cancelled") and download_dir:
+            if status in ("failed", "cancelled") and download_dir and paths_validated:
                 try:
                     title = self.in_memory_progress.get(task_id, {}).get("title")
                     if title:
@@ -545,12 +568,12 @@ class QueueManager:
                                     pass
                 except Exception as clean_e:
                     logger.warning(f"Failed to cleanup temp files for task {task_id}: {clean_e}")
-                
-                
+
+
         finally:
             # Clean up tracking sets
             self.cancelled_tasks.discard(task_id)
-            
+
             # Delete temporary cookie file
             if cookies_file_path and os.path.exists(cookies_file_path):
                 try:
@@ -559,192 +582,199 @@ class QueueManager:
                 except Exception as ce:
                     logger.warning(f"Failed to delete temporary cookie file {cookies_file_path}: {ce}")
 
-queue_manager = QueueManager()
+def open_folder(parent_dir: str):
+    """Platform process boundary; desktop integration can replace this adapter."""
+    if sys.platform == "win32":
+        os.startfile(parent_dir)
+    elif sys.platform == "darwin":
+        subprocess.run(["open", parent_dir], check=True)
+    else:
+        subprocess.run(["xdg-open", parent_dir], check=True)
 
-# REST Endpoints for Downloads
-@router.post("", response_model=Dict[str, str])
-async def create_download(req: DownloadRequest, request: Request):
-    user_agent = request.headers.get("user-agent")
-    task_id = await queue_manager.enqueue(
-        url=req.url,
-        format_id=req.format_id,
-        title=req.title,
-        thumbnail_url=req.thumbnail_url,
-        audio_only=req.audio_only,
-        audio_format=req.audio_format,
-        download_subtitles=req.download_subtitles,
-        subtitle_langs=req.subtitle_langs,
-        subtitle_format=req.subtitle_format,
-        embed_subtitles=req.embed_subtitles,
-        embed_thumbnail=req.embed_thumbnail,
-        playlist_items=req.playlist_items,
-        is_playlist=req.is_playlist,
-        output_template=req.output_template,
-        cookies=req.cookies,
-        scheduled_at=req.scheduled_at,
-        extra_args=req.extra_args,
-        duration=req.duration,
-        download_dir=req.download_dir,
-        user_agent=user_agent
-    )
-    return {"task_id": task_id}
 
-# History specific endpoints (subset of downloads: complete, failed, cancelled)
-@router.get("/history", response_model=List[DownloadTask], tags=["history"])
-async def get_history():
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM downloads WHERE status IN (?, ?, ?) ORDER BY completed_at DESC",
-            ("complete", "failed", "cancelled")
-        ) as cursor:
-            rows = await cursor.fetchall()
-            return [DownloadTask(**dict(row)) for row in rows]
-
-@router.delete("/history", response_model=Dict[str, str], tags=["history"])
-async def clear_all_history():
-    async with aiosqlite.connect(DB_PATH) as db:
-        # Delete only completed, failed, or cancelled tasks from DB
-        await db.execute(
-            "DELETE FROM downloads WHERE status IN (?, ?, ?)",
-            ("complete", "failed", "cancelled")
+def create_download_router(queue_manager: QueueManager) -> APIRouter:
+    router = APIRouter(prefix="/downloads", tags=["downloads"])
+    # REST Endpoints for Downloads
+    @router.post("", response_model=Dict[str, str])
+    async def create_download(req: DownloadRequest, request: Request):
+        user_agent = request.headers.get("user-agent")
+        task_id = await queue_manager.enqueue(
+            url=req.url,
+            format_id=req.format_id,
+            title=req.title,
+            thumbnail_url=req.thumbnail_url,
+            audio_only=req.audio_only,
+            audio_format=req.audio_format,
+            download_subtitles=req.download_subtitles,
+            subtitle_langs=req.subtitle_langs,
+            subtitle_format=req.subtitle_format,
+            embed_subtitles=req.embed_subtitles,
+            embed_thumbnail=req.embed_thumbnail,
+            playlist_items=req.playlist_items,
+            is_playlist=req.is_playlist,
+            output_template=req.output_template,
+            cookies=req.cookies,
+            scheduled_at=req.scheduled_at,
+            extra_args=req.extra_args,
+            duration=req.duration,
+            download_dir=req.download_dir,
+            user_agent=user_agent
         )
-        await db.commit()
-    
-    # Remove from in-memory tracking if present
-    to_remove = [tid for tid, task in queue_manager.in_memory_progress.items() 
-                 if task["status"] in ("complete", "failed", "cancelled")]
-    for tid in to_remove:
-        queue_manager.in_memory_progress.pop(tid, None)
-        
-    return {"message": "All download history cleared"}
+        return {"task_id": task_id}
 
-@router.delete("/history/{task_id}", response_model=Dict[str, str], tags=["history"])
-async def delete_history_item(task_id: str):
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT status FROM downloads WHERE id = ?", (task_id,)) as cursor:
-            row = await cursor.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="History item not found")
-            if row[0] not in ("complete", "failed", "cancelled"):
-                raise HTTPException(status_code=400, detail="Cannot delete an active download from history")
-            
-            await db.execute("DELETE FROM downloads WHERE id = ?", (task_id,))
-            await db.commit()
+    # History specific endpoints (subset of downloads: complete, failed, cancelled)
+    @router.get("/history", response_model=List[DownloadTask], tags=["history"])
+    async def get_history():
+        async with aiosqlite.connect(queue_manager.runtime.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM downloads WHERE status IN (?, ?, ?) ORDER BY completed_at DESC",
+                ("complete", "failed", "cancelled")
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [DownloadTask(**dict(row)) for row in rows]
 
-    # Remove from in-memory tracking
-    queue_manager.in_memory_progress.pop(task_id, None)
-    return {"message": f"History item {task_id} deleted"}
-
-@router.delete("/{task_id}")
-async def cancel_download(task_id: str):
-    # Verify task exists
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT 1 FROM downloads WHERE id = ?", (task_id,)) as cursor:
-            if not await cursor.fetchone():
-                raise HTTPException(status_code=404, detail="Download task not found")
-                
-    await queue_manager.cancel(task_id)
-    return {"message": f"Download task {task_id} cancelled"}
-@router.get("", response_model=List[DownloadTask])
-async def list_downloads(status: Optional[str] = None):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        if status:
-            query = "SELECT * FROM downloads WHERE status = ? ORDER BY created_at DESC"
-            params = (status,)
-        else:
-            query = "SELECT * FROM downloads ORDER BY created_at DESC"
-            params = ()
-            
-        async with db.execute(query, params) as cursor:
-            rows = await cursor.fetchall()
-            return [DownloadTask(**dict(row)) for row in rows]
-
-@router.post("/{task_id}/retry", response_model=Dict[str, str])
-async def retry_download(task_id: str, req: RetryRequest, request: Request):
-    user_agent = request.headers.get("user-agent")
-    if req.cookies:
-        queue_manager.task_cookies[task_id] = req.cookies
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM downloads WHERE id = ?", (task_id,)) as cursor:
-            row = await cursor.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="Download task not found")
-            
-            task_dict = dict(row)
-            if task_dict["status"] not in ("failed", "cancelled"):
-                raise HTTPException(status_code=400, detail="Only failed or cancelled downloads can be retried")
-
-            # Extract options and update user_agent if present
-            try:
-                opts = json.loads(task_dict.get("download_options") or "{}")
-                if user_agent:
-                    opts["user_agent"] = user_agent
-                options_json = json.dumps(opts)
-            except Exception:
-                options_json = task_dict.get("download_options")
-
-            # Update status back to queued in database
+    @router.delete("/history", response_model=Dict[str, str], tags=["history"])
+    async def clear_all_history():
+        async with aiosqlite.connect(queue_manager.runtime.db_path) as db:
+            # Delete only completed, failed, or cancelled tasks from DB
             await db.execute(
-                "UPDATE downloads SET status = ?, error_message = NULL, progress = 0.0, speed = 0.0, eta = NULL, download_options = ? WHERE id = ?",
-                ("queued", options_json, task_id)
+                "DELETE FROM downloads WHERE status IN (?, ?, ?)",
+                ("complete", "failed", "cancelled")
             )
             await db.commit()
 
-    # Update in-memory state
-    queue_manager.in_memory_progress[task_id] = {
-        "id": task_id,
-        "url": task_dict["url"],
-        "title": task_dict["title"],
-        "thumbnail_url": task_dict["thumbnail_url"],
-        "status": "queued",
-        "progress": 0.0,
-        "speed": 0.0,
-        "eta": None,
-        "file_size": None,
-        "format_selected": task_dict["format_selected"],
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "download_options": options_json
-    }
+        # Remove from in-memory tracking if present
+        to_remove = [tid for tid, task in queue_manager.in_memory_progress.items()
+                     if task["status"] in ("complete", "failed", "cancelled")]
+        for tid in to_remove:
+            queue_manager.in_memory_progress.pop(tid, None)
 
-    # Broadcast task queued event
-    await ws_manager.broadcast({
-        "event": "task_queued",
-        "data": queue_manager.in_memory_progress[task_id]
-    })
+        return {"message": "All download history cleared"}
 
-    # Wake up worker
-    queue_manager.wakeup_event.set()
-    return {"message": f"Download task {task_id} re-enqueued for retry"}
+    @router.delete("/history/{task_id}", response_model=Dict[str, str], tags=["history"])
+    async def delete_history_item(task_id: str):
+        async with aiosqlite.connect(queue_manager.runtime.db_path) as db:
+            async with db.execute("SELECT status FROM downloads WHERE id = ?", (task_id,)) as cursor:
+                row = await cursor.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="History item not found")
+                if row[0] not in ("complete", "failed", "cancelled"):
+                    raise HTTPException(status_code=400, detail="Cannot delete an active download from history")
 
-@router.post("/{task_id}/open-folder", response_model=Dict[str, Any])
-async def open_task_folder(task_id: str):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT file_path, status FROM downloads WHERE id = ?", (task_id,)) as cursor:
-            row = await cursor.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="Download task not found")
-            
-            file_path = row["file_path"]
-            status = row["status"]
-            if status != "complete" or not file_path:
-                raise HTTPException(status_code=400, detail="Only completed downloads with a valid file path can have their folder opened")
-                
-            if not os.path.exists(file_path):
-                raise HTTPException(status_code=404, detail=f"File does not exist on disk: {file_path}")
-                
-            parent_dir = os.path.dirname(file_path)
-            try:
-                if sys.platform == "win32":
-                    os.startfile(parent_dir)
-                elif sys.platform == "darwin":
-                    subprocess.run(["open", parent_dir], check=True)
-                else:
-                    subprocess.run(["xdg-open", parent_dir], check=True)
-                return {"success": True, "message": f"Opened folder: {parent_dir}"}
-            except Exception as e:
-                logger.error(f"Failed to open folder {parent_dir}: {e}")
-                raise HTTPException(status_code=500, detail=f"Failed to open containing folder: {str(e)}")
+                await db.execute("DELETE FROM downloads WHERE id = ?", (task_id,))
+                await db.commit()
+
+        # Remove from in-memory tracking
+        queue_manager.in_memory_progress.pop(task_id, None)
+        return {"message": f"History item {task_id} deleted"}
+
+    @router.delete("/{task_id}")
+    async def cancel_download(task_id: str):
+        # Verify task exists
+        async with aiosqlite.connect(queue_manager.runtime.db_path) as db:
+            async with db.execute("SELECT 1 FROM downloads WHERE id = ?", (task_id,)) as cursor:
+                if not await cursor.fetchone():
+                    raise HTTPException(status_code=404, detail="Download task not found")
+
+        await queue_manager.cancel(task_id)
+        return {"message": f"Download task {task_id} cancelled"}
+    @router.get("", response_model=List[DownloadTask])
+    async def list_downloads(status: Optional[str] = None):
+        async with aiosqlite.connect(queue_manager.runtime.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            if status:
+                query = "SELECT * FROM downloads WHERE status = ? ORDER BY created_at DESC"
+                params = (status,)
+            else:
+                query = "SELECT * FROM downloads ORDER BY created_at DESC"
+                params = ()
+
+            async with db.execute(query, params) as cursor:
+                rows = await cursor.fetchall()
+                return [DownloadTask(**dict(row)) for row in rows]
+
+    @router.post("/{task_id}/retry", response_model=Dict[str, str])
+    async def retry_download(task_id: str, req: RetryRequest, request: Request):
+        user_agent = request.headers.get("user-agent")
+        if req.cookies:
+            queue_manager.task_cookies[task_id] = req.cookies
+        async with aiosqlite.connect(queue_manager.runtime.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM downloads WHERE id = ?", (task_id,)) as cursor:
+                row = await cursor.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Download task not found")
+
+                task_dict = dict(row)
+                if task_dict["status"] not in ("failed", "cancelled"):
+                    raise HTTPException(status_code=400, detail="Only failed or cancelled downloads can be retried")
+
+                # Extract options and update user_agent if present
+                try:
+                    opts = json.loads(task_dict.get("download_options") or "{}")
+                    if user_agent:
+                        opts["user_agent"] = user_agent
+                    options_json = json.dumps(opts)
+                except Exception:
+                    options_json = task_dict.get("download_options")
+
+                # Update status back to queued in database
+                await db.execute(
+                    "UPDATE downloads SET status = ?, error_message = NULL, progress = 0.0, speed = 0.0, eta = NULL, download_options = ? WHERE id = ?",
+                    ("queued", options_json, task_id)
+                )
+                await db.commit()
+
+        # Update in-memory state
+        queue_manager.in_memory_progress[task_id] = {
+            "id": task_id,
+            "url": task_dict["url"],
+            "title": task_dict["title"],
+            "thumbnail_url": task_dict["thumbnail_url"],
+            "status": "queued",
+            "progress": 0.0,
+            "speed": 0.0,
+            "eta": None,
+            "file_size": None,
+            "format_selected": task_dict["format_selected"],
+            "created_at": datetime.fromtimestamp(queue_manager.clock(), timezone.utc).isoformat(),
+            "download_options": options_json
+        }
+
+        # Broadcast task queued event
+        await queue_manager.connections.broadcast({
+            "event": "task_queued",
+            "data": queue_manager.in_memory_progress[task_id]
+        })
+
+        # Wake up worker
+        queue_manager.wakeup_event.set()
+        return {"message": f"Download task {task_id} re-enqueued for retry"}
+
+    @router.post("/{task_id}/open-folder", response_model=Dict[str, Any])
+    async def open_task_folder(task_id: str):
+        async with aiosqlite.connect(queue_manager.runtime.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT file_path, status FROM downloads WHERE id = ?", (task_id,)) as cursor:
+                row = await cursor.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Download task not found")
+
+                file_path = row["file_path"]
+                status = row["status"]
+                if status != "complete" or not file_path:
+                    raise HTTPException(status_code=400, detail="Only completed downloads with a valid file path can have their folder opened")
+
+                if not os.path.exists(file_path):
+                    raise HTTPException(status_code=404, detail=f"File does not exist on disk: {file_path}")
+
+                parent_dir = os.path.dirname(file_path)
+                try:
+                    queue_manager.open_folder(parent_dir)
+                    return {"success": True, "message": f"Opened folder: {parent_dir}"}
+                except Exception as e:
+                    logger.error(f"Failed to open folder {parent_dir}: {e}")
+                    raise HTTPException(status_code=500, detail=f"Failed to open containing folder: {str(e)}")
+
+    return router

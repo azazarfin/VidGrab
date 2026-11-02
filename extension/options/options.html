@@ -27,19 +27,19 @@
       </div>
       
       <nav class="nav-menu">
-        <button class="nav-item active" data-tab="tab-general" id="btn-tab-general">
+        <button class="nav-item active" data-tab="tab-general" id="btn-tab-general" aria-pressed="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="nav-icon"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
           General
         </button>
-        <button class="nav-item" data-tab="tab-sponsorblock" id="btn-tab-sponsorblock">
+        <button class="nav-item" data-tab="tab-sponsorblock" id="btn-tab-sponsorblock" aria-pressed="false">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="nav-icon"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="9" x2="15" y2="15"></line><line x1="15" y1="9" x2="9" y2="15"></line></svg>
           SponsorBlock
         </button>
-        <button class="nav-item" data-tab="tab-postprocess" id="btn-tab-postprocess">
+        <button class="nav-item" data-tab="tab-postprocess" id="btn-tab-postprocess" aria-pressed="false">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="nav-icon"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
           Post-Processing
         </button>
-        <button class="nav-item" data-tab="tab-advanced" id="btn-tab-advanced">
+        <button class="nav-item" data-tab="tab-advanced" id="btn-tab-advanced" aria-pressed="false">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="nav-icon"><polygon points="12 2 2 7 12 12 22 7 12 2Z"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
           Advanced
         </button>
@@ -63,12 +63,12 @@
       <div class="settings-content">
         <!-- General Tab -->
         <section class="tab-panel active" id="tab-general">
-          <div class="alert-banner alert-warning" id="ffmpeg-warning-banner" style="display: none; margin-bottom: 20px; padding: 12px 16px; background: rgba(255, 192, 72, 0.1); border-left: 4px solid var(--warning); border-radius: 4px; font-size: 14px; color: var(--text-primary); line-height: 1.5;">
+          <div class="alert-banner alert-warning" id="ffmpeg-warning-banner" role="status" style="display: none;">
             <strong style="color: var(--warning);">FFmpeg Missing:</strong> FFmpeg was not detected on the backend host. Advanced features such as video container recoding, audio extraction, and subtitle embedding are disabled.
           </div>
           
           <div class="card">
-            <h3>Paths & Queue</h3>
+            <h2>Paths & Queue</h2>
             <div class="form-group">
               <label for="input-download-dir">Download Directory</label>
               <input type="text" id="input-download-dir" class="form-input" placeholder="/home/user/Downloads/VidGrab">
@@ -103,7 +103,7 @@
           </div>
 
           <div class="card">
-            <h3>Defaults Quality</h3>
+            <h2>Defaults Quality</h2>
             <div class="form-row">
               <div class="form-group flex-1">
                 <label for="select-default-quality">Default Quality Preset</label>
@@ -128,11 +128,11 @@
           <div class="card">
             <div class="switch-header">
               <div>
-                <h3>SponsorBlock Integration</h3>
+                <h2 id="heading-sponsorblock">SponsorBlock Integration</h2>
                 <p class="section-desc">Automatically skip or mark annoying video segments (sponsors, intros, etc.) using YouTube crowd-sourced database.</p>
               </div>
               <label class="switch">
-                <input type="checkbox" id="chk-sponsorblock-enabled">
+                <input type="checkbox" id="chk-sponsorblock-enabled" aria-labelledby="heading-sponsorblock">
                 <span class="slider round"></span>
               </label>
             </div>
@@ -190,7 +190,7 @@
         <!-- Post-Processing Tab -->
         <section class="tab-panel" id="tab-postprocess">
           <div class="card">
-            <h3>Video Re-encoding</h3>
+            <h2>Video Re-encoding</h2>
             <p class="section-desc">Convert downloaded videos to a specific format. Note: requires FFmpeg on backend.</p>
             
             <div class="form-group">
@@ -216,7 +216,7 @@
           </div>
 
           <div class="card">
-            <h3>Audio Enhancements</h3>
+            <h2>Audio Enhancements</h2>
             <div class="switch-row">
               <div class="switch-text">
                 <label for="chk-postprocess-normalize" class="switch-title">Normalize Audio Volume</label>
@@ -233,7 +233,7 @@
         <!-- Advanced Tab -->
         <section class="tab-panel" id="tab-advanced">
           <div class="card">
-            <h3>Extension Host Configuration</h3>
+            <h2>Extension Host Configuration</h2>
             <div class="form-group">
               <label for="input-backend-url">Backend Server URL</label>
               <div class="input-with-action">
@@ -244,7 +244,7 @@
           </div>
 
           <div class="card">
-            <h3>Cookie Forwarding (Power User)</h3>
+            <h2>Cookie Forwarding (Power User)</h2>
             <div class="switch-row">
               <div class="switch-text">
                 <label for="chk-cookie-forwarding" class="switch-title">Enable Cookie Forwarding</label>
@@ -258,7 +258,7 @@
           </div>
 
           <div class="card">
-            <h3>Desktop Notifications</h3>
+            <h2>Desktop Notifications</h2>
             <div class="form-group">
               <label for="select-notifications">Notification Preferences</label>
               <select id="select-notifications" class="form-select">
@@ -274,7 +274,7 @@
           </div>
 
           <div class="card">
-            <h3>Bandwidth Limit</h3>
+            <h2>Bandwidth Limit</h2>
             <div class="form-row">
               <div class="form-group flex-1">
                 <label for="select-speed-limit">Download Speed Limit</label>
@@ -296,29 +296,29 @@
           </div>
 
           <div class="card">
-            <h3>yt-dlp Engine Management</h3>
+            <h2>yt-dlp Engine Management</h2>
             <div class="switch-row">
               <div class="switch-text">
-                <label for="chk-auto-update-ytdlp" class="switch-title">Auto-update on Launch</label>
-                <span class="switch-desc">Check PyPI on startup and automatically upgrade the yt-dlp binary if a newer version is available.</span>
+                <label for="chk-auto-update-ytdlp" class="switch-title">Engine Updates</label>
+                <span class="switch-desc">Install a newer VidGrab release to update the media engine. Launch and status checks stay offline.</span>
               </div>
               <label class="switch">
-                <input type="checkbox" id="chk-auto-update-ytdlp">
+                <input type="checkbox" id="chk-auto-update-ytdlp" disabled>
                 <span class="slider round"></span>
               </label>
             </div>
             
             <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: space-between; gap: 15px;">
               <div>
-                <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase;">Installed Version</div>
+                <div style="font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase;">Installed Version</div>
                 <div id="ytdlp-version-status" style="font-size: 13px; margin-top: 4px; color: var(--text-primary); font-family: monospace;">Checking status...</div>
               </div>
-              <button class="btn btn-secondary" id="btn-update-ytdlp" type="button">Update Now</button>
+              <button class="btn btn-secondary" id="btn-update-ytdlp" type="button" disabled title="Install a newer VidGrab release">Update with VidGrab</button>
             </div>
           </div>
 
           <div class="card">
-            <h3>Custom yt-dlp Arguments</h3>
+            <h2>Custom yt-dlp Arguments</h2>
             <div class="form-group">
               <label for="input-custom-ytdlp-args">Raw command-line arguments</label>
               <textarea id="input-custom-ytdlp-args" class="form-input" rows="3" placeholder="e.g. --ignore-errors --no-mtime" style="font-family: monospace; resize: vertical;"></textarea>
@@ -327,13 +327,14 @@
               </span>
             </div>
             <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;">
-              <button type="button" class="btn btn-secondary" id="btn-preset-robust" style="font-size: 11px; padding: 4px 8px; min-height: unset; line-height: unset;">Preset: Robust DL</button>
-              <button type="button" class="btn btn-secondary" id="btn-preset-ipv4" style="font-size: 11px; padding: 4px 8px; min-height: unset; line-height: unset;">Preset: Force IPv4</button>
-              <button type="button" class="btn btn-secondary" id="btn-preset-bypass" style="font-size: 11px; padding: 4px 8px; min-height: unset; line-height: unset;">Preset: Geo Bypass</button>
-              <button type="button" class="btn btn-secondary" id="btn-preset-clear" style="font-size: 11px; padding: 4px 8px; min-height: unset; line-height: unset;">Clear</button>
+              <button type="button" class="btn btn-secondary btn-preset" id="btn-preset-robust">Preset: Robust DL</button>
+              <button type="button" class="btn btn-secondary btn-preset" id="btn-preset-ipv4">Preset: Force IPv4</button>
+              <button type="button" class="btn btn-secondary btn-preset" id="btn-preset-bypass">Preset: Geo Bypass</button>
+              <button type="button" class="btn btn-secondary btn-preset" id="btn-preset-clear">Clear</button>
             </div>
-            <div class="alert alert-warning" style="margin-top: 12px; padding: 8px 12px; border-radius: var(--radius-sm); font-size: 11px; background: rgba(255, 192, 72, 0.1); border: 1px solid var(--warning); color: var(--warning); display: flex; align-items: center; gap: 8px;">
-              <span>⚠️ For advanced users only. Specifying incorrect or conflicting flags might cause downloads to fail.</span>
+            <div class="alert-warning argument-warning">
+              <svg class="notice-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3L2 21h20L12 3Z"></path><path d="M12 9v5m0 3v.01"></path></svg>
+              <span>For advanced users only. Specifying incorrect or conflicting flags might cause downloads to fail.</span>
             </div>
           </div>
         </section>
@@ -341,7 +342,7 @@
 
       <!-- Action Footer -->
       <footer class="footer">
-        <div class="status-msg" id="status-message"></div>
+        <div class="status-msg" id="status-message" role="status" aria-live="polite" aria-atomic="true"></div>
         <button class="btn btn-primary" id="btn-save-settings">Save Changes</button>
       </footer>
     </main>

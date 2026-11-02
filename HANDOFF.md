@@ -4,10 +4,10 @@ This file is the current development checkpoint. It is plain Markdown for any ag
 
 ## Current state
 
-- **Phase:** P00 planning complete; application implementation begins at P01. There is no desktop app yet.
+- **Phase:** P01 runtime implementation and verification complete; the separate reviewed legacy-DB index cleanup is the remaining P01 task. There is no desktop app yet.
 - **Branch:** `planning/desktop-companion`.
 - **Source checkpoint:** `79f7d7e2fecdbd4623dfc0b6d6632daffe349809`, based on `822b9f2`.
-- **Planning checkpoint:** the commit containing this file; resolve with `git log -1 --format=%H -- HANDOFF.md`. The bundle receipt identifies its exact exported HEAD without embedding a self-referential hash here.
+- **Planning checkpoint:** `f47ce25`. **Current implementation checkpoint:** the latest commit affecting this file; resolve with `git log -1 --format=%H -- HANDOFF.md`. Existing bundle receipts identify their exported HEAD; the old planning bundle predates P01 and has not been refreshed.
 - **Confirmed:** Linux and Windows first; macOS later. Source snapshot plus offline Git bundle selected. No Git remote is configured.
 - **Proposed:** Tauri 2 + TypeScript/React shell, bundled Python engine, app-owned workers, native-messaging bridge and shared protocol. Validate framework and packaging in P02.
 
@@ -19,20 +19,32 @@ This file is the current development checkpoint. It is plain Markdown for any ag
 4. [docs/DECISIONS.md](docs/DECISIONS.md): confirmed choices versus recommendations and pending decisions.
 5. [docs/VALIDATION.md](docs/VALIDATION.md): current evidence and future test/release matrix.
 
-## Next executable task: P01 runtime isolation
+## Next executable task: finish P01's reviewed state cleanup
 
-1. Check `git status --short --branch` and `git log -3 --oneline`. Preserve any new local work before starting; create a focused branch from this checkpoint if useful.
-2. Inspect `backend/config.py`, `backend/main.py`, `backend/queue_manager.py`, and `backend/test_backend.py`. Plan injection of runtime paths before starting the app: the current tracked DB may contain queued downloads and startup can run pip.
-3. Add runtime configuration/app factory and isolated tests as specified by P01. Start with database location injection, no-side-effect app creation, and partial-settings behavior; then explicit migrations and local health.
-4. Record the exact new setup/test commands and results. Update this checkpoint with the next incomplete P01 subtask; finish with a focused commit before exporting again.
+1. Confirm the runtime implementation/tests/docs are committed and only the four deliberately excluded artifacts remain dirty. Verify `backend/vidgrab.db` still has SHA-256 `148dbba8a3bea4f01b0e6dbbca7faf157dea157ff9300f4251a6c47f56c38f8f`.
+2. In a separate cleanup commit, ignore `/backend/vidgrab.db` and its SQLite sidecars, then run `git rm --cached -- backend/vidgrab.db`. This removes only the index entry; preserve and recheck the working file. Never delete it or rewrite history.
+3. Only after that check, mark P01 complete in the plan and checkpoint. Include the handoff update in the cleanup commit; leave the generated archives and promotional image local.
+4. Hand off P02: inspect target-native tooling and add the smallest shell/packaged-engine lifecycle spike against temporary state before a full UI. Read P02's acceptance gate: frozen fixture download, native-host registration, browser-independent lifetime, tray/window fallback and actual Linux **and Windows** evidence are required.
 
-No further user decision blocks P01. P02 needs Windows and Linux execution evidence; framework/OS support is not considered validated by this plan.
+No further user decision blocks this cleanup. Do not run installers, rebuild `dist/`, launch real downloads, publish a remote or export another bundle without the corresponding request. P02 is not validated by a Linux-only scaffold.
+
+## Implemented P01 interfaces and decisions
+
+- `RuntimeConfig(data_dir, download_dir, logs_dir=None, temp_dir=None)` resolves paths without creating them. `from_env()` supports the four `VIDGRAB_*_DIR` overrides. User data is outside the repository by default; stored download preferences override only the default media directory.
+- `backend.app.create_app(runtime=None, start_queue=True, probe_runner=None, download_runner=run_download, clock=time.time, open_folder=...)` owns all mutable service state. Probe fakes receive `(url, runtime)`; download fakes receive keyword options including `runtime`. Factory/import does not configure logging or start I/O. Lifespan performs initialization; `start_queue=False` disables execution.
+- `backend/db/migrations.py` uses SQLite `user_version`: versions 0/1 migrate to 2. Snapshots include committed WAL data; failures roll back; newer schemas and invalid settings are refused. `python -m backend.db <source> --data-dir <new-dir>` imports a selected backup/staged copy without starting workers or replacing destination state. Final-path validation is repeated before atomic publication.
+- Settings PATCH merges supplied fields under a transaction. Integers are strict/bounded/non-null. Output-path validation is shared by initialization, PATCH, enqueue and execution; it protects source/install and data/log/temp storage, resolves existing symlinks, preserves safe nested/absolute templates and rejects invalid resumed jobs without invoking cleanup there.
+- `/health` is local readiness/schema; `/status` retains legacy extension fields without an update lookup; `/update-ytdlp` returns 409. Runtime pip upgrades and remote EJS fetching are disabled. The legacy update preference/private functions remain only for compatibility; media tools are not bundled yet.
+- `pyproject.toml`, `uv.lock` and hashed exported runtime requirements are present. VidGrab requires Python 3.11+; the selected `yt-dlp==2026.6.9` metadata requires >=3.10. This is a project baseline, not a claim that the pin itself requires 3.11.
+- Settings keep the incumbent dark/violet identity. Contrast, heading hierarchy, narrow-window clipping, focus/state announcements, warning styling and tiny helper text were fixed. One **file-scoped** Inter detector exception preserves the existing typeface; no file/rule-wide ignores were added.
+
+Still later work: thread/process cancellation and shutdown, bounded retries, final artifact/sanitizer handling, authenticated/revisioned protocol, packaged resources/EJS and native browser lifecycle. The cookie description still incorrectly claims no disk writes; a wording correction was asked about but not approved, so the copy remains unchanged. Actual cookie files are temporary and excluded from persisted job options.
 
 ## What is preserved and what is local
 
 Source commit `79f7d7e` captures the pre-existing retry/output/sanitizer changes, removal of hardcoded browser-cookie paths, `.gitignore`, and staged bytecode cleanup. It is a work-in-progress baseline, not a claim those features are correct.
 
-The user approved leaving these current edits local:
+The user approved leaving these current edits local; all were preserved during P01:
 
 | Path | Meaning |
 | --- | --- |
@@ -41,14 +53,17 @@ The user approved leaving these current edits local:
 | `dist/vidgrab-firefox-extension.zip` | Locally generated archive |
 | `store_assets/vidgrab_promo_banner.png` | Modified promotional image |
 
-Their earlier tracked versions still exist in Git and therefore in a full-history bundle. The bundle does not contain the latest working copies, ignored venv/scratch files, installed services, or live download state. Do not auto-start the backend from a clone against its legacy tracked database. P01 replaces this runtime layout.
+Their earlier tracked versions remain in Git history and therefore in a full-history bundle. No current working copy has been added to the P01 implementation commit. The bundle does not contain the latest working copies, ignored venv/scratch files, installed services or live download state. P01 no longer uses the source DB by default; explicitly importing real legacy state can still resume its jobs on later startup.
 
 ## Verification at this checkpoint
 
-- Baseline: 11 Python files parsed, 7 JS files passed `node --check`, both manifests parsed.
-- Documentation: relative file links, milestone IDs and whitespace checked before committing.
-- Export: bundle verification and fresh-clone HEAD/tree comparison are required; exact hashes/results are recorded in the adjacent `receipt.json` generated for the bundle.
-- Not performed: live downloads, legacy sanity script, installer/build execution, browser integration, or desktop tests. No runtime application fixes were made in the planning step.
+- Platform: Linux x86_64, Python 3.14.8, yt-dlp 2026.6.9; Chrome 155.0.8059.84 and Playwright 1.64.1 for the optional UI check.
+- `.venv/bin/python -B -m unittest discover -s tests -v`: **35 tests passed** with the approved local-IPC sandbox exception. Includes import from a read-only copied install, isolated apps, partial/numeric settings, output-path bypasses, migration rollback/WAL/final-target import and fake worker/cookie cleanup.
+- `uv lock --check --offline --cache-dir /tmp/vidgrab-uv-cache --python .venv/bin/python --no-python-downloads`: passed. A frozen offline export matches `backend/requirements.txt` apart from its generated command header.
+- Opt-in `tests/check_options_ui.py`: all four tabs at 1280×900, 768×900 and 390×844 (**12 combinations**) passed; no page errors or tested overflow; minimum sampled contrast **4.86:1**. Backend calls were mocked, Google Fonts/network blocked, and an isolated profile used. Before/after screenshots were reviewed in `/tmp/vidgrab-ui-before.n3IxAO` and `/tmp/vidgrab-ui-after.9z4AsN`; these ephemeral images are not in Git.
+- Syntax: 21 Python files parsed, all 7 extension JS files checked, both manifests and `pyproject.toml` parsed; `bash -n installer/install.sh build.sh` passed. `backend.db --help` passed earlier in this P01 run. Whitespace/link review is performed before the commit.
+- Impeccable: real findings fixed; detector returns `[]` after the narrow Inter exception. This is a focused settings check, not a full WCAG/performance certification or an audit of the untouched popup.
+- Not performed: public-site downloads, real legacy import, installer/service/build execution, packaged/frozen engine tests, installed Chrome/Firefox extension integration, Windows, physical touch or desktop tests. No push or replacement bundle was requested.
 
 ## Resume on another agent/device
 
