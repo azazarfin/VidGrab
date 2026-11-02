@@ -2,7 +2,7 @@ import os
 import json
 import logging
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 import aiosqlite
@@ -27,6 +27,7 @@ DEFAULT_CONFIG = {
     "custom_ytdlp_args": "",
     "download_threads": 4,
     "gpu_accelerated_conversion": False,
+    "max_retries": 3
 }
 
 class ConfigModel(BaseModel):
@@ -43,8 +44,9 @@ class ConfigModel(BaseModel):
     postprocess_codec: str = Field(default=DEFAULT_CONFIG["postprocess_codec"])
     postprocess_normalize_audio: bool = Field(default=DEFAULT_CONFIG["postprocess_normalize_audio"])
     custom_ytdlp_args: str = Field(default=DEFAULT_CONFIG["custom_ytdlp_args"])
-    download_threads: int = Field(default=DEFAULT_CONFIG["download_threads"], ge=1, le=32)
-    gpu_accelerated_conversion: bool = Field(default=DEFAULT_CONFIG["gpu_accelerated_conversion"])
+    download_threads: Optional[int] = Field(default=4, description="Concurrent threads for fragment downloading")
+    gpu_accelerated_conversion: Optional[bool] = Field(default=False, description="Use hardware accelerated encoding")
+    max_retries: Optional[int] = Field(default=3, description="Maximum automatic retries on download failure")
 
 router = APIRouter(prefix="/config", tags=["config"])
 
@@ -77,7 +79,8 @@ async def init_db():
                 created_at TEXT NOT NULL,
                 completed_at TEXT,
                 download_options TEXT,
-                scheduled_at TEXT
+                scheduled_at TEXT,
+                retry_count INTEGER DEFAULT 0
             )
             """
         )
@@ -93,6 +96,13 @@ async def init_db():
         # Safely migrate existing database by adding scheduled_at if missing
         try:
             await db.execute("ALTER TABLE downloads ADD COLUMN scheduled_at TEXT")
+            await db.commit()
+        except aiosqlite.OperationalError:
+            pass # Already exists
+            
+        # Safely migrate existing database by adding retry_count if missing
+        try:
+            await db.execute("ALTER TABLE downloads ADD COLUMN retry_count INTEGER DEFAULT 0")
             await db.commit()
         except aiosqlite.OperationalError:
             pass # Already exists

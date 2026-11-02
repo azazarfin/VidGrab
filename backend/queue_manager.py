@@ -4,6 +4,7 @@ import time
 import json
 import os
 import sys
+import glob
 import subprocess
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -15,6 +16,7 @@ import aiosqlite
 from backend.config import DB_PATH, get_all_config
 from backend.downloader import run_download
 from backend.cookie_manager import write_cookies_to_netscape_format
+from backend.sanitizer import sanitize_text
 
 logger = logging.getLogger("vidgrab.queue_manager")
 router = APIRouter(prefix="/downloads", tags=["downloads"])
@@ -146,6 +148,7 @@ class QueueManager:
         user_agent: Optional[str] = None
     ) -> str:
         task_id = str(uuid4())
+        title = sanitize_text(title)
         created_at = datetime.now(timezone.utc).isoformat()
         status = "scheduled" if scheduled_at else "queued"
         
@@ -360,7 +363,7 @@ class QueueManager:
                 })
 
                 # Start the download task
-                task = asyncio.create_task(self._run_task(task_id, url, format_id, config, options))
+                task = asyncio.create_task(self._run_task(task_id, url, format_id, config, options, dict(row).get("retry_count", 0)))
                 self.active_tasks[task_id] = task
                 
             except asyncio.CancelledError:
@@ -369,7 +372,7 @@ class QueueManager:
                 logger.error(f"Error in queue worker loop: {e}")
                 await asyncio.sleep(5)
 
-    async def _run_task(self, task_id: str, url: str, format_id: str, config: Dict[str, Any], options: Dict[str, Any]):
+    async def _run_task(self, task_id: str, url: str, format_id: str, config: Dict[str, Any], options: Dict[str, Any], retry_count: int = 0):
         download_dir = options.get("download_dir") or config.get("download_dir")
         filename_template = options.get("output_template") or config.get("filename_template")
         speed_limit = config.get("speed_limit", 0)
@@ -429,9 +432,27 @@ class QueueManager:
                 user_agent=user_agent
             )
             
-            filepath = result.get("filepath")
-            extracted_title = result.get("title")
+            filepath = sanitize_text(result.get("filepath"))
+            extracted_title = sanitize_text(result.get("title"))
             extracted_thumbnail = result.get("thumbnail_url")
+            
+            if self.is_cancelled(task_id):
+                raise Exception("Download cancelled by user")
+                
+            if not filepath or not os.path.exists(filepath):
+                # yt-dlp might have changed the extension during postprocessing
+                if filepath:
+                    base, ext = os.path.splitext(filepath)
+                    found = False
+                    for possible_ext in ['.mp4', '.mkv', '.webm', '.m4a', '.mp3']:
+                        if os.path.exists(base + possible_ext):
+                            filepath = base + possible_ext
+                            found = True
+                            break
+                    if not found:
+                        raise Exception(f"Final file was not created. Download failed or was aborted by yt-dlp.")
+                else:
+                    raise Exception(f"Final file was not created. Download failed or was aborted by yt-dlp.")
             
             # Download completed successfully
             completed_at = datetime.now(timezone.utc).isoformat()
@@ -462,29 +483,70 @@ class QueueManager:
                 
         except Exception as e:
             # Handle failure or cancellation
-            status = "cancelled" if self.is_cancelled(task_id) else "failed"
-            error_msg = str(e)
+            is_cancelled = self.is_cancelled(task_id)
+            error_msg = sanitize_text(str(e))
             completed_at = datetime.now(timezone.utc).isoformat()
             
-            logger.error(f"Task {task_id} ended with status {status}: {error_msg}")
+            max_retries = config.get("max_retries", 3)
+            
+            if is_cancelled:
+                status = "cancelled"
+                logger.error(f"Task {task_id} ended with status {status}: {error_msg}")
+            elif retry_count < max_retries:
+                status = "queued"
+                retry_count += 1
+                logger.warning(f"Task {task_id} failed, retrying ({retry_count}/{max_retries}). Error: {error_msg}")
+            else:
+                status = "failed"
+                logger.error(f"Task {task_id} ended with status {status}: {error_msg}")
             
             async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute(
-                    "UPDATE downloads SET status = ?, error_message = ?, completed_at = ? WHERE id = ?",
-                    (status, error_msg, completed_at, task_id)
-                )
+                if status == "queued":
+                    await db.execute(
+                        "UPDATE downloads SET status = ?, error_message = ?, retry_count = ? WHERE id = ?",
+                        (status, error_msg, retry_count, task_id)
+                    )
+                else:
+                    await db.execute(
+                        "UPDATE downloads SET status = ?, error_message = ?, completed_at = ? WHERE id = ?",
+                        (status, error_msg, completed_at, task_id)
+                    )
                 await db.commit()
                 
             if task_id in self.in_memory_progress:
                 self.in_memory_progress[task_id].update({
                     "status": status,
                     "error_message": error_msg,
-                    "completed_at": completed_at
                 })
+                if status != "queued":
+                    self.in_memory_progress[task_id]["completed_at"] = completed_at
+                
                 await ws_manager.broadcast({
                     "event": f"task_{status}",
                     "data": self.in_memory_progress[task_id]
                 })
+                
+            # If we queued it for retry, wake up the worker
+            if status == "queued":
+                self.wakeup_event.set()
+                
+            # Clean up orphaned .part files if the task has permanently failed or was cancelled
+            if status in ("failed", "cancelled") and download_dir:
+                try:
+                    title = self.in_memory_progress.get(task_id, {}).get("title")
+                    if title:
+                        safe_title = title.replace("/", "_").replace("\\", "_")
+                        search_pattern = os.path.join(download_dir, f"{safe_title}*")
+                        for f in glob.glob(search_pattern):
+                            if ".part" in f or ".ytdl" in f:
+                                try:
+                                    os.remove(f)
+                                except OSError:
+                                    pass
+                except Exception as clean_e:
+                    logger.warning(f"Failed to cleanup temp files for task {task_id}: {clean_e}")
+                
+                
         finally:
             # Clean up tracking sets
             self.cancelled_tasks.discard(task_id)

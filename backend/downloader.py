@@ -4,6 +4,7 @@ import shlex
 from pathlib import Path
 from typing import Any, Dict, Callable, Optional, List
 import yt_dlp
+from backend.sanitizer import sanitize_text
 
 logger = logging.getLogger("vidgrab.downloader")
 
@@ -121,7 +122,7 @@ def make_postprocessor_hook(
     
     def hook(d: Dict[str, Any]):
         status = d.get('status')
-        if status == 'started':
+        if status in ('started', 'processing'):
             payload = {
                 "status": "postprocessing",
                 "progress": 100.0,
@@ -190,6 +191,7 @@ def run_download(
     ydl_opts = {
         'format': format_id,
         'outtmpl': outtmpl,
+        'restrictfilenames': True,
         'progress_hooks': [make_progress_hook(task_id, progress_callback, is_cancelled_cb)],
         'postprocessor_hooks': [make_postprocessor_hook(task_id, progress_callback)],
         'merge_output_format': 'mkv',
@@ -231,15 +233,6 @@ def run_download(
         
     if cookies_file_path and os.path.exists(cookies_file_path):
         ydl_opts['cookiefile'] = cookies_file_path
-    else:
-        # Fall back to reading cookies directly from the user's browsers.
-        # This is more reliable than extension-forwarded cookies because it
-        # includes httpOnly cookies and always has fresh values.
-        try:
-            # For Flatpak Brave users
-            ydl_opts['cookiesfrombrowser'] = ('brave', '/home/azaz/.var/app/com.brave.Browser/config/BraveSoftware/Brave-Browser')
-        except Exception:
-            pass
 
     # SponsorBlock configuration
     if sponsorblock_enabled and sponsorblock_categories:
@@ -344,7 +337,7 @@ def run_download(
             filepath = str(Path(filepath).with_suffix(f".{audio_format}"))
             
         return {
-            "filepath": str(filepath),
-            "title": info.get("title"),
+            "filepath": sanitize_text(str(filepath)),
+            "title": sanitize_text(info.get("title")),
             "thumbnail_url": info.get("thumbnail")
         }

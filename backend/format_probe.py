@@ -6,6 +6,8 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 import yt_dlp
 
+from backend.sanitizer import sanitize_text
+
 logger = logging.getLogger("vidgrab.format_probe")
 
 router = APIRouter(tags=["probe"])
@@ -57,11 +59,7 @@ def _run_probe(url: str) -> Dict[str, Any]:
         'js_runtimes': {'deno': {'path': None}, 'node': {'path': None}},
         'remote_components': ['ejs:github'],
     }
-    # Read cookies directly from Brave for authenticated video probing
-    try:
-        ydl_opts['cookiesfrombrowser'] = ('brave', '/home/azaz/.var/app/com.brave.Browser/config/BraveSoftware/Brave-Browser')
-    except Exception:
-        pass
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         try:
             info = ydl.extract_info(url, download=False)
@@ -91,7 +89,7 @@ def _parse_probe_result(url: str, info: Dict[str, Any]) -> ProbeResponse:
                 
                 entries.append(PlaylistEntry(
                     id=str(entry.get('id', '')),
-                    title=entry.get('title', 'Unknown Video'),
+                    title=sanitize_text(entry.get('title', 'Unknown Video')),
                     duration=entry.get('duration'),
                     thumbnail=entry.get('thumbnail'),
                     url=entry_url or ""
@@ -127,10 +125,10 @@ def _parse_probe_result(url: str, info: Dict[str, Any]) -> ProbeResponse:
 
     return ProbeResponse(
         url=url,
-        title=info.get('title', 'Unknown Title'),
+        title=sanitize_text(info.get('title', 'Unknown Title')),
         thumbnail=info.get('thumbnail'),
         duration=info.get('duration'),
-        uploader=info.get('uploader') or info.get('playlist_uploader'),
+        uploader=sanitize_text(info.get('uploader') or info.get('playlist_uploader')),
         is_playlist=is_playlist,
         entries=entries,
         formats=formats if not is_playlist else None,
