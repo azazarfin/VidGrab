@@ -4,10 +4,10 @@ This file is the current development checkpoint. It is plain Markdown for any ag
 
 ## Current state
 
-- **Phase:** P01 runtime implementation and verification complete; the separate reviewed legacy-DB index cleanup is the remaining P01 task. There is no desktop app yet.
+- **Phase:** P01 complete, including the separate reviewed legacy-DB index cleanup. Work stopped after P01 at the user's explicit request on 2026-11-03. P02 has not started; there is no desktop app yet.
 - **Branch:** `planning/desktop-companion`.
 - **Source checkpoint:** `79f7d7e2fecdbd4623dfc0b6d6632daffe349809`, based on `822b9f2`.
-- **Planning checkpoint:** `f47ce25`. **Current implementation checkpoint:** the latest commit affecting this file; resolve with `git log -1 --format=%H -- HANDOFF.md`. Existing bundle receipts identify their exported HEAD; the old planning bundle predates P01 and has not been refreshed.
+- **Planning checkpoint:** `f47ce25`. **P01 implementation:** `7ba96d0` (`refactor(backend): isolate runtime state and deterministic setup`). **P01 cleanup checkpoint:** the latest commit affecting this file; resolve with `git log -1 --format=%H -- HANDOFF.md`. Existing bundle receipts identify their exported HEAD; the old planning bundle predates P01 and has not been refreshed.
 - **Confirmed:** Linux and Windows first; macOS later. Source snapshot plus offline Git bundle selected. No Git remote is configured.
 - **Proposed:** Tauri 2 + TypeScript/React shell, bundled Python engine, app-owned workers, native-messaging bridge and shared protocol. Validate framework and packaging in P02.
 
@@ -19,14 +19,17 @@ This file is the current development checkpoint. It is plain Markdown for any ag
 4. [docs/DECISIONS.md](docs/DECISIONS.md): confirmed choices versus recommendations and pending decisions.
 5. [docs/VALIDATION.md](docs/VALIDATION.md): current evidence and future test/release matrix.
 
-## Next executable task: finish P01's reviewed state cleanup
+## Stopped at P01 — P02 requires a new continuation request
 
-1. Confirm the runtime implementation/tests/docs are committed and only the four deliberately excluded artifacts remain dirty. Verify `backend/vidgrab.db` still has SHA-256 `148dbba8a3bea4f01b0e6dbbca7faf157dea157ff9300f4251a6c47f56c38f8f`.
-2. In a separate cleanup commit, ignore `/backend/vidgrab.db` and its SQLite sidecars, then run `git rm --cached -- backend/vidgrab.db`. This removes only the index entry; preserve and recheck the working file. Never delete it or rewrite history.
-3. Only after that check, mark P01 complete in the plan and checkpoint. Include the handoff update in the cleanup commit; leave the generated archives and promotional image local.
-4. Hand off P02: inspect target-native tooling and add the smallest shell/packaged-engine lifecycle spike against temporary state before a full UI. Read P02's acceptance gate: frozen fixture download, native-host registration, browser-independent lifetime, tray/window fallback and actual Linux **and Windows** evidence are required.
+P01 has no remaining subtask. The separate cleanup ignores `/backend/vidgrab.db` and its SQLite sidecars and removes only the database's Git index entry. Its local SHA-256 remains `148dbba8a3bea4f01b0e6dbbca7faf157dea157ff9300f4251a6c47f56c38f8f`; no file was deleted and no history was rewritten.
 
-No further user decision blocks this cleanup. Do not run installers, rebuild `dist/`, launch real downloads, publish a remote or export another bundle without the corresponding request. P02 is not validated by a Linux-only scaffold.
+Do not start P02 or other implementation now. When the user requests continuation beyond P01:
+
+1. Read P02 in the plan and architecture, then inspect target-native tooling.
+2. Add the smallest shell/packaged-engine lifecycle spike against temporary state before a full UI.
+3. Follow P02's acceptance gate: frozen fixture download, native-host registration, browser-independent lifetime, tray/window fallback and actual Linux **and Windows** evidence are required. A Linux-only scaffold does not complete P02.
+
+Do not run installers, rebuild `dist/`, launch real downloads, publish a remote or export another bundle without the corresponding request.
 
 ## Implemented P01 interfaces and decisions
 
@@ -48,12 +51,12 @@ The user approved leaving these current edits local; all were preserved during P
 
 | Path | Meaning |
 | --- | --- |
-| `backend/vidgrab.db` | Current settings/history/queue database |
+| `backend/vidgrab.db` | Preserved, ignored local settings/history/queue database; removed from the current Git tree only |
 | `dist/vidgrab-chrome-extension.zip` | Locally generated archive |
 | `dist/vidgrab-firefox-extension.zip` | Locally generated archive |
 | `store_assets/vidgrab_promo_banner.png` | Modified promotional image |
 
-Their earlier tracked versions remain in Git history and therefore in a full-history bundle. No current working copy has been added to the P01 implementation commit. The bundle does not contain the latest working copies, ignored venv/scratch files, installed services or live download state. P01 no longer uses the source DB by default; explicitly importing real legacy state can still resume its jobs on later startup.
+Their earlier tracked versions remain in Git history and therefore in a full-history bundle. No current working copy has been added to either P01 commit; the cleanup only removes the database's index entry. A fresh checkout of the completed P01 tree does not contain that database. The bundle does not contain the latest working copies, ignored venv/scratch files, installed services or live download state. P01 no longer uses the source DB by default; explicitly importing real legacy state can still resume its jobs on later startup.
 
 ## Verification at this checkpoint
 
@@ -61,7 +64,8 @@ Their earlier tracked versions remain in Git history and therefore in a full-his
 - `.venv/bin/python -B -m unittest discover -s tests -v`: **35 tests passed** with the approved local-IPC sandbox exception. Includes import from a read-only copied install, isolated apps, partial/numeric settings, output-path bypasses, migration rollback/WAL/final-target import and fake worker/cookie cleanup.
 - `uv lock --check --offline --cache-dir /tmp/vidgrab-uv-cache --python .venv/bin/python --no-python-downloads`: passed. A frozen offline export matches `backend/requirements.txt` apart from its generated command header.
 - Opt-in `tests/check_options_ui.py`: all four tabs at 1280×900, 768×900 and 390×844 (**12 combinations**) passed; no page errors or tested overflow; minimum sampled contrast **4.86:1**. Backend calls were mocked, Google Fonts/network blocked, and an isolated profile used. Before/after screenshots were reviewed in `/tmp/vidgrab-ui-before.n3IxAO` and `/tmp/vidgrab-ui-after.9z4AsN`; these ephemeral images are not in Git.
-- Syntax: 21 Python files parsed, all 7 extension JS files checked, both manifests and `pyproject.toml` parsed; `bash -n installer/install.sh build.sh` passed. `backend.db --help` passed earlier in this P01 run. Whitespace/link review is performed before the commit.
+- Syntax: 21 Python files parsed, all 7 extension JS files checked, both manifests and `pyproject.toml` parsed; `bash -n installer/install.sh build.sh` passed. `backend.db --help` passed earlier in this P01 run. Whitespace and local Markdown-link checks passed for the final cleanup.
+- Index cleanup: database/sidecar ignore rules and explicit staged scope checked; the preserved database and both ZIPs/promotional image were rehashed unchanged. No application code changed after the recorded 35-test run, so the deterministic suite and UI checks were not repeated for this documentation/index-only cleanup.
 - Impeccable: real findings fixed; detector returns `[]` after the narrow Inter exception. This is a focused settings check, not a full WCAG/performance certification or an audit of the untouched popup.
 - Not performed: public-site downloads, real legacy import, installer/service/build execution, packaged/frozen engine tests, installed Chrome/Firefox extension integration, Windows, physical touch or desktop tests. No push or replacement bundle was requested.
 

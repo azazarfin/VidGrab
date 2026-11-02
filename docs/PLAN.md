@@ -1,6 +1,6 @@
 # VidGrab desktop-companion plan
 
-Status: P01 runtime implementation and checks are complete; its separate database-index cleanup is pending. The desktop application is not implemented.
+Status: P01 is complete, including its separate reviewed database-index cleanup. Work stopped after P01 at the user's request; P02 has not started. The desktop application is not implemented.
 
 ## Approach
 
@@ -24,15 +24,15 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 - Record the architecture, decisions, release gates, known limitations, and next task. Commit the planning files and verify that a Git bundle can be cloned independently.
 - Acceptance: the bundle reproduces the committed source and instructions; omitted local state is explicitly recorded.
 
-### [ ] P01 — Isolate runtime state and establish deterministic checks
+### [x] P01 — Isolate runtime state and establish deterministic checks
 
 - [x] Add `backend/runtime.py` and `backend/app.py:create_app`; place runtime directories outside source/install and media outside application storage. Replace imported `DB_PATH` globals with injected configuration; isolate settings, queue, cookies, probes and connections.
 - [x] Introduce schema versions 0/1 → 2 with transactional migration, snapshots/rollback, validated explicit legacy import and newer-schema rejection.
-- [ ] Stop tracking the legacy runtime database in a separate reviewed cleanup, preserving and hash-verifying the local file.
+- [x] Stop tracking the legacy runtime database in a separate reviewed cleanup, preserving and hash-verifying the local file. Database/sidecars are ignored; older commits remain unchanged.
 - [x] Add `pyproject.toml`, `uv.lock`, hashed requirements and isolated tests with fake extractor/download/clock/process boundaries. Remove startup pip mutation and remote EJS fetches; make health/status local-only.
 - [x] Cover partial settings, strict bounded/non-null integers and runtime/output-path compatibility. VidGrab's baseline is Python 3.11+; pinned yt-dlp 2026.6.9 itself declares >=3.10. Execution evidence is Linux/Python 3.14.8; do not invent Python 3.11 or Windows results.
 - [x] Acceptance evidence: import/app creation and 35 deterministic tests perform no external requests or real downloads and preserve the legacy DB. A mocked settings check passes 12 viewport/tab combinations. Exact commands/results and limits are in [DEVELOPMENT.md](DEVELOPMENT.md) and [VALIDATION.md](VALIDATION.md).
-- Suggested commit: `refactor(backend): isolate runtime state and deterministic app setup`.
+- Implementation commit: `7ba96d0` (`refactor(backend): isolate runtime state and deterministic setup`). The separate cleanup checkpoint is identified in [HANDOFF.md](../HANDOFF.md).
 
 ### [ ] P02 — Prove packaged lifecycle and browser connection on both target OSes
 

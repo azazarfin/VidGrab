@@ -18,6 +18,10 @@ downloads/
 # Logs and databases
 *.log
 
+# Preserved legacy runtime state; new application data lives outside the repo
+/backend/vidgrab.db
+/backend/vidgrab.db-*
+
 # Editor & tool directories
 .kilo/
 .vscode/
