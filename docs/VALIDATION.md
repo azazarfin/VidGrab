@@ -40,7 +40,7 @@ Playwright 1.64.1 with isolated headless Chrome 155.0.8059.84 rendered all four 
 
 Fixed: muted/placeholder and active-button contrast (baseline hints about 3.24:1, gradient stops about 2.43:1), heading skips, tiny helpers/presets, missing selected-section/switch announcements, narrow-window clipping, focus visibility, thick warning border, colored glow and decorative card blur/gradient brand text. Existing layout/content/identity were preserved beyond these refinements.
 
-Suppressed: only `overused-font=inter` for `extension/options/options.html`, via the validated CLI with an incumbent-typeface rationale. No file-wide or rule-wide ignores. The final configured detector returns `[]`.
+Suppressed: only `overused-font=inter` for `extension/options/options.html` and `extension/options/options.css`, via the validated CLI. The HTML waiver preserves incumbent typography; the user approved adding the CSS-only waiver on 2026-11-03 after P01. No file-wide or rule-wide ignores. Both targeted configured scans reported no findings; CSS scanning is regex-only and does not run parsed-page contrast/element rules. No UI source changed or browser/backend checks were repeated for this config/checkpoint-only addition; P02 remains unstarted.
 
 Left standing: the legacy cookie description wrongly says no disk writes; approval to correct factual copy was requested but not received. Real cookies use temporary files and are excluded from persisted job options. The untouched popup, remote-font availability, complete keyboard/screen-reader coverage and physical-touch interactions are not certified by this focused check.
 
