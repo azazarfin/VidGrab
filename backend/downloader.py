@@ -163,7 +163,8 @@ def run_download(
     download_threads: int = 4,
     gpu_accelerated_conversion: bool = False,
     extra_args: Optional[Dict[str, Any]] = None,
-    user_agent: Optional[str] = None
+    user_agent: Optional[str] = None,
+    components: Optional[Dict[str, str]] = None
 ) -> Dict[str, Any]:
     """Synchronous function to execute the yt-dlp download. Run inside a thread."""
     
@@ -228,6 +229,10 @@ def run_download(
     # Enforce the injected cache/component policy after merging legacy options.
     ydl_opts['remote_components'] = []
     ydl_opts['cachedir'] = str(runtime.temp_dir / 'yt-dlp-cache')
+    if components is not None:
+        # App-owned paths win over legacy custom options and host PATH discovery.
+        ydl_opts['ffmpeg_location'] = str(Path(components['ffmpeg']).parent)
+        ydl_opts['js_runtimes'] = {'deno': {'path': components['deno']}}
 
     if download_threads > 1:
         ydl_opts['concurrent_fragment_downloads'] = download_threads
@@ -341,7 +346,7 @@ def run_download(
             filepath = str(Path(filepath).with_suffix(f".{audio_format}"))
             
         return {
-            "filepath": sanitize_text(str(filepath)),
+            "filepath": str(filepath),
             "title": sanitize_text(info.get("title")),
             "thumbnail_url": info.get("thumbnail")
         }

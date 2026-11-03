@@ -452,7 +452,7 @@ class QueueManager:
                 user_agent=user_agent
             )
 
-            filepath = sanitize_text(result.get("filepath"))
+            filepath = result.get("filepath")
             extracted_title = sanitize_text(result.get("title"))
             extracted_thumbnail = result.get("thumbnail_url")
 

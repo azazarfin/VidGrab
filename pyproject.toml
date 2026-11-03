@@ -17,6 +17,7 @@ dependencies = [
 
 [dependency-groups]
 dev = ["httpx2"]
+packaging = ["pyinstaller==6.22.3", "yt-dlp-ejs==0.8.0"]
 
 [tool.uv]
 package = false

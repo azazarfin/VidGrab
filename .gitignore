@@ -28,6 +28,14 @@ downloads/
 .idea/
 scratch/
 /.handoff/
+/target/
+/desktop/node_modules/
+/desktop/dist/
+/desktop/src-tauri/resources/
+/desktop/src-tauri/binaries/
+/desktop/src-tauri/gen/
+/packaging/out/
+/packaging/work/
 
 # OS generated files
 .DS_Store

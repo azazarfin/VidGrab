@@ -1,6 +1,7 @@
 // Import the API client and utilities
-importScripts("../lib/api.js");
-importScripts("../lib/utils.js");
+if (typeof importScripts === "function") {
+  importScripts("../lib/api.js", "../lib/utils.js", "../lib/native.js");
+}
 
 const DEFAULT_SETTINGS = {
   backendUrl: "http://localhost:8000",

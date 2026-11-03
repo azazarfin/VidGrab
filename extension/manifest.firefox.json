@@ -8,7 +8,9 @@
     "contextMenus",
     "storage",
     "notifications",
-    "cookies"
+    "cookies",
+    "alarms",
+    "nativeMessaging"
   ],
   "icons": {
     "16": "icons/icon16.png",
@@ -22,7 +24,7 @@
     "<all_urls>"
   ],
   "background": {
-    "scripts": ["background/service-worker.js"]
+    "scripts": ["lib/api.js", "lib/utils.js", "lib/native.js", "background/service-worker.js"]
   },
   "content_scripts": [
     {

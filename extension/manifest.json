@@ -2,6 +2,7 @@
   "manifest_version": 3,
   "name": "VidGrab",
   "version": "1.0.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwU77AceDJrorMBkh/Z61UFsa9AnXfqIEtoqHhxcYl9Uh4LF0XdOQ1tmFxE17YOMbk+3i/BoYkpAVGdma9oDDd7YHzr/zvw50pM6gVl0CfaGZHb+BbntuefYLNX9ApamKoyel31oKuMzweVdv/ldFEFOIukrQjbqG36oHkxvE0sldcB7RAP9YCD+sGSp2KrgspCG2Pjjh/Bw5w2I0D74vr6cUA2wnivlZ47ZQmtHBkJT4qo7qzGpgOFXs7PN9GW+wQFJlpB8vFtut9vRpLgtu9Zvv4+dmrq8Oy6myQT7gbEFkhRKaRwJhb1TL2Cidk8y8dZ3JsYILHe51RjZACoEbvQIDAQAB",
   "description": "Download videos from various websites using a local yt-dlp backend.",
   "permissions": [
     "activeTab",
@@ -9,7 +10,8 @@
     "storage",
     "notifications",
     "cookies",
-    "alarms"
+    "alarms",
+    "nativeMessaging"
   ],
   "icons": {
     "16": "icons/icon16.png",

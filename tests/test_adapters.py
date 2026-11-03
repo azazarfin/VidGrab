@@ -77,7 +77,7 @@ class AdapterTests(OfflineTestCase):
             self.assertEqual(opened, [str(runtime.download_dir)])
 
     def test_fixture_download_uses_runtime_and_cleans_volatile_cookies(self):
-        runtime = self.runtime()
+        runtime = self.runtime("queue বাংলা")
         observed = []
 
         def download(**options):
@@ -101,6 +101,8 @@ class AdapterTests(OfflineTestCase):
             self.assertEqual(events, ["task_queued", "task_started", "task_complete"])
             job = client.get("/downloads").json()[0]
             self.assertEqual(job["status"], "complete")
+            self.assertEqual(job["file_path"], str(runtime.download_dir / "fixture.mp4"))
+            self.assertTrue(Path(job["file_path"]).is_file())
             self.assertNotIn("cookies", json.loads(job["download_options"]))
             self.assertNotIn("fixture-secret", job["download_options"])
             self.assertFalse(list(runtime.temp_dir.glob("vidgrab_cookies_*")))

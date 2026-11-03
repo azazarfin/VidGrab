@@ -46,6 +46,37 @@ Left standing: the legacy cookie description wrongly says no disk writes; approv
 
 Before/after screenshot paths are recorded in HANDOFF; they are `/tmp` artifacts, not portable committed goldens. No build archives, installers, services, real downloads, desktop tests, remote push or replacement Git bundle were run.
 
+## Actual P02 Linux spike evidence — 2026-11-04
+
+The user resumed on 2026-11-04 and chose Linux work now, Windows validation later. This checkpoint verifies a development spike; full P02 and the framework decision remain open. P03 has not started.
+
+Observed platform: Fedora 43 x86_64, glibc 2.42, Python 3.14.8, Rust 1.99.0 and Node 22.22.2. Frozen tools are PyInstaller 6.22.3, yt-dlp 2026.6.9, EJS 0.8.0, Deno 2.9.8 and static FFmpeg/ffprobe 7.0.2. Desktop uses Tauri Rust 2.12.5/JS 2.12.4, React 19.3.1, GTK 3.24.52, WebKitGTK 2.54.2, GLib 2.86.5 and Wry 0.57.1. These are observed development versions, not minimum supported baselines.
+
+The final fresh staging tree is `/tmp/vidgrab-p02-linux-final/bundle`. It includes the previously built native desktop and the rebuilt frozen engine after both Unicode-path fixes. Exact build/check commands and prerequisites are in [DEVELOPMENT.md](DEVELOPMENT.md); `/tmp` bundles, SDK, tools and screenshots are ephemeral and excluded from Git.
+
+| Check | Actual result |
+| --- | --- |
+| `.venv/bin/python -B -m unittest discover -s tests -v` | 49 passed; external-network/process guards retained, approved local-IPC exception |
+| Packaged API/runtime | Import-safe factory; credential/Host/Origin checks; legacy routes/WebSockets hidden; bounded fixture/status operations; complete installation protected; app-owned media tools override legacy options |
+| Packaging boundaries | Archive checksum rejection and selected regular-file extraction; full frozen support-tree preparation; missing/overlapping inputs rejected before writes; frozen self-check succeeds with empty `PATH` |
+| Downloader/queue regression | Tests failed before fixes: the downloader and queue independently transliterated an existing Bangla parent path. Literal paths now reach successful completion and persisted history; existing metadata/filename policy is preserved |
+| `tests/check_native_lifecycle.py` | Nine passed with empty `PATH`: concurrent single ownership, invalid origin/frame/operation rejection, download after native-host exit, completed state after reopen, bounded recovery, preserved failures, no replay after a lost mutation reply, and reaping a descendant ignoring SIGTERM |
+| `tests/check_native_desktop.py` | Compiled embedded frontend loads at `tauri://localhost`; no-tray Close preserves its usable window, repeated activation keeps one owner, external URL is rejected, frozen WAV → MP3 succeeds in a directory with spaces/Bangla, engine recovery preserves completed state, explicit Quit removes owner/engine/endpoint |
+| `tests/check_installed_browsers.py` | Installed Chrome 157.0.8103.38 and Firefox 159.0 both passed background imports/stable identity, missing registration, native activation, active download after browser exit, MP3 completion and persisted state after reopening |
+| `node tests/check_extension_bootstrap.mjs` | Both classic-script background paths, permissions, fixed identities and a mocked native request passed; separate from installed-browser evidence |
+| Desktop render/build | Production TypeScript/Vite and native Cargo release builds passed. Mocked renderer passed 1280×900, 620×600 and 390×720, including connection recovery, retained action errors, completion and overflow; native empty/completed screenshots were reviewed |
+| Frozen lock | Offline `uv lock --check` passed; runtime requirements export unchanged |
+| Final checkpoint syntax/docs | 38 Python, eight JSON and five TOML files parsed; eight extension JavaScript files checked; 27 local Markdown links and whitespace passed; frozen runtime export matches apart from comments |
+| Preserved local state | Legacy DB remains SHA-256 `148dbba8a3bea4f01b0e6dbbca7faf157dea157ff9300f4251a6c47f56c38f8f`; both dirty extension ZIPs and the promotional banner are excluded from this checkpoint |
+
+All successful native/browser conversions produced MP3 SHA-256 `958bcfd31005dab8833844f7c058a3514e02baa209df62ab110228245a50f9a5`. The final staging receipt reports 331,583,567 unpacked bytes before its own receipt, a 0.648-second component self-check and an 18.310-second staging build; the desktop executable is 11,710,040 bytes. Staging reused the native desktop binary. These measurements establish development staging costs, not installer size or end-to-end app startup budgets.
+
+Native GUI/browser checks use bwrap private network/PID/home state, masked system native registrations, a private D-Bus session and Xvfb/Mesa software rendering. Chrome's custom test profile contains its native manifest; Firefox source is temporarily installed as an XPI with Gecko 0.37.1. Gecko's archive digest was verified and its privileged-test flag is confined to that isolated session. The Python fixture engine separately forbids external connections. No real user runtime, public-site download, installer, service, remote push or replacement Git bundle was used.
+
+Native screenshots are `/tmp/vidgrab-p02-native-ui/native-empty.png` and `native-complete.png`; renderer screenshots are in `/tmp/vidgrab-p02-desktop-ui`. Earlier `native-failure.png`/`native-diagnostics.json` retain the path failure and do not describe the final passing run.
+
+Still required: choose a clean Linux package baseline; validate AppImage/`.deb` resource discovery, relocation/registration, install/uninstall and real tray/Wayland; exercise sandboxed-browser access and paired fallback; implement and validate Windows x64 native pipes/Job Objects, packaged tools, WebView2/tray and browser/installer lifecycle. The Rust workspace rejects non-Linux builds. Thread-based jobs, cancellation, durable retry/artifact semantics and `/v1` remain later work.
+
 ## Deterministic coverage to extend through P05
 
 Use temporary runtime directories/databases and a local HTTP fixture server. External network access should fail the default suite; inject extractor, clock, randomness, process, and update boundaries where needed. Keep tests tied to observable behavior, not the internal refactoring shape.

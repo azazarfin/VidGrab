@@ -1,6 +1,6 @@
 # VidGrab desktop-companion plan
 
-Status: P01 is complete, including its separate reviewed database-index cleanup. Work stopped after P01 at the user's request; P02 has not started. The desktop application is not implemented.
+Status: P01 is complete. The user resumed on 2026-11-04 and requested Linux work now, Windows validation later. P02 has a Linux desktop/packaged-engine/native-host spike; its acceptance gate and the framework decision remain open.
 
 ## Approach
 
@@ -36,11 +36,14 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 
 ### [ ] P02 — Prove packaged lifecycle and browser connection on both target OSes
 
-- Add a minimal `desktop/` shell, packaged engine entrypoint, `native-host/`, and `packaging/` definitions. Ship a trivial local-fixture download before building the full manager.
-- Bundle Python, yt-dlp, FFmpeg/ffprobe, Deno, and matching EJS support. Verify frozen imports and target-specific resource paths on Linux and Windows machines without developer tools installed.
-- Prove tray/window behavior, single instance, engine crash recovery, and a browser-launched app that survives browser exit. Validate Windows process/job handling and Linux desktop/tray integration.
-- Prove Chrome and Firefox native-host registration, stable extension IDs, and Firefox background imports. Evaluate the paired-loopback fallback for sandboxed browsers and an AppImage moved to another path.
-- Acceptance: install, connect, download, close browser, reopen app, and uninstall on both OSes. Capture installer size/startup measurements and finalize ADR-001. A scaffold-only result does not pass this gate.
+- [x] Add a minimal Linux `desktop/` Tauri/React shell, packaged fixture engine, `native-host/`, component locks, clean staging and resource-preparation commands.
+- [x] Bundle Python, yt-dlp, FFmpeg/ffprobe, Deno and matching EJS on Linux. Frozen imports, checksum/version checks and a loopback WAV → MP3 fixture work with an empty `PATH`.
+- [x] Prove Linux private IPC, concurrent single ownership, native-host-independent lifetime, bounded engine recovery, mutation reply handling and explicit process-group cleanup through nine native lifecycle cases.
+- [x] Compiled native window and installed Chrome/Firefox handoff checks pass against the final frozen bundle; exact evidence is in VALIDATION. Mocked rendering passes three viewport sizes. Unicode directories, no-tray Close, repeated activation, engine recovery and explicit Quit are covered.
+- [ ] Validate real Linux tray/Wayland integration and clean AppImage/`.deb` install/connect/download/browser close/reopen/uninstall without developer runtimes. Measure installer size and startup, and repair native registration after relocation.
+- [ ] Implement and validate Windows x64 packaged paths, named pipes/Job Objects, WebView2/tray, Chrome/Firefox registration and installer lifecycle. Windows evidence is deferred at the user's request, not waived.
+- [ ] Evaluate sandboxed-browser native-host access and the explicitly paired loopback fallback.
+- [ ] Acceptance: both target OSes pass the package/lifecycle gate, measurements are recorded and ADR-001 is finalized. This Linux spike does not complete P02; P03 has not started.
 - Suggested commit: `feat(desktop): prove bundled engine and browser bridge lifecycle`.
 
 ### [ ] P03 — Make downloads durable and cancellation enforceable

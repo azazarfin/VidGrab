@@ -1,0 +1,16 @@
+[workspace]
+members = ["desktop/supervisor", "native-host", "desktop/src-tauri"]
+default-members = ["desktop/supervisor", "native-host"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+getrandom = "0.4"
+vidgrab-supervisor = { path = "desktop/supervisor" }

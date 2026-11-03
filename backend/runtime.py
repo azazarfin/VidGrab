@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Mapping
 
 MIN_PYTHON = (3, 11)
-INSTALL_ROOT = Path(__file__).resolve().parents[1]
+INSTALL_ROOT = (
+    Path(sys.executable).resolve().parent.parent
+    if getattr(sys, "frozen", False)
+    else Path(__file__).resolve().parents[1]
+)
 
 
 class RuntimeCompatibilityError(RuntimeError):

@@ -41,7 +41,7 @@ Record new decisions here with date, status, rationale, and the milestone that v
 
 ## ADR-007 — P01 runtime and compatibility boundaries
 
-- **Date:** 2026-11-03. **Status:** P01 complete, verified on Linux; not a desktop/Windows support claim. The user requested stopping after P01; P02 has not started.
+- **Date:** 2026-11-03. **Status:** P01 complete, verified on Linux; not a desktop/Windows support claim. The user stopped at this checkpoint, then resumed Linux P02 work on 2026-11-04.
 - **Decision:** immutable `RuntimeConfig` supplies data/media/log/temp paths; app creation is side-effect-free and each factory instance owns its services. Defaults use per-user data, never automatic source-DB import. Output settings exclude installation and application storage while retaining safe nested/absolute templates.
 - **Migrations:** SQLite `user_version` 0/1 → 2; validate schema/settings under a transaction, snapshot before upgrades, roll back failures, reject newer schemas. Explicit import snapshots/stages a selected source, includes committed WAL data, validates final-runtime paths and atomically refuses destination replacement. Filesystem hard-link support and Windows behavior still need target-native evidence.
 - **Compatibility:** VidGrab requires Python >=3.11. The selected yt-dlp 2026.6.9 metadata says >=3.10; the older plan's upstream-minimum wording was not accurate for this pin. Tests actually ran under Python 3.14.8. Runtime requirements are hashed exports of `uv.lock`; uv also installs the current TestClient's development HTTP client.
@@ -57,7 +57,17 @@ Record new decisions here with date, status, rationale, and the milestone that v
 - **Excluded current local edits:** `backend/vidgrab.db`, both `dist/vidgrab-*-extension.zip` files, and `store_assets/vidgrab_promo_banner.png`. The bundle includes their older committed versions/history, not these working copies.
 - **Consequence:** development can resume from committed code and [HANDOFF.md](../HANDOFF.md) with no chat history. Existing venv, ignored scratch files, credentials, and active download state do not transfer. If remote hosting is later chosen, publish the branch without rewriting these checkpoints.
 
+## ADR-008 — Linux P02 spike implementation boundary
+
+- **Date:** 2026-11-04. **Status:** Linux development spike verified; full P02 and ADR-001 remain open. The user chose Linux work now and Windows validation later.
+- **Implemented:** Tauri 2/React connection window, frozen Python/media tools, private same-user POSIX IPC, bounded engine recovery, owned process-group shutdown and a small native browser bridge. Browser mutations are forwarded once; a lost reply reports an unknown outcome for queue inspection.
+- **Build/path corrections:** direct Cargo builds embed the frontend through the default `custom-protocol` feature. Download result paths remain literal in both the downloader and queue; existing Bangla/Unicode directories are preserved without changing title sanitization or the established filename policy. Complete artifact tracking remains P03.
+- **Evidence:** 49 guarded deterministic tests, nine native lifecycle cases, compiled WebKit window, mocked rendering at three sizes and installed Chrome/Firefox handoffs pass. Exact versions, commands, staging measurements and limits are in [VALIDATION.md](VALIDATION.md).
+- **Deferred gates:** clean Linux packages, resource discovery, relocation/registration, real tray/Wayland, sandboxed browsers and Windows x64. These results do not finalize the framework or authorize P03; the native workspace currently rejects non-Linux builds.
+
 ## Pending decisions by gate
+
+The user chose **Linux work now, Windows validation later** on 2026-11-04. The Linux spike uses Tauri 2/React, a frozen Python engine and a Rust POSIX owner/bridge. This is implementation evidence for ADR-001/003, not final stack acceptance. Windows native IPC/Job Objects and target packaging remain unimplemented; the workspace currently rejects non-Linux builds. Neither target's complete installer gate is waived, and P03 has not started.
 
 | Gate | Decision/evidence needed | Working assumption |
 | --- | --- | --- |
