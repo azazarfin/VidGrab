@@ -1,10 +1,11 @@
 use gio::glib::variant::ToVariant;
 use gio::prelude::DBusProxyExt;
 use serde_json::{json, Value};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use tauri::{Manager, State, menu::{Menu, MenuItem}, tray::TrayIconBuilder};
 use vidgrab_supervisor::{Config, Owner, UiEvent, protocol, transport};
+use vidgrab_supervisor::installation::{self, Layout, UserDirs};
 
 struct DesktopState {
     config: Config,
@@ -56,10 +57,44 @@ fn tray_host_available() -> bool {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
-    if arguments.len() != 2 || arguments[0] != "--config" {
-        return Err("P02 spike: launch with --config and an explicit staged runtime configuration".into());
-    }
-    let config = Config::load(&PathBuf::from(&arguments[1]))?;
+    let context = tauri::generate_context!();
+    let config = if arguments.len() == 2 && arguments[0] == "--config" {
+        Config::load(&PathBuf::from(&arguments[1]))?
+    } else {
+        let packaged = arguments.len() == 2 && arguments[0] == "--package-config";
+        let diagnostic = arguments.len() == 1 && ["--check-package", "--register-browser-host", "--unregister-browser-host"].iter().any(|flag| arguments[0] == *flag);
+        if !arguments.is_empty() && !packaged && !diagnostic {
+            return Err("Use a packaged launch, --config FILE, --check-package, --register-browser-host or --unregister-browser-host".into());
+        }
+        if arguments.first().is_some_and(|arg| arg == "--check-package") {
+            let environment = tauri::Env::default();
+            let resources = tauri::utils::platform::resource_dir(context.package_info(), &environment)?;
+            let image = std::env::var_os("APPIMAGE");
+            let layout = Layout::discover(&std::env::current_exe()?, &resources, image.as_deref().map(Path::new))?;
+            println!("{}", json!({"app":layout.app, "engine":layout.engine, "native":layout.native}));
+            return Ok(());
+        }
+        let home = PathBuf::from(std::env::var_os("HOME").ok_or("HOME must select an explicit user directory")?);
+        let dirs = UserDirs { data_home: std::env::var_os("XDG_DATA_HOME").filter(|value| !value.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".local/share")),
+            config_home: std::env::var_os("XDG_CONFIG_HOME").filter(|value| !value.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".config")), home };
+        if arguments.first().is_some_and(|arg| arg == "--unregister-browser-host") {
+            println!("{}", json!({"removed": installation::unregister(&dirs)?}));
+            return Ok(());
+        }
+        if packaged && PathBuf::from(&arguments[1]) != dirs.config_path() {
+            return Err("The package activation configuration must match this user's registered bridge".into());
+        }
+        let environment = tauri::Env::default();
+        let resources = tauri::utils::platform::resource_dir(context.package_info(), &environment)?;
+        let image = std::env::var_os("APPIMAGE");
+        let layout = Layout::discover(&std::env::current_exe()?, &resources, image.as_deref().map(Path::new))?;
+        let saved = installation::register(&layout, &dirs)?;
+        if arguments.first().is_some_and(|arg| arg == "--register-browser-host") {
+            println!("{}", serde_json::to_string(&saved)?);
+            return Ok(());
+        }
+        saved.runtime(&layout)
+    };
     let Some(owner) = Owner::start(config.clone())? else {
         let _ = command(&config, "activate", Default::default());
         return Ok(());
@@ -104,7 +139,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if window.state::<DesktopState>().tray_available { let _ = window.hide(); }
             }
         })
-        .build(tauri::generate_context!())?;
+        .build(context)?;
     application.run(move |_handle, event| {
         if let tauri::RunEvent::ExitRequested { api, .. } = event {
             if !exit_stop.load(Ordering::Acquire) { api.prevent_exit(); exit_stop.store(true, Ordering::Release); }

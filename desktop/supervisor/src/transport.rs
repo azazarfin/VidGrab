@@ -4,6 +4,7 @@ use std::io::{self, Read, Write};
 use std::net::TcpStream;
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::time::Duration;
 
 pub fn same_user(stream: &UnixStream) -> io::Result<bool> {
@@ -21,7 +22,11 @@ pub fn same_user(stream: &UnixStream) -> io::Result<bool> {
 }
 
 pub fn call(config: &Config, request: &protocol::Request) -> io::Result<Value> {
-    let mut connection = UnixStream::connect(config.socket_path())?;
+    call_socket(&config.socket_path(), request)
+}
+
+pub fn call_socket(path: &Path, request: &protocol::Request) -> io::Result<Value> {
+    let mut connection = UnixStream::connect(path)?;
     connection.set_read_timeout(Some(Duration::from_secs(4)))?;
     connection.set_write_timeout(Some(Duration::from_secs(2)))?;
     if !same_user(&connection)? {

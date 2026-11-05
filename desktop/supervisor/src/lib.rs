@@ -3,6 +3,7 @@
 compile_error!("The P02 native lifecycle spike has only been implemented for Linux");
 
 mod engine;
+pub mod installation;
 pub mod protocol;
 pub mod transport;
 

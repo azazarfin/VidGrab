@@ -3,15 +3,15 @@ use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
-use vidgrab_supervisor::{Config, protocol, transport};
+use vidgrab_supervisor::{installation::HostConfig, protocol, transport};
 
-fn bridge(config: &Config, path: &PathBuf, request: &protocol::Request) -> serde_json::Value {
+fn bridge(config: &HostConfig, path: &PathBuf, request: &protocol::Request) -> serde_json::Value {
     let handshake = protocol::Request { spike_version: 1, id: "native-handshake".into(), op: "status".into(), params: Default::default() };
-    let connected = match transport::call(config, &handshake) {
+    let connected = match transport::call_socket(&config.socket_path(), &handshake) {
         Ok(response) => Some(response),
         Err(_) => {
-            let mut command = Command::new(&config.app);
-            command.arg("--config").arg(path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+            let mut command = Command::new(config.app());
+            command.arg(config.launch_arg()).arg(path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
             // A new POSIX session keeps browser-owned process-group termination separate.
             unsafe {
                 command.pre_exec(|| {
@@ -23,7 +23,7 @@ fn bridge(config: &Config, path: &PathBuf, request: &protocol::Request) -> serde
             let deadline = Instant::now() + Duration::from_secs(15);
             let mut connected = None;
             while Instant::now() < deadline {
-                if let Ok(response) = transport::call(config, &handshake) { connected = Some(response); break; }
+                if let Ok(response) = transport::call_socket(&config.socket_path(), &handshake) { connected = Some(response); break; }
                 std::thread::sleep(Duration::from_millis(50));
             }
             connected
@@ -36,7 +36,7 @@ fn bridge(config: &Config, path: &PathBuf, request: &protocol::Request) -> serde
         return protocol::failure(Some(&request.id), "ENGINE_UNAVAILABLE");
     }
     // After forwarding a mutation, its outcome can be unknown. Never replay it.
-    transport::call(config, request).unwrap_or_else(|_| protocol::failure(Some(&request.id), "REQUEST_OUTCOME_UNKNOWN"))
+    transport::call_socket(&config.socket_path(), request).unwrap_or_else(|_| protocol::failure(Some(&request.id), "REQUEST_OUTCOME_UNKNOWN"))
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -49,9 +49,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         std::env::current_exe()?.parent().ok_or("Missing install directory")?.join("host-config.json")
     };
-    let config = Config::load(&config_path)?;
-    let chrome = arguments.first().is_some_and(|arg| arg == config.chrome_origin.as_str());
-    let firefox = arguments.len() >= 2 && PathBuf::from(&arguments[0]).is_absolute() && arguments[1] == config.firefox_id.as_str();
+    let config = HostConfig::load(&config_path)?;
+    let chrome = arguments.first().is_some_and(|arg| arg == config.chrome_origin());
+    let firefox = arguments.len() >= 2 && PathBuf::from(&arguments[0]).is_absolute() && arguments[1] == config.firefox_id();
     let mut output = io::stdout().lock();
     if !chrome && !firefox {
         protocol::write_message(&mut output, &protocol::failure(None, "ORIGIN_REJECTED"))?;

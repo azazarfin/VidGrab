@@ -77,6 +77,39 @@ Native screenshots are `/tmp/vidgrab-p02-native-ui/native-empty.png` and `native
 
 Still required: choose a clean Linux package baseline; validate AppImage/`.deb` resource discovery, relocation/registration, install/uninstall and real tray/Wayland; exercise sandboxed-browser access and paired fallback; implement and validate Windows x64 native pipes/Job Objects, packaged tools, WebView2/tray and browser/installer lifecycle. The Rust workspace rejects non-Linux builds. Thread-based jobs, cancellation, durable retry/artifact semantics and `/v1` remain later work.
 
+## Actual P02 Linux package preview evidence — 2026-11-05
+
+Fedora 43 x86_64/glibc 2.42, Python 3.14.8, Rust/Cargo 1.99.1 and the existing locked Tauri/media components. This extends package-path evidence while keeping P02/ADR-001 open. Windows and a clean minimum Linux baseline remain unvalidated.
+
+| Check | Actual result |
+| --- | --- |
+| `cargo test --locked --offline --release -p vidgrab-supervisor --lib` | 11 passed: split resource paths, portable launch target, incomplete input, strict descriptors/staged compatibility, private host, relocation/preserved paths, foreign manifests, symlink refusal and matching-only removal |
+| `.venv/bin/python -B -m unittest tests.test_packaging -v` | 5 passed with the default external-network/process guards retained |
+| Native release build | Desktop, supervisor and host built; missing GTK/WebKit/tray metadata was staged privately from verified installed runtime libraries using the pre-generated Rust bindings |
+| Fresh frozen bundle | Empty-`PATH` component self-check passed; complete engine/tools support tree prepared for Tauri |
+| Actual `.deb` build | `VidGrab_0.1.0_amd64.deb`, 138,158,710 bytes (131.76 MiB), final bundler invocation 7.855 seconds |
+| `tests/check_linux_package.py` | Eight headless checks passed against an extracted `.deb`: compiled Tauri resolver, frozen self-check, private registration, origin/frame rejection, foreign-manifest refusal, simulated relocation/preserved paths, registration removal/preserved fixture files and declared glibc coverage |
+| Whole-bundle ABI audit | 82 ELF files; maximum GLIBC requirement 2.42 in bundled `termios` and `libtinfo`. Rust binaries require 2.39. Initial >=2.39 metadata failed the audit and was corrected to >=2.42 |
+| AppImage-parent regression | The compiled package check exposed rejection of normal media beneath the portable image's parent. A new Rust regression failed before the guard changed to protect the actual package resources/binary directory; it now passes |
+| Actual AppImage attempt | After selecting a private cache, helper download failed DNS. No AppImage was generated |
+| Local IPC preflight | Socketpair and loopback bind denied with EPERM; bwrap network setup denied. Full 49-test suite and GUI/browser/native lifecycle/installer checks were not rerun, and guards were not disabled |
+| Preserved state/scope | Legacy DB retains SHA-256 `148dbba8a3bea4f01b0e6dbbca7faf157dea157ff9300f4251a6c47f56c38f8f`. Dirty extension ZIPs/banner remain excluded; no real runtime, registration, service, installer, public download, push or replacement Git bundle was used |
+
+The final source-frozen staging tree is `/tmp/vidgrab-p02-linux-package-final/bundle`: 331,583,087 unpacked bytes before its receipt, frozen staging 21.117 seconds and self-check 0.652 seconds. The metadata-only desktop rebuild took 17.258 seconds. The extracted headless check took 2.204 seconds, including 0.971-second extraction; these are development measurements, not clean installer size/startup acceptance budgets.
+
+Artifact SHA-256 is `ad0ba926aca2b776f75a7676b9471abf31562d15cc3a84f0f86520163803dca2`. The headless receipt is `/tmp/vidgrab-p02-deb-receipt.json`; freeze, desktop, bundler and failed AppImage logs are `/tmp/vidgrab-p02-*-final.log` or `*-completed.log`. The native frontend was not rendered in this session. Earlier 2026-11-04 GUI/browser/MP3 evidence remains a separate source checkpoint, not a rerun against this package.
+
+Next: select/rebuild on a clean Linux baseline; supply the AppImage helper/tool cache; exercise actual packaged launch, fixture download, browser close/reopen, relocation, tray/Wayland and install/uninstall. The present glibc 2.42 preview is not an older-distribution compatibility claim. Sandboxed-browser/paired fallback and Windows gates are unchanged.
+
+## P02 checkpoint revalidation — 2026-11-06
+
+The user selected Ubuntu 24.04 LTS for the clean Linux baseline. No Ubuntu build or installer gate is certified by these Fedora-host checks.
+
+- The default **49 Python tests passed** in 1.416 s with the approved local-IPC exception and external-request/process guards retained.
+- The **11 Rust package registration/discovery tests passed** with locked offline Cargo.
+- The existing `.deb` passed its **eight headless extraction checks** again: 1.085 s extraction and 2.441 s total check, unchanged SHA-256 `ad0ba926aca2b776f75a7676b9471abf31562d15cc3a84f0f86520163803dca2`, 82 ELF files requiring glibc 2.42. Receipt: `/tmp/vidgrab-p02-deb-resume-20261106.json`.
+- Source review/whitespace checks passed; the legacy DB hash and excluded local ZIPs/banner are preserved. Native GUI/browser, actual AppImage, clean Ubuntu install/uninstall, physical tray/Wayland and Windows checks remain separate.
+
 ## Deterministic coverage to extend through P05
 
 Use temporary runtime directories/databases and a local HTTP fixture server. External network access should fail the default suite; inject extractor, clock, randomness, process, and update boundaries where needed. Keep tests tied to observable behavior, not the internal refactoring shape.

@@ -1,6 +1,6 @@
 # VidGrab desktop-companion plan
 
-Status: P01 is complete. The user resumed on 2026-11-04 and requested Linux work now, Windows validation later. P02 has a Linux desktop/packaged-engine/native-host spike; its acceptance gate and the framework decision remain open.
+Status: P01 is complete. The user resumed on 2026-11-04 and requested Linux work now, Windows validation later. P02 now has a Linux desktop/engine/native-host spike and an extracted `.deb` preview; its acceptance gate and the framework decision remain open.
 
 ## Approach
 
@@ -40,7 +40,8 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 - [x] Bundle Python, yt-dlp, FFmpeg/ffprobe, Deno and matching EJS on Linux. Frozen imports, checksum/version checks and a loopback WAV → MP3 fixture work with an empty `PATH`.
 - [x] Prove Linux private IPC, concurrent single ownership, native-host-independent lifetime, bounded engine recovery, mutation reply handling and explicit process-group cleanup through nine native lifecycle cases.
 - [x] Compiled native window and installed Chrome/Firefox handoff checks pass against the final frozen bundle; exact evidence is in VALIDATION. Mocked rendering passes three viewport sizes. Unicode directories, no-tray Close, repeated activation, engine recovery and explicit Quit are covered.
-- [ ] Validate real Linux tray/Wayland integration and clean AppImage/`.deb` install/connect/download/browser close/reopen/uninstall without developer runtimes. Measure installer size and startup, and repair native registration after relocation.
+- [x] Implement Linux package resource discovery, a stable per-user native bridge and launch descriptor, relocation repair and registration removal. Eleven Rust cases and eight compiled headless `.deb` extraction checks pass; the preview is 131.76 MiB and requires glibc 2.42. Relocation is simulated and state/media are preserved.
+- [ ] Rebuild and validate the clean **Ubuntu 24.04 LTS** baseline selected by the user on 2026-11-06, then exercise actual AppImage/`.deb` install/connect/download/browser close/reopen/uninstall without developer runtimes, real tray/Wayland and relocation. AppImage helpers need network access; restricted local IPC requires the approved sandbox exception. Record real startup measurements; headless inspection is not startup acceptance.
 - [ ] Implement and validate Windows x64 packaged paths, named pipes/Job Objects, WebView2/tray, Chrome/Firefox registration and installer lifecycle. Windows evidence is deferred at the user's request, not waived.
 - [ ] Evaluate sandboxed-browser native-host access and the explicitly paired loopback fallback.
 - [ ] Acceptance: both target OSes pass the package/lifecycle gate, measurements are recorded and ADR-001 is finalized. This Linux spike does not complete P02; P03 has not started.

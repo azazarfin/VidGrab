@@ -65,13 +65,30 @@ Record new decisions here with date, status, rationale, and the milestone that v
 - **Evidence:** 49 guarded deterministic tests, nine native lifecycle cases, compiled WebKit window, mocked rendering at three sizes and installed Chrome/Firefox handoffs pass. Exact versions, commands, staging measurements and limits are in [VALIDATION.md](VALIDATION.md).
 - **Deferred gates:** clean Linux packages, resource discovery, relocation/registration, real tray/Wayland, sandboxed browsers and Windows x64. These results do not finalize the framework or authorize P03; the native workspace currently rejects non-Linux builds.
 
+## ADR-009 — Linux preview package paths and registration
+
+- **Date:** 2026-11-05. **Status:** implemented and checked on the Fedora development host; clean baseline, actual installer/AppImage and full P02 acceptance remain open.
+- **Decision:** use Tauri's resource resolver for the frozen engine and the executable's sibling native sidecar. Copy the bridge to a stable private user directory outside an AppImage mount. Persist a strict `package_version: 1` launch descriptor containing the app target and selected state/media, with no engine mount path or credential. Preserve explicit staging configuration as a separate launch mode.
+- **Preview scope:** default state is `XDG_DATA_HOME/vidgrab-p02/state`, bridge/config is `vidgrab-p02/native`, and media is `~/Downloads/VidGrab-P02`. These defaults avoid sharing the legacy runtime. Chrome/Firefox use the existing development identities and default native-host locations; popup/options still use the legacy API.
+- **Repair/removal:** reopening a relocated image updates its target and copied bridge while retaining selected state/media. Validate existing manifests before writes, publish files atomically with private permissions, and refuse foreign/symlink destinations. Disconnection removes matching manifests while preserving user files and selected paths. This is not a complete uninstall implementation.
+- **Evidence:** eleven Rust tests, five existing guarded packaging tests, a native release build, a freshly frozen engine and eight headless checks against the actual extracted `.deb`. A failed relocation check exposed the overly broad AppImage-parent guard; its regression failed before the fix and now passes.
+- **ABI limit:** the current `.deb` is 138,158,710 bytes (131.76 MiB). An audit of 82 shipped ELF files found glibc 2.42 requirements in bundled `termios`/`libtinfo`; the declared dependency was corrected from 2.39. This is the current preview's requirement, not an approved minimum OS baseline. Build on a selected clean baseline before claiming broader compatibility.
+- **Blocked checks:** the AppRun helper is uncached and its download fails DNS in this sandbox. Local socketpair/loopback and bwrap network setup are denied, so full backend, GUI/browser, tray/Wayland and installer checks were not repeated. Windows remains deferred at the user's request.
+
+## ADR-010 — Ubuntu 24.04 LTS clean Linux baseline
+
+- **Date:** 2026-11-06. **Status:** explicitly user-selected target; clean build and package acceptance pending.
+- **Decision:** build and validate Linux x86_64 AppImage and `.deb` previews on Ubuntu 24.04 LTS. The existing Fedora 43 artifacts remain development evidence.
+- **Consequence:** rebuild the Python interpreter/support libraries and Rust binaries on the selected target. Audit every shipped ELF against the actual package dependency; the Fedora bundle's glibc 2.42 requirement must not be lowered to Ubuntu's 2.39 without compatible replacement binaries.
+- **Gate:** clean build, frozen self-check, installed package/browser fixture lifecycle, relocation, tray/Wayland and measurements. Selecting the baseline does not certify support or complete P02/ADR-001; Windows remains deferred.
+
 ## Pending decisions by gate
 
 The user chose **Linux work now, Windows validation later** on 2026-11-04. The Linux spike uses Tauri 2/React, a frozen Python engine and a Rust POSIX owner/bridge. This is implementation evidence for ADR-001/003, not final stack acceptance. Windows native IPC/Job Objects and target packaging remain unimplemented; the workspace currently rejects non-Linux builds. Neither target's complete installer gate is waived, and P03 has not started.
 
 | Gate | Decision/evidence needed | Working assumption |
 | --- | --- | --- |
-| P02 | Framework, supported OS baselines, tray behavior, sandbox native-host access | Tauri 2; native Chrome/Firefox first |
+| P02 | Framework, baseline acceptance, tray behavior, sandbox native-host access | Tauri 2; Ubuntu 24.04 LTS selected for Linux rebuild; native Chrome/Firefox first |
 | P03/P06 | Pause support by transfer/post-processing phase | Explain restart semantics for non-resumable phases |
 | P05/P06 | Current Bangla transliteration behavior | Preserve baseline until clarified; separate display metadata from filename policy |
 | P07 | Hosting/store IDs, signing ownership, project license and bundled notices | Direct installer/extension distribution; no cloud account required |

@@ -75,7 +75,7 @@ The settings font warning has one shared, file-scoped Inter exception in `.impec
 
 ## P02 Linux build/staging
 
-The current target is Linux x86_64. Native development needs Rust/Cargo, Node/npm, GTK 3, WebKitGTK 4.1 and their development headers; installed runtime libraries are still required by Tauri. Python/media tools ship inside the staged engine. A clean target package baseline has not been certified. No command below installs a service or writes real browser registration.
+The current target is Linux x86_64. The user selected Ubuntu 24.04 LTS for a clean rebuild on 2026-11-06; that baseline is not yet certified. Native development needs Rust/Cargo, Node/npm, GTK 3, WebKitGTK 4.1 and their development headers; installed runtime libraries are still required by Tauri. Python/media tools ship inside the staged engine. No command below installs a service or writes real browser registration.
 
 Install the locked optional build group, then fetch the pinned archives once with network permission or use an existing verified cache:
 
@@ -98,7 +98,36 @@ The desktop crate defaults to `custom-protocol`, which embeds the frontend for d
 PKG_CONFIG_PATH=/tmp/vidgrab-tauri-sdk/usr/lib64/pkgconfig:/tmp/vidgrab-tauri-sdk/usr/share/pkgconfig cargo build --locked --offline --release -p vidgrab-desktop
 ```
 
-That temporary SDK/cache is not included in Git and must be recreated or replaced with target-native development packages on another machine. AppImage/`.deb` resource discovery, registration/relocation and clean installation remain P02 work; the old `build.sh` still only replaces extension archives.
+That temporary SDK/cache is not included in Git and must be recreated or replaced with target-native development packages on another machine. Extracted `.deb` resource discovery and headless registration now have evidence; actual AppImage and clean install/uninstall remain P02 work. The old `build.sh` still only replaces extension archives.
+
+## P02 Linux package preview — 2026-11-05
+
+After building the desktop and preparing the complete resources, bundle the already-built executable and run the opt-in extraction check from the repository root:
+
+```sh
+npm --prefix desktop run tauri -- bundle --bundles deb --ci
+.venv/bin/python -B tests/check_linux_package.py --deb target/release/bundle/deb/VidGrab_0.1.0_amd64.deb --report /tmp/vidgrab-deb-check.json
+```
+
+The check requires `dpkg-deb` and `readelf`, extracts into a temporary directory and selects a temporary home/XDG environment. It runs the compiled Tauri resolver, frozen self-check with an empty `PATH`, registration/conflict/removal commands, native origin/frame rejection and a whole-bundle glibc audit. It creates no engine server or real registration. AppImage relocation uses executable placeholders and is explicitly simulated. The report refuses to overwrite an existing file.
+
+Packaged launch with no arguments now discovers resources and installs the selected user's browser bridge before starting the owner. Avoid a casual default launch during diagnostics. The staging layout still requires `--config FILE`. Headless packaged commands are:
+
+| Command | Effect |
+| --- | --- |
+| `--check-package` | Inspect app/engine/native paths without registration or runtime startup |
+| `--register-browser-host` | Copy a private stable bridge and write matching per-user manifests; no engine startup |
+| `--unregister-browser-host` | Remove only matching manifests; preserve descriptor, bridge, state and media |
+
+The native host uses `--package-config FILE` internally for the strict installed descriptor. Opening a moved image repairs its launch target while retaining selected state/media. Default preview paths are `XDG_DATA_HOME/vidgrab-p02/{native,state}` and `~/Downloads/VidGrab-P02`; unset XDG bases use `~/.local/share` and `~/.config`. Chrome registration is under `XDG_CONFIG_HOME/google-chrome/NativeMessagingHosts`, Firefox under `~/.mozilla/native-messaging-hosts`. Existing foreign manifests or symlink destinations cause refusal. This preview does not share the legacy runtime or implement a full browser-connection UI/uninstaller.
+
+Current artifact: `target/release/bundle/deb/VidGrab_0.1.0_amd64.deb`, 138,158,710 bytes (131.76 MiB), SHA-256 `ad0ba926aca2b776f75a7676b9471abf31562d15cc3a84f0f86520163803dca2`. The final source-frozen bundle is `/tmp/vidgrab-p02-linux-package-final/bundle`; the headless receipt is `/tmp/vidgrab-p02-deb-receipt.json`. These are ignored/ephemeral development artifacts, not release installers or Git handoff contents.
+
+The whole-bundle audit found 82 ELF files. Rust binaries need glibc 2.39, but bundled Python `termios` and `libtinfo` need 2.42; the `.deb` now declares >=2.42. An older clean baseline must rebuild the Python/support libraries as well as Rust. No minimum supported Linux distribution is certified by these Fedora checks.
+
+This session restored linking from installed runtime libraries using private metadata/symlinks under `/tmp/vidgrab-link-metadata`, with library versions verified through RPM/runtime exports and pre-generated Rust FFI bindings. It is not a full SDK or clean target build. The local native build/bundler used `PKG_CONFIG_PATH=/tmp/vidgrab-link-metadata/lib/pkgconfig`; install proper development packages on a clean build host. Tauri's equivalent `tauri-build` Cargo normalization was restored after bundling.
+
+For the actual AppImage attempt, `XDG_CACHE_HOME=/tmp/vidgrab-tauri-cache` avoided writing the real home cache. Bundling then failed downloading its uncached AppRun helper because DNS is blocked. No AppImage was produced. Do not count the simulated relocation check as AppImage, GUI, tray/Wayland, live browser or install/uninstall evidence.
 
 ## P02 opt-in checks
 
