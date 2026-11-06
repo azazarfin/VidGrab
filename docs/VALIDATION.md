@@ -110,6 +110,28 @@ The user selected Ubuntu 24.04 LTS for the clean Linux baseline. No Ubuntu build
 - The existing `.deb` passed its **eight headless extraction checks** again: 1.085 s extraction and 2.441 s total check, unchanged SHA-256 `ad0ba926aca2b776f75a7676b9471abf31562d15cc3a84f0f86520163803dca2`, 82 ELF files requiring glibc 2.42. Receipt: `/tmp/vidgrab-p02-deb-resume-20261106.json`.
 - Source review/whitespace checks passed; the legacy DB hash and excluded local ZIPs/banner are preserved. Native GUI/browser, actual AppImage, clean Ubuntu install/uninstall, physical tray/Wayland and Windows checks remain separate.
 
+## Actual P02 Ubuntu userspace evidence — 2026-11-06
+
+The selected Ubuntu 24.04 target now has a pinned userspace rebuild on the Fedora kernel. This is a partial P02 gate; Windows and full desktop acceptance remain open. Exact receipts and artifacts are in HANDOFF.
+
+| Check | Result |
+| --- | --- |
+| Guarded Python suite | 61 passed on Ubuntu/Python 3.12.3 and Fedora/Python 3.14.8; original queue race fails its regression |
+| Ubuntu native checks | 11 Rust and nine staged native lifecycle cases passed |
+| `.deb` ABI/headless | Eight checks passed; 50 ELFs, glibc <=2.39; 135,542,888 bytes |
+| AppImage integrity/ABI/headless | Seven checks passed; 235 ELFs including runtime, glibc <=2.39; 202,807,800 bytes; actual relocation |
+| Minimal target smoke | Actual `.deb` install/remove and AppImage extract/register/remove pass; no installed Python/FFmpeg/Deno/Node/Cargo; seeded files preserved |
+| Actual compiled package UI | Both pass MP3/Unicode path, no-tray Close, repeat activation, recovery and Quit; reviewed screenshots |
+| Startup sample | Registered package to connected UI: `.deb` 1.085 s, AppImage 1.445 s; excludes registration/driver/container setup and cold-install budgets |
+| Chrome native package lifecycle | 157.0.8103.38 passes activation, active job after exit, completion and reopen in both artifacts |
+| Firefox native package lifecycle | 159.0/Gecko 0.37.1 passes alone; combined Chrome→Firefox fails on Firefox reopen in both artifacts |
+
+The combined failure is reproducible and keeps package acceptance open. Firefox's first job finishes, but its second native activation reports app readiness timeout; cleanup IPC also times out. Diagnostics currently run after browser cleanup and miss the new process. Capture before cleanup before changing native launch behavior or deadlines.
+
+linuxdeploy changed 46 frozen ELFs and broke Deno's pinned checksum. The corrected image restores the entire staged engine and retains the integrity manifest, then audits the final image runtime and resources. Seven preparation cases pass, including a dangling-output regression observed failing before its guard. Whole-image SHA-256 is `97803a020ad48d659663ae3454f091276d5a78a01364505b94b5dce081b309b2`; `.deb` is `c865903c793e089deca74fa15f7364671d2e623ecb02bd304ddeb1e4d14e22ef`.
+
+Outer Podman provides private network/PID/IPC/home/tmp and private D-Bus because nested bwrap is unavailable. Xvfb/Mesa software rendering and temporary profiles are used; Chrome's package-generated host manifest is copied into its custom CDP profile. AppImage uses extract-and-run with standard OS `bash`; frozen tools are checked separately with empty PATH. These checks provide no FUSE, physical tray, Wayland, Snap/Flatpak or Windows evidence.
+
 ## Deterministic coverage to extend through P05
 
 Use temporary runtime directories/databases and a local HTTP fixture server. External network access should fail the default suite; inject extractor, clock, randomness, process, and update boundaries where needed. Keep tests tied to observable behavior, not the internal refactoring shape.

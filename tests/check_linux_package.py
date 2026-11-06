@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import shutil
 import struct
@@ -134,10 +135,11 @@ def check(artifact):
             "artifact_bytes": artifact.stat().st_size, "extraction_seconds": round(extraction_seconds, 3),
             "headless_check_seconds": round(time.monotonic() - started, 3), "elf_files": elf_count,
             "required_glibc": ".".join(map(str, maximum)), "depends": depends, "components": components,
+            "os_release": platform.freedesktop_os_release(),
             "checks": ["compiled Tauri resource discovery", "frozen self-check with empty PATH", "private native registration",
                 "native origin/frame rejection", "foreign manifest refusal", "simulated AppImage relocation preserving paths",
                 "registration removal preserving fixture state/media", "declared glibc covers shipped ELF files"],
-            "limits": ["extracted .deb, not an install/uninstall", "Fedora host, not a clean target baseline",
+            "limits": ["extracted .deb, not an install/uninstall", "headless extraction, not clean installation evidence",
                 "simulated relocation, not an actual AppImage", "no GUI, tray, Wayland, live browser or fixture-download check"]}
 
 

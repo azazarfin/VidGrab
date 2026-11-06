@@ -129,6 +129,38 @@ This session restored linking from installed runtime libraries using private met
 
 For the actual AppImage attempt, `XDG_CACHE_HOME=/tmp/vidgrab-tauri-cache` avoided writing the real home cache. Bundling then failed downloading its uncached AppRun helper because DNS is blocked. No AppImage was produced. Do not count the simulated relocation check as AppImage, GUI, tray/Wayland, live browser or install/uninstall evidence.
 
+## Ubuntu 24.04 userspace P02 rebuild and AppImage finalization
+
+Use a clean Ubuntu 24.04 x86_64 build environment with its Python 3.12/support and GTK/WebKit development packages. The observed build image and package receipts are in HANDOFF. The current default Tauri configuration retains the old Fedora >=2.42 preview dependency; the Ubuntu override below is valid after rebuilding and passing the whole-bundle 2.39 ceiling.
+
+From the repository root in that environment, use the existing locked npm/Cargo/uv packaging setup, fresh staging and resource preparation. Before bundling:
+
+```sh
+.venv/bin/python -B packaging/check_abi.py --tree /tmp/vidgrab-ubuntu-bundle --max-glibc 2.39 --report /tmp/vidgrab-ubuntu-abi.json
+npm --prefix desktop run tauri -- bundle --bundles deb,appimage --config "$PWD/packaging/ubuntu24.bundle.json" --ci
+```
+
+Tauri/linuxdeploy modifies frozen ELF resources, including checksum-verified Deno. The raw image fails integrity. Restore the complete original engine after dependency deployment:
+
+```sh
+.venv/bin/python -B packaging/prepare_appimage.py --appdir target/release/bundle/appimage/VidGrab.AppDir --bundle /tmp/vidgrab-ubuntu-bundle --output /tmp/vidgrab-final.AppDir --max-glibc 2.39 --report /tmp/vidgrab-appimage-preparation.json
+```
+
+Assemble the resulting fresh tree directly with appimagetool and an explicit `--runtime-file`; do not run linuxdeploy over it again. This checkpoint extracts the cached `linuxdeploy-plugin-appimage.AppImage` to obtain `usr/bin/appimagetool`, and takes exactly `--appimage-offset` bytes from the raw Tauri image as its runtime. Validate the ELF prefix and record input/runtime SHA-256. The actual runtime is 944,632 bytes, SHA-256 `912e3f80ad18723bdf5da6a52d5301588012090a56bcb0919cce170a47d8de5b`; finalization uses `ARCH=x86_64`, the tool's own library/bin paths and `--runtime-file`, with network disabled. The scratch command/receipt are `finish-offline-image.sh` and `appimage-runtime-input.json`; regenerate these inputs when moving devices.
+
+```sh
+.venv/bin/python -B tests/check_linux_package.py --deb target/release/bundle/deb/VidGrab_0.1.0_amd64.deb --report /tmp/vidgrab-ubuntu-deb-check.json
+.venv/bin/python -B tests/check_appimage_package.py --appimage /tmp/VidGrab_0.1.0_amd64.AppImage --max-glibc 2.39 --report /tmp/vidgrab-ubuntu-image-check.json
+```
+
+The AppImage checker audits its ELF runtime and extracted tree, verifies frozen tools with empty PATH, and exercises actual image relocation/registration in a temporary home. AppRun uses `/usr/bin/env bash`, so the launcher needs the standard OS utility PATH.
+
+`tests/check_packaged_desktop.py --app FILE --xvfb FILE --geckodriver FILE --screenshots DIR --report FILE` exercises an installed executable or actual AppImage through package registration and its copied bridge, then real UI and native Chrome/Firefox fixtures. `--browser chrome|firefox|both` selects browser phases. It checkpoints results before later failures. Use the existing isolated driver setup and native browser binaries, including `--firefox FILE` when using a vendor archive. A custom Chrome CDP profile receives the package-generated manifest.
+
+The current Ubuntu scripts use an outer Podman container with `--network none --pid private --ipc private`, private Linux tmpfs for `/tmp` and `/root`, selected fixture HOME/XDG paths, private D-Bus, Xvfb and software rendering. Only that fully isolated harness sets `VIDGRAB_VALIDATION_ISOLATED=1`; nested bwrap failed its probes. VFS storage on the NTFS volume ignores Unix modes, so private IPC/homes must live on Linux tmpfs. The application gets `/usr/bin:/bin`; frozen tools retain separate empty-PATH checks. No selected real runtime or user registration is used.
+
+Both UIs and Chrome pass; Firefox alone passes but the combined reopen fails reproducibly. Capture launch diagnostics before browser cleanup and fix that cause before claiming package lifecycle acceptance. Full Ubuntu desktop/FUSE/tray/Wayland and Windows remain open.
+
 ## P02 opt-in checks
 
 Commands below use the current session's temporary bundle/tool paths; replace them with freshly staged paths elsewhere. Native checks use only a generated loopback WAV, temporary state and bundled MP3 post-processing. The default 49-test suite remains separate and guarded. The final bundle was freshly staged with `--desktop target/release/vidgrab-desktop` after the downloader and queue Unicode-path fixes; earlier staging trees retain the previous behavior.

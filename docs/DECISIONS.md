@@ -77,10 +77,18 @@ Record new decisions here with date, status, rationale, and the milestone that v
 
 ## ADR-010 — Ubuntu 24.04 LTS clean Linux baseline
 
-- **Date:** 2026-11-06. **Status:** explicitly user-selected target; clean build and package acceptance pending.
+- **Date:** 2026-11-06. **Status:** explicitly user-selected target; Ubuntu userspace rebuild/integrity/install smoke checks pass; package/browser and complete desktop acceptance remain open.
 - **Decision:** build and validate Linux x86_64 AppImage and `.deb` previews on Ubuntu 24.04 LTS. The existing Fedora 43 artifacts remain development evidence.
 - **Consequence:** rebuild the Python interpreter/support libraries and Rust binaries on the selected target. Audit every shipped ELF against the actual package dependency; the Fedora bundle's glibc 2.42 requirement must not be lowered to Ubuntu's 2.39 without compatible replacement binaries.
 - **Gate:** clean build, frozen self-check, installed package/browser fixture lifecycle, relocation, tray/Wayland and measurements. Selecting the baseline does not certify support or complete P02/ADR-001; Windows remains deferred.
+
+## ADR-011 — Preserve frozen engine bytes during AppImage assembly
+
+- **Date:** 2026-11-06. **Status:** implemented and verified on the Ubuntu userspace preview; P02/ADR-001 remain open.
+- **Evidence:** linuxdeploy rewrote 46 engine ELF files and added Deno RUNPATH, breaking the pinned tool checksum. The raw AppImage correctly failed its frozen self-check.
+- **Decision:** finish desktop dependency deployment, restore the complete original engine into a fresh AppDir, audit every ELF against the selected ceiling and run frozen component checks. Package that tree directly with appimagetool, retaining the original component manifest and a recorded runtime input.
+- **Boundary:** `prepare_appimage.py` refuses existing/dangling, overlapping, incomplete, ambiguous and escaped inputs. `check_appimage_package.py` covers the embedded runtime, extracted resources, actual relocation and private registration/removal. Ubuntu's glibc 2.39 override is separate from the older Fedora >=2.42 configuration.
+- **Remaining gate:** both package UIs and Chrome pass; Firefox's combined reopen fails and requires pre-cleanup launch diagnostics. Real FUSE/tray/Wayland and Windows acceptance remain open.
 
 ## Pending decisions by gate
 

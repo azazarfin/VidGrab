@@ -331,6 +331,9 @@ class QueueManager:
                     await asyncio.wait(self.active_tasks.values(), return_when=asyncio.FIRST_COMPLETED)
                     continue
 
+                # Preserve an enqueue notification arriving during the database read.
+                self.wakeup_event.clear()
+
                 # Fetch next queued item
                 async with aiosqlite.connect(self.runtime.db_path) as db:
                     db.row_factory = aiosqlite.Row
@@ -342,7 +345,6 @@ class QueueManager:
 
                 if not row:
                     # No queued items, wait for wakeup signal
-                    self.wakeup_event.clear()
                     await self.wakeup_event.wait()
                     continue
 
