@@ -174,6 +174,22 @@ uv run --no-project --offline --with playwright==1.64.1 --python .venv/bin/pytho
 
 The desktop/browser scripts automatically create private bwrap network/PID/home/D-Bus state, mask system native registrations, and use software rendering. They require bwrap, Xvfb, Mesa and the approved local-IPC/browser sandbox exception. Native WebKit uses `/usr/bin/WebKitWebDriver`; installed-browser checks use Chrome `/opt/google/chrome/chrome` and Firefox `/usr/bin/firefox` by default. Chrome automation selects a custom user data directory and places its native manifest in that directory's `NativeMessagingHosts`; `CHROME_CONFIG_HOME` remains separate. This avoids Chrome's default-profile remote-debugging restriction while exercising its actual user-host lookup. Firefox is temporarily installed from a generated XPI. Gecko 0.37.1's `--allow-system-access` is restricted to the isolated extension test page. Its Linux64 archive was checked against Mozilla's release digest `e815130ea95983e162ae91843b48d3a3ce991735635fce83a647afde21e09f7e` before extraction/use; it is a test tool, not a bundled release component.
 
+The display-helper regression needs no X server/browser and stays outside default discovery:
+
+```sh
+.venv/bin/python -B tests/check_native_display.py -v
+```
+
+`tests/check_packaged_desktop.py` checks an actual installed/extracted desktop executable or AppImage through its canonical copied native bridge. It covers compiled UI, no-tray Close, repeated activation, fixture MP3, recovery, Quit and the combined browser exit/reopen sequence. Select a fresh report and screenshots directory and explicit native browser paths when OS defaults are Snap wrappers. Current artifacts/outer container commands are in HANDOFF.
+
+Inside a sealed test environment with private network/PID/IPC/home/tmp/D-Bus, Xvfb and software rendering, the actual FUSE variant is:
+
+```sh
+.venv/bin/python -B tests/check_packaged_desktop.py --app /absolute/path/VidGrab_0.1.0_amd64.AppImage --xvfb /usr/bin/Xvfb --geckodriver /absolute/path/geckodriver --browser both --fuse --screenshots /tmp/vidgrab-package-fuse --report /tmp/vidgrab-package-fuse.json
+```
+
+`--fuse` removes extract-and-run selection, verifies the desktop executable's actual image mount and waits for unmount after Quit. It requires `/dev/fuse` and a suitable OS `fusermount`/`fusermount3` with preserved permissions in that environment; default bwrap device isolation does not provide this FUSE setup. The recorded Ubuntu outer-container variant adds `fuse3` and a private Linux-tmpfs helper because NTFS VFS lost its setuid bit. Omit `--fuse` for the default extract-and-run image check or select a desktop binary for `.deb` validation. Engine self-checks still use an empty PATH independently. No native launch timeout or mutation retry is changed by these modes.
+
 For the renderer-only check, serve the built frontend in one terminal and run the mocked command check in another:
 
 ```sh

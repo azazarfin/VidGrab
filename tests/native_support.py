@@ -122,20 +122,25 @@ def stop_owner(config):
 
 @contextmanager
 def virtual_display(binary):
-    process = subprocess.Popen([str(binary), "-displayfd", "1", "-screen", "0", "1280x900x24", "-nolisten", "tcp"],
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    try:
-        assert select.select([process.stdout], [], [], 10)[0], "Xvfb readiness deadline"
-        number = process.stdout.readline().decode().strip()
-        assert number, process.stderr.read().decode()
-        yield {**os.environ, "DISPLAY": ":" + number}
-    finally:
-        process.terminate()
+    # Repeated keymap warnings can fill an unread pipe and stall Xvfb's clients.
+    with tempfile.TemporaryFile() as errors:
+        process = subprocess.Popen([str(binary), "-displayfd", "1", "-screen", "0", "1280x900x24", "-nolisten", "tcp"],
+                                   stdout=subprocess.PIPE, stderr=errors)
         try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
+            assert select.select([process.stdout], [], [], 10)[0], "Xvfb readiness deadline"
+            number = process.stdout.readline().decode().strip()
+            if not number:
+                errors.seek(0)
+                raise AssertionError(errors.read().decode(errors="replace"))
+            yield {**os.environ, "DISPLAY": ":" + number}
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            process.stdout.close()
 
 
 class WebDriver:

@@ -152,7 +152,7 @@ document.getElementById('download').onclick = () => run('fixture.download');
     return archive
 
 
-def check_firefox(bundle, environment, url, executable, geckodriver):
+def check_firefox(bundle, environment, url, executable, geckodriver, *, on_failure=None):
     root = Path(os.environ["VIDGRAB_VALIDATION_HOME"]) / "firefox-check"
     config, registration, manifest = configure(bundle, root, "firefox")
     archive = firefox_fixture(root)
@@ -210,6 +210,10 @@ def check_firefox(bundle, environment, url, executable, geckodriver):
         assert any(job["id"] == task and job["status"] == "complete" for job in restored["jobs"]), restored
         return {"browser": "firefox", "version": capabilities["browserVersion"], "extension_id": config["firefox_id"],
                 "missing_registration": missing["message"], "media_sha256": checksum, "result": "passed"}
+    except BaseException:
+        if on_failure:
+            on_failure(config, root)
+        raise
     finally:
         if driver:
             driver.close()

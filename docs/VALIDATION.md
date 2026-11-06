@@ -132,6 +132,24 @@ linuxdeploy changed 46 frozen ELFs and broke Deno's pinned checksum. The correct
 
 Outer Podman provides private network/PID/IPC/home/tmp and private D-Bus because nested bwrap is unavailable. Xvfb/Mesa software rendering and temporary profiles are used; Chrome's package-generated host manifest is copied into its custom CDP profile. AppImage uses extract-and-run with standard OS `bash`; frozen tools are checked separately with empty PATH. These checks provide no FUSE, physical tray, Wayland, Snap/Flatpak or Windows evidence.
 
+## P02 browser/FUSE checkpoint — 2026-11-07
+
+The earlier combined Firefox failure is resolved. Pre-cleanup diagnostics and a 4 KiB display-pipe reproduction captured `xkbcomp` blocked writing warnings, Xvfb waiting for that child and the desktop waiting for X11. The Xvfb helper now owns a temporary stderr file and closes/reaps its resources; application launch, deadlines, mutation forwarding and package bytes are unchanged.
+
+| Check | Result |
+| --- | --- |
+| `tests/check_native_display.py -v` | Two local fake-process cases pass on Ubuntu/Python 3.12.3 and Fedora/Python 3.14.8; overflowing stderr failed before the fix; startup errors and child reaping preserved |
+| Guarded default suite | 61 pass on both userspaces; external-request/process guards retained |
+| `.deb --browser both` | Compiled UI and Chrome→Firefox lifecycle pass, including download after browser exit and completed state after reopen |
+| AppImage extract-and-run `--browser both` | Same full UI/browser checks pass |
+| AppImage actual FUSE headless | Mounted discovery, empty-PATH frozen tools, image-driven registration/removal and unmount pass in 1.209 s |
+| AppImage `--browser both --fuse` | UI/MP3/recovery/Quit and both browsers pass; executable verified inside `fuse.VidGrab_0.1.0_amd64.AppImage`; mount removed after Quit |
+| Startup samples | `.deb` 1.220 s; extract-and-run 1.555 s; FUSE 1.330 s; registration/container/driver preparation and cold-install budgets excluded |
+
+Chrome is 157.0.8103.38, Firefox 159.0, Gecko 0.37.1 and Wry 0.57.1. Completed screenshots were reviewed. Fixture MP3 SHA-256 remains `958bcfd31005dab8833844f7c058a3514e02baa209df62ab110228245a50f9a5`. Artifact sizes/hashes and earlier ABI/integrity receipts remain valid; current report paths and exact outer commands are recorded in HANDOFF.
+
+FUSE uses a separate test image with Ubuntu `fuse3`/`libfuse3-3` 3.14.0-5build1, `/dev/fuse` and namespace-scoped `SYS_ADMIN`. NTFS VFS dropped the OS helper's setuid bit; a private Linux-tmpfs copy restores its normal 4755 mode inside the container. The mount probe distinguishes the AppImage's `fuse.*` filesystem from the NTFS `fuseblk` root. All runtime checks retain private network/PID/IPC/home/tmp/D-Bus state and software rendering. They share the Fedora kernel and prove no native Ubuntu GNOME/KDE tray/Wayland, full installer interaction, Snap/Flatpak or Windows behavior. P02/ADR-001 remain open; P03 has not started.
+
 ## Deterministic coverage to extend through P05
 
 Use temporary runtime directories/databases and a local HTTP fixture server. External network access should fail the default suite; inject extractor, clock, randomness, process, and update boundaries where needed. Keep tests tied to observable behavior, not the internal refactoring shape.
