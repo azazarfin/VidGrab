@@ -223,7 +223,7 @@ class WebDriver:
 
 
 @contextmanager
-def fixture_server():
+def fixture_server(transfer_gate=None):
     memory = io.BytesIO()
     with wave.open(memory, "wb") as output:
         output.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
@@ -244,7 +244,11 @@ def fixture_server():
                     self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError):
                     return
-                time.sleep(0.08)
+                if transfer_gate is not None:
+                    if offset == 0 and not transfer_gate.wait(timeout=30):
+                        return
+                else:
+                    time.sleep(0.08)
         def log_message(self, *_):
             pass
     server = ThreadingHTTPServer(("127.0.0.1", 0), Fixture)
@@ -253,6 +257,8 @@ def fixture_server():
     try:
         yield f"http://127.0.0.1:{server.server_port}/fixture.wav"
     finally:
+        if transfer_gate is not None:
+            transfer_gate.set()
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)

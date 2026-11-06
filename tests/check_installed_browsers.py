@@ -46,13 +46,48 @@ def completed_job(config, task_id):
     return snapshot, hashlib.sha256(media.read_bytes()).hexdigest()
 
 
-def check_chrome(bundle, environment, url, executable):
+def process_sandbox(pid):
+    fields = dict(line.split(':', 1) for line in Path(f'/proc/{pid}/status').read_text().splitlines() if ':' in line)
+    return {'pid': int(pid), 'seccomp': fields['Seccomp'].strip(),
+        'no_new_privileges': fields['NoNewPrivs'].strip()}
+
+
+def chrome_renderer_sandbox(cdp):
+    information = cdp.send('SystemInfo.getProcessInfo')['processInfo']
+    browser = next(info['id'] for info in information if info['type'] == 'browser')
+    arguments = Path(f'/proc/{browser}/cmdline').read_bytes().split(b'\0')
+    assert b'--no-sandbox' not in arguments, 'Chrome was launched with --no-sandbox'
+    processes = [process_sandbox(info['id']) for info in information
+        if info['type'] == 'renderer']
+    assert processes and all(item['seccomp'] == '2' and item['no_new_privileges'] == '1'
+        for item in processes), processes
+    return processes
+
+
+def firefox_content_sandbox(driver):
+    # Firefox rewrites child argv; query its own process types instead.
+    driver.call('/moz/context', {'context': 'chrome'})
+    try:
+        processes = driver.script('''const done = arguments[arguments.length - 1];
+          ChromeUtils.requestProcInfo().then(info => done(info.children.map(
+            child => ({pid: child.pid, type: child.type}))));''', asynchronous=True)
+    finally:
+        driver.call('/moz/context', {'context': 'content'})
+    content = [{**process_sandbox(info['pid']), 'type': info['type']} for info in processes
+        if info['type'].startswith('web') or info['type'] == 'extension']
+    assert content and all(item['seccomp'] == '2' and item['no_new_privileges'] == '1'
+        for item in content), {'processes': processes, 'content': content}
+    return content
+
+
+def check_chrome(bundle, environment, url, executable, *, chromium_sandbox=False, transfer_gate=None):
     from playwright.sync_api import sync_playwright
     root = Path(os.environ["VIDGRAB_VALIDATION_HOME"]) / "chrome-check"
     config, registration, manifest = configure(bundle, root, "chrome")
     # Remote debugging requires a profile outside Chrome's default data directory.
     profile = root / "profile"
     contexts = []
+    sandbox_checks = []
     def native(worker, operation, params=None):
         return worker.evaluate('''async ({operation, params}) => {
           let timer;
@@ -66,6 +101,7 @@ def check_chrome(bundle, environment, url, executable):
     def connect(playwright):
         context = playwright.chromium.launch_persistent_context(
             str(profile), executable_path=str(executable), headless=True, env=environment,
+            chromium_sandbox=chromium_sandbox,
             ignore_default_args=["--disable-extensions"],
             args=["--enable-unsafe-extension-debugging", "--disable-background-networking",
                   "--disable-component-update", "--no-first-run", "--no-default-browser-check"],
@@ -82,6 +118,8 @@ def check_chrome(bundle, environment, url, executable):
             worker = context.wait_for_event("serviceworker", timeout=15000)
         assert identifier in worker.url, worker.url
         assert worker.evaluate("Boolean(self.vidGrabAPI && self.vidGrabNative)"), "Chrome background imports failed"
+        if chromium_sandbox:
+            sandbox_checks.append(chrome_renderer_sandbox(cdp))
         return context, worker, version
     with sync_playwright() as playwright:
         try:
@@ -105,6 +143,8 @@ def check_chrome(bundle, environment, url, executable):
             assert alive["supervisor_pid"] == started["supervisor_pid"]
             assert alive["engine_pid"] == started["engine_pid"]
             assert any(job["id"] == task and job["status"] == "downloading" for job in alive["jobs"]), alive
+            if transfer_gate is not None:
+                transfer_gate.set()
             complete, checksum = completed_job(config, task)
             stop_owner(config)
             reopened, worker, _ = connect(playwright)
@@ -114,8 +154,11 @@ def check_chrome(bundle, environment, url, executable):
             reopened.close()
             contexts.remove(reopened)
             return {"browser": "chrome", "version": version["product"], "extension_id": config["chrome_origin"],
-                    "missing_registration": missing, "media_sha256": checksum, "result": "passed"}
+                    "missing_registration": missing, "media_sha256": checksum, "result": "passed",
+                    "renderer_sandbox": sandbox_checks}
         finally:
+            if transfer_gate is not None:
+                transfer_gate.set()
             print('chrome: cleaning isolated owner and browser', flush=True)
             stop_owner(config)
             for context in contexts:
@@ -152,7 +195,8 @@ document.getElementById('download').onclick = () => run('fixture.download');
     return archive
 
 
-def check_firefox(bundle, environment, url, executable, geckodriver, *, on_failure=None):
+def check_firefox(bundle, environment, url, executable, geckodriver, *, on_failure=None,
+        require_content_sandbox=False, transfer_gate=None):
     root = Path(os.environ["VIDGRAB_VALIDATION_HOME"]) / "firefox-check"
     config, registration, manifest = configure(bundle, root, "firefox")
     archive = firefox_fixture(root)
@@ -167,6 +211,7 @@ def check_firefox(bundle, environment, url, executable, geckodriver, *, on_failu
     }
     (profile / "user.js").write_text("\n".join(f"user_pref({json.dumps(key)}, {json.dumps(value)});" for key, value in preferences.items()))
     driver = None
+    sandbox_checks = []
     def connect():
         nonlocal driver
         driver = WebDriver(geckodriver, environment, root / "driver.log", arguments=("--allow-system-access",))
@@ -175,6 +220,8 @@ def check_firefox(bundle, environment, url, executable, geckodriver, *, on_failu
         identifier = driver.call("/moz/addon/install", {"path": str(archive), "temporary": True})
         assert identifier == config["firefox_id"], identifier
         driver.call("/url", {"url": f"moz-extension://{FIREFOX_UUID}/native-check.html"})
+        if require_content_sandbox:
+            sandbox_checks.append(firefox_content_sandbox(driver))
         return capabilities
     def invoke(selector):
         driver.click(selector)
@@ -200,6 +247,8 @@ def check_firefox(bundle, environment, url, executable, geckodriver, *, on_failu
         assert alive["supervisor_pid"] == started["supervisor_pid"]
         assert alive["engine_pid"] == started["engine_pid"]
         assert any(job["id"] == task and job["status"] == "downloading" for job in alive["jobs"]), alive
+        if transfer_gate is not None:
+            transfer_gate.set()
         complete, checksum = completed_job(config, task)
         stop_owner(config)
         connect()
@@ -209,12 +258,15 @@ def check_firefox(bundle, environment, url, executable, geckodriver, *, on_failu
         assert restored["supervisor_pid"] != complete["supervisor_pid"]
         assert any(job["id"] == task and job["status"] == "complete" for job in restored["jobs"]), restored
         return {"browser": "firefox", "version": capabilities["browserVersion"], "extension_id": config["firefox_id"],
-                "missing_registration": missing["message"], "media_sha256": checksum, "result": "passed"}
+                "missing_registration": missing["message"], "media_sha256": checksum, "result": "passed",
+                "content_sandbox": sandbox_checks}
     except BaseException:
         if on_failure:
             on_failure(config, root)
         raise
     finally:
+        if transfer_gate is not None:
+            transfer_gate.set()
         if driver:
             driver.close()
         stop_owner(config)

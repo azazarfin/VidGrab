@@ -77,10 +77,11 @@ Record new decisions here with date, status, rationale, and the milestone that v
 
 ## ADR-010 — Ubuntu 24.04 LTS clean Linux baseline
 
-- **Date:** 2026-11-06. **Status:** explicitly user-selected target; Ubuntu userspace rebuild/integrity/install and package/browser/FUSE checks pass; native desktop and full P02 acceptance remain open.
+- **Date:** 2026-11-06. **Status:** explicitly user-selected target; Ubuntu userspace rebuild/integrity and native GNOME/Wayland/package/browser/FUSE checks pass. Release installer UX, Snap/Flatpak/fallback and full P02 acceptance remain open.
 - **Decision:** build and validate Linux x86_64 AppImage and `.deb` previews on Ubuntu 24.04 LTS. The existing Fedora 43 artifacts remain development evidence.
 - **Consequence:** rebuild the Python interpreter/support libraries and Rust binaries on the selected target. Audit every shipped ELF against the actual package dependency; the Fedora bundle's glibc 2.42 requirement must not be lowered to Ubuntu's 2.39 without compatible replacement binaries.
 - **Gate:** clean build, frozen self-check, installed package/browser fixture lifecycle, relocation, tray/Wayland and measurements. Selecting the baseline does not certify support or complete P02/ADR-001; Windows remains deferred.
+- **2026-11-07 native evidence:** unchanged previews pass in Ubuntu 24.04.5/GNOME 46 on its own 6.8.0-147-generic KVM kernel, including virtual mouse/keyboard tray Close/Open/Quit, normal OS FUSE, CLI removal/repair and preserved completed fixtures. Native Chrome/Firefox content processes retain seccomp/NoNewPrivs; Firefox's AppArmor user-namespace warning prevents a full-confinement claim. Exact versions, receipts and remaining gates are in VALIDATION/HANDOFF.
 
 ## ADR-011 — Preserve frozen engine bytes during AppImage assembly
 
@@ -88,7 +89,7 @@ Record new decisions here with date, status, rationale, and the milestone that v
 - **Evidence:** linuxdeploy rewrote 46 engine ELF files and added Deno RUNPATH, breaking the pinned tool checksum. The raw AppImage correctly failed its frozen self-check.
 - **Decision:** finish desktop dependency deployment, restore the complete original engine into a fresh AppDir, audit every ELF against the selected ceiling and run frozen component checks. Package that tree directly with appimagetool, retaining the original component manifest and a recorded runtime input.
 - **Boundary:** `prepare_appimage.py` refuses existing/dangling, overlapping, incomplete, ambiguous and escaped inputs. `check_appimage_package.py` covers the embedded runtime, extracted resources, actual relocation and private registration/removal. Ubuntu's glibc 2.39 override is separate from the older Fedora >=2.42 configuration.
-- **2026-11-07 evidence:** combined Chrome→Firefox reopen now passes in both packages after fixing Xvfb's unread stderr pipe in the test helper. Actual AppImage FUSE resource/tool/registration and GUI/browser checks pass, including unmount after Quit; packaged bytes are unchanged. Full native Ubuntu tray/Wayland/installer, sandboxed-browser and Windows acceptance remain open.
+- **2026-11-07 evidence:** combined Chrome→Firefox reopen passes after fixing Xvfb's unread stderr pipe. Actual AppImage FUSE resource/tool/registration and GUI/browser checks also pass on the native Ubuntu GNOME VM, including unmount after tray Quit and Unicode relocation/repair. Packaged bytes are unchanged. Release installer UX, Snap/Flatpak/fallback and Windows acceptance remain open.
 
 ## Pending decisions by gate
 

@@ -6,7 +6,7 @@ The P02 Linux spike adds a fixture-only desktop/engine/native bridge. Full deskt
 
 Run from the repository root with Python 3.11+ and uv. `pyproject.toml` pins the selected direct dependencies; `uv.lock` locks their transitive dependencies and artifacts.
 
-The project baseline is >=3.11; `yt-dlp==2026.6.9` itself declares >=3.10. The current verified interpreter is Linux Python 3.14.8, not Windows or Python 3.11. Desktop packaging remains P02.
+The project baseline is >=3.11; `yt-dlp==2026.6.9` itself declares >=3.10. Verified interpreters are Fedora Python 3.14.8 and Ubuntu Python 3.12.3, not Windows or Python 3.11. Desktop packaging remains P02.
 
 ```sh
 uv sync --frozen
@@ -189,6 +189,16 @@ Inside a sealed test environment with private network/PID/IPC/home/tmp/D-Bus, Xv
 ```
 
 `--fuse` removes extract-and-run selection, verifies the desktop executable's actual image mount and waits for unmount after Quit. It requires `/dev/fuse` and a suitable OS `fusermount`/`fusermount3` with preserved permissions in that environment; default bwrap device isolation does not provide this FUSE setup. The recorded Ubuntu outer-container variant adds `fuse3` and a private Linux-tmpfs helper because NTFS VFS lost its setuid bit. Omit `--fuse` for the default extract-and-run image check or select a desktop binary for `.deb` validation. Engine self-checks still use an empty PATH independently. No native launch timeout or mutation retry is changed by these modes.
+
+For native Ubuntu GNOME/Wayland, normal OS FUSE, content-sandboxed native browser handoff, virtual pointer/keyboard tray interaction and CLI package removal/repair, use [the disposable KVM guest recipe](../tests/ubuntu_vm/README.md). These checks operate on selected fixture homes and actual unchanged preview packages. The GNOME probe belongs only in that guest. Query the current display from the user systemd environment; the GNOME Shell process environment predates display creation. Record guest kernel/versions and copy receipts before shutdown. Native browser seccomp evidence is separate from Snap/Flatpak confinement and paired fallback.
+
+The helper regressions require no installed app/GUI; the stream cases bind loopback, and tray cases fake only D-Bus replies. They remain opt-in:
+
+```sh
+.venv/bin/python -B -m unittest tests.check_native_display tests.check_wayland_protocol tests.check_fixture_stream tests.check_package_installation_protocol -v
+```
+
+`check_package_installation.py` removes/reinstalls the selected `.deb` only in the explicitly named disposable guest and consumes already completed fixture homes. APT needs its local-file acquire step even offline; `--no-download` produces an internal pathname error on Ubuntu. Keep guest networking blocked instead. AppImage removal removes its registered launch path while retaining the original file privately for restoration. This check verifies CLI preview lifecycle/preservation, not terminal-free release uninstaller UX.
 
 For the renderer-only check, serve the built frontend in one terminal and run the mocked command check in another:
 

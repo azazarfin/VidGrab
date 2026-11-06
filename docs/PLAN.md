@@ -1,6 +1,6 @@
 # VidGrab desktop-companion plan
 
-Status: P01 is complete. The user resumed on 2026-11-04 and requested Linux work now, Windows validation later. P02 now has a Linux desktop/engine/native-host spike and an extracted `.deb` preview; its acceptance gate and the framework decision remain open.
+Status: P01 is complete. The user resumed on 2026-11-04 and requested Linux work now, Windows validation later. P02 now has Ubuntu `.deb`/AppImage previews with native GNOME/Wayland, tray, browser and CLI removal/repair evidence; its acceptance gate and the framework decision remain open.
 
 ## Approach
 
@@ -40,14 +40,17 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 - [x] Bundle Python, yt-dlp, FFmpeg/ffprobe, Deno and matching EJS on Linux. Frozen imports, checksum/version checks and a loopback WAV → MP3 fixture work with an empty `PATH`.
 - [x] Prove Linux private IPC, concurrent single ownership, native-host-independent lifetime, bounded engine recovery, mutation reply handling and explicit process-group cleanup through nine native lifecycle cases.
 - [x] Compiled native window and installed Chrome/Firefox handoff checks pass against the final frozen bundle; exact evidence is in VALIDATION. Mocked rendering passes three viewport sizes. Unicode directories, no-tray Close, repeated activation, engine recovery and explicit Quit are covered.
-- [x] Implement Linux package resource discovery, a stable per-user native bridge and launch descriptor, relocation repair and registration removal. Eleven Rust cases and eight compiled headless `.deb` extraction checks pass; the preview is 131.76 MiB and requires glibc 2.42. Relocation is simulated and state/media are preserved.
+- [x] Implement Linux package resource discovery, a stable per-user native bridge and launch descriptor, relocation repair and registration removal. Eleven Rust cases and eight compiled headless `.deb` extraction checks pass; the initial Fedora preview is 131.76 MiB and requires glibc 2.42. That check simulates relocation and preserves state/media.
 - [x] Rebuild on pinned **Ubuntu 24.04 LTS userspace**: fresh Python/support and native binaries fit glibc 2.39; 61 guarded Python, 11 Rust and nine native lifecycle cases pass. This shares the Fedora kernel.
 - [x] Build actual Ubuntu `.deb` and a corrected AppImage; frozen tools, whole-artifact ABI, private registration/removal, actual image relocation and minimal-baseline install/removal pass. Restore the immutable frozen engine after linuxdeploy and audit the AppImage runtime too.
 - [x] Finish actual package browser lifecycle: both UIs and the combined Chrome→Firefox reopen pass in both packages. Pre-cleanup diagnostics identified Xvfb stderr backpressure; a failing overflow regression now passes with a temporary log. Native launch deadlines/mutation semantics and package bytes are unchanged.
 - [x] Exercise actual FUSE: mounted tools/resource discovery, registration/removal, compiled UI, both browser lifecycles and unmount after Quit pass in Ubuntu userspace on the Fedora kernel. The isolated test uses the OS FUSE helper with preserved Unix modes.
-- [ ] Validate native Ubuntu GNOME/KDE tray/Wayland and complete installer interaction. The container/Xvfb evidence does not complete these gates.
+- [x] Validate both unchanged packages in a native Ubuntu 24.04.5/GNOME 46 KVM guest with its own 6.8 kernel: native Wayland, visible tray, compositor Close, hidden download, menu Open/Quit, activation/recovery and normal FUSE unmount. Virtual USB mouse/keyboard tray interaction also passes.
+- [x] Repeat native Chrome→Firefox handoff with content sandboxes enabled and observed `Seccomp=2`/`NoNewPrivs=1`. Both packages retain active downloads after browser exit and completed history after restart. Firefox's AppArmor user-namespace warning limits the confinement claim.
+- [x] Exercise guest-only CLI disconnection, apt `.deb` removal/reinstall and actual Unicode AppImage relocation/launch-path removal/restoration. Copied bridges report `APP_MISSING`; descriptors repair and completed state/media hashes are preserved.
+- [ ] Complete terminal-free release installation/connection/removal UX. KDE and physical-device behavior need separate evidence before support claims.
 - [ ] Implement and validate Windows x64 packaged paths, named pipes/Job Objects, WebView2/tray, Chrome/Firefox registration and installer lifecycle. Windows evidence is deferred at the user's request, not waived.
-- [ ] Evaluate sandboxed-browser native-host access and the explicitly paired loopback fallback.
+- [ ] Evaluate Snap/Flatpak native-host access and the explicitly paired loopback fallback. Native browser content sandbox checks do not certify distribution confinement.
 - [ ] Acceptance: both target OSes pass the package/lifecycle gate, measurements are recorded and ADR-001 is finalized. This Linux spike does not complete P02; P03 has not started.
 - Suggested commit: `feat(desktop): prove bundled engine and browser bridge lifecycle`.
 

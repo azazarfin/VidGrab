@@ -150,6 +150,28 @@ Chrome is 157.0.8103.38, Firefox 159.0, Gecko 0.37.1 and Wry 0.57.1. Completed s
 
 FUSE uses a separate test image with Ubuntu `fuse3`/`libfuse3-3` 3.14.0-5build1, `/dev/fuse` and namespace-scoped `SYS_ADMIN`. NTFS VFS dropped the OS helper's setuid bit; a private Linux-tmpfs copy restores its normal 4755 mode inside the container. The mount probe distinguishes the AppImage's `fuse.*` filesystem from the NTFS `fuseblk` root. All runtime checks retain private network/PID/IPC/home/tmp/D-Bus state and software rendering. They share the Fedora kernel and prove no native Ubuntu GNOME/KDE tray/Wayland, full installer interaction, Snap/Flatpak or Windows behavior. P02/ADR-001 remain open; P03 has not started.
 
+## Native Ubuntu GNOME/Wayland checkpoint — 2026-11-07
+
+The same Ubuntu glibc-2.39 previews now run in a disposable KVM guest with its own Ubuntu kernel. Observed versions: Ubuntu 24.04.5 LTS, kernel 6.8.0-147-generic, GNOME Shell 46.0, GDM 46.2-1ubuntu1~24.04.9, WebKitGTK 2.52.6-0ubuntu0.24.04.1, fuse3 3.14.0-5build1 and Python 3.12.3. The OS FUSE helper is naturally root-owned mode 4755. [The VM recipe](../tests/ubuntu_vm/README.md) records provisioning/isolation; HANDOFF records exact local receipts and the verified cloud-base hash.
+
+| Check | Result for both `.deb` and corrected AppImage |
+| --- | --- |
+| `check_wayland_desktop.py` | Native Wayland client, matching mapped GNOME indicator, compositor Close, hidden-window MP3, D-Bus menu Open, repeated activation, engine recovery, finished history and tray Quit/process/indicator cleanup pass |
+| Actual AppImage FUSE | Desktop executable is inside the image mount; normal helper mounts/unmounts without the container workaround |
+| `check_gnome_pointer.py` | QMP USB tablet/keyboard focuses the title, hides with Alt+F4, clicks the actual indicator and Open/Quit menu items; owner/engine exit and image unmount pass |
+| `check_wayland_browsers.py` | Missing registration, canonical bridge activation, download active after full browser exit and completed history after owner/browser restart pass for Chrome→Firefox |
+| Browser content sandboxes | Chrome uses `chromium_sandbox=True` without `--no-sandbox`; observed renderers and Firefox extension content processes report `Seccomp=2`, `NoNewPrivs=1` |
+| `check_package_installation.py` | Empty-PATH frozen tools, explicit disconnection, apt `.deb` removal/reinstall, stable copied bridge `APP_MISSING`, Unicode AppImage relocation/launch-path removal/restoration, descriptor repair and unchanged state/media hashes pass in 9.594 s |
+| Helper regressions | Nine opt-in display/tray/fixture/error-output cases pass on Fedora/Python 3.14.8 in 1.161 s and native Ubuntu/Python 3.12.3 in 1.168 s |
+| Guarded default suite | 61 pass on Fedora in 2.029 s; existing Ubuntu 61-case evidence applies to unchanged application code; external-request/process guards retained |
+| Startup samples | Registered-app→connected UI: `.deb` 1.243 s, actual FUSE AppImage 1.509 s; provisioning/registration/driver setup and cold-install budgets excluded |
+
+Chrome is 157.0.8103.38, Firefox 159.0, Gecko 0.37.1 and Wry 0.57.1. Firefox reports Ubuntu AppArmor user-namespace EPERM warnings while extension content seccomp is enabled; these checks do not certify full namespace confinement or Snap/Flatpak access. The browser drivers use native packages and development extension profiles. The GNOME probe observes the real compositor/panel and sends real D-Bus menu events; the separate pointer check exercises the virtual display's actual menu input. This is GNOME/software-GPU/virtual-input evidence, not KDE or physical hardware evidence.
+
+Helper failures were investigated without changing application launch behavior: GNOME AppIndicator uses bus-name`@`/object-path registrations and the executable tray title; screen lock disables the guest's test extension; rapid USB states coalesce unless each is observed; Firefox shutdown can exceed the original paced fixture. The new VM browser fixture gates its stream after 4096 bytes until browser exit/active-state checks release it. Original callers retain pacing. APT's `--no-download` rejects the local `.deb` with an internal pathname error; its local acquire step succeeds while guest external networking stays blocked. Failed package commands now retain both output streams and restoration errors cannot obscure the original failure. Address/title, transfer-release and error-output regressions failed before their fixes.
+
+The guest has private disk/home/QMP/VNC/SSH, read-only selected inputs and nftables blocking external traffic after provisioning. Only its screen lock is disabled. App/native source and package bytes are unchanged; all fixture MP3s retain SHA-256 `958bcfd31005dab8833844f7c058a3514e02baa209df62ab110228245a50f9a5`. Host user state/services and excluded local assets are preserved. Terminal-free release installer/connection/removal UX, Snap/Flatpak/paired fallback and deferred Windows keep P02/ADR-001 open; P03 has not started.
+
 ## Deterministic coverage to extend through P05
 
 Use temporary runtime directories/databases and a local HTTP fixture server. External network access should fail the default suite; inject extractor, clock, randomness, process, and update boundaries where needed. Keep tests tied to observable behavior, not the internal refactoring shape.

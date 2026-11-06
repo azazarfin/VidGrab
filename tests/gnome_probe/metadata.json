@@ -1,0 +1,7 @@
+{
+  "uuid": "vidgrab-validation@local",
+  "name": "VidGrab disposable desktop validation",
+  "description": "Window and panel observations for isolated P02 VM checks only",
+  "shell-version": ["46"],
+  "version": 1
+}

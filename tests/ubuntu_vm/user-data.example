@@ -1,0 +1,21 @@
+#cloud-config
+hostname: vidgrab-p02-ubuntu-validation
+manage_etc_hosts: true
+users:
+  - name: vidgrabtest
+    gecos: VidGrab isolated validation
+    shell: /bin/bash
+    lock_passwd: true
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: [adm, sudo, video, render]
+    ssh_authorized_keys:
+      - REPLACE_WITH_DISPOSABLE_SSH_PUBLIC_KEY
+ssh_pwauth: false
+disable_root: true
+package_update: false
+bootcmd:
+  - [mkdir, -p, /mnt/inputs]
+  - [mount, -t, 9p, -o, "trans=virtio,version=9p2000.L,ro", inputs, /mnt/inputs]
+  - [sh, -c, "printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d; chmod 755 /usr/sbin/policy-rc.d"]
+runcmd:
+  - [bash, /mnt/inputs/source/tests/ubuntu_vm/provision.sh]
