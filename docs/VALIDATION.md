@@ -172,6 +172,28 @@ Helper failures were investigated without changing application launch behavior: 
 
 The guest has private disk/home/QMP/VNC/SSH, read-only selected inputs and nftables blocking external traffic after provisioning. Only its screen lock is disabled. App/native source and package bytes are unchanged; all fixture MP3s retain SHA-256 `958bcfd31005dab8833844f7c058a3514e02baa209df62ab110228245a50f9a5`. Host user state/services and excluded local assets are preserved. Terminal-free release installer/connection/removal UX, Snap/Flatpak/paired fallback and deferred Windows keep P02/ADR-001 open; P03 has not started.
 
+## Strict Firefox Snap checkpoint — 2026-11-07
+
+Firefox **159.0.1**, Snap revision **9171**, now passes the existing package bridge through Ubuntu's WebExtensions portal for both the installed `.deb` and corrected AppImage. The browser is launched through `/snap/bin/firefox`, its metadata declares strict confinement, its AppArmor label is `snap.firefox.firefox (enforce)`, and extension content reports `Seccomp=2`/`NoNewPrivs=1`. Portal versions are **1.18.4-1ubuntu2.24.04.3** and GNOME **46.2-0ubuntu1**. The Ubuntu kernel/GNOME baseline and package hashes are unchanged.
+
+| Check | Result for both packages |
+| --- | --- |
+| Missing registration | Explicit `No such native application com.vidgrab.companion`; engine state is not created |
+| Portal/native activation | `CreateSession`, `GetManifest`, `Start` and `GetPipes`; canonical copied bridge and mapped Wayland window |
+| Permission | Visible Firefox focus and actual QMP tablet click on GNOME's Allow button; no programmatic grant |
+| Repeated activation | Same supervisor; no second owner |
+| Browser-independent fixture | Exactly one gated WAV download remains active with the same owner/engine after complete Snap process-tree exit |
+| Restart/history | New owner restores the completed MP3; SHA-256 `958bcfd31005dab8833844f7c058a3514e02baa209df62ab110228245a50f9a5` |
+| Missing app/disconnection | Stable copied bridge returns `APP_MISSING`; removal returns explicit missing-host failure |
+| Cleanup | Browser/owner/monitor exit, test permission removed and both AppImage owner mounts gone |
+| Helper regressions | Nine opt-in cases pass on Fedora/Python 3.14.8 in 1.171 s; Python/JS syntax and whitespace pass |
+
+The new [host driver](../tests/check_firefox_snap.py) and [guest peer](../tests/firefox_snap_guest.py) use the named disposable VM and fresh Snap-visible profiles. External Gecko attaches to loopback Marionette; `MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1` is scoped only to the test browser. The GNOME probe observes real modal labels/buttons. Headless access failed with GNOME's null `focus_app` error and cached `['no']`; visible focus and a fresh decision resolve it. Preparation/cleanup resets only `webextensions/com.vidgrab.companion/snap.firefox` in that guest. Structured D-Bus values handle typed empty arrays, and FUSE cleanup uses each recorded mountpoint. Earlier failed receipts and pre-cleanup screenshots remain. Application source, native deadlines, mutation handling and confinement settings are unchanged.
+
+The signed stable Snap was installed during **2026-11-06 23:50:40.375782 UTC → 23:52:25.162334 UTC**; guest isolation was restored before acceptance. Resume required a repaired overlay preserving the original disk, scoped DHCP firewall allowances, managed static networkd configuration and restored `/etc/fstab` mode 0644. Reboot now proves configured `10.0.2.15/24`, active GNOME Wayland and the saved six-rule drop firewall. The first serial observer missed ANSI formatting; its failure and successful follow-up are separate receipts. Orderly guest poweroff/process exit passes in **8.680 s** without QMP fallback. No total desktop-boot timing is claimed.
+
+Passing receipts/logs are under `/tmp/vidgrab-native-ubuntu24-0xyzhvdi/snap-evidence/`, with outer commands/screenshots, final audit, reboot verification and shutdown receipt beside them; exact names are in HANDOFF. Packages and excluded user assets are preserved. This proves the selected strict Snap configuration and requires no fallback there. Flatpak, release installer UX, other portal configurations, physical devices and deferred Windows remain separate gates; P02/ADR-001 stay open and P03 has not started.
+
 ## Deterministic coverage to extend through P05
 
 Use temporary runtime directories/databases and a local HTTP fixture server. External network access should fail the default suite; inject extractor, clock, randomness, process, and update boundaries where needed. Keep tests tied to observable behavior, not the internal refactoring shape.

@@ -76,9 +76,12 @@ session's `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`. Set
 `loginctl`. Set `GDK_BACKEND=wayland`, `LIBGL_ALWAYS_SOFTWARE=1` and
 `WEBKIT_DISABLE_DMABUF_RENDERER=1` for the application checks.
 
-After provisioning, block external traffic inside the guest. Its SSH forward
-uses gateway `10.0.2.2`; this nftables rule retains that control channel and local
-fixture connections:
+After provisioning, block external traffic inside the guest with
+[isolation.nft](isolation.nft). Its SSH forward uses gateway `10.0.2.2`; the rules
+retain that control channel, loopback fixtures and only QEMU's DHCP exchange.
+A guest using DHCP needs these scoped rules after reboot. Also confirm its
+interface is managed with `networkctl`: firewall allowances cannot configure an
+unmanaged interface. DNS and general external traffic remain blocked:
 
 ```text
 table inet vidgrab_validation {
@@ -86,11 +89,13 @@ table inet vidgrab_validation {
   type filter hook output priority 0; policy drop;
   oifname "lo" accept
   ip daddr 10.0.2.2 tcp sport 22 accept
+  ip daddr { 10.0.2.2, 255.255.255.255 } udp sport 68 udp dport 67 accept
  }
  chain input {
   type filter hook input priority 0; policy drop;
   iifname "lo" accept
   ip saddr 10.0.2.2 tcp dport 22 accept
+  ip saddr 10.0.2.2 udp sport 67 udp dport 68 accept
  }
 }
 ```
@@ -133,6 +138,44 @@ the WAV after its first 4096 bytes until browser exit is observed. Chrome requir
 its sandbox and checks renderer seccomp/NoNewPrivs; Firefox checks extension
 content processes. Record any AppArmor namespace warning rather than claiming
 full confinement. This does not test Snap/Flatpak.
+
+## Strict Firefox Snap
+
+Install the stable Firefox Snap only inside the disposable guest during a
+recorded provisioning network interval. Restore [isolation.nft](isolation.nft)
+before acceptance checks. The strict browser uses its canonical
+`/snap/bin/firefox` launcher and fresh profiles under the guest's
+`~/snap/firefox/common/`; the portal reads native registration in that guest's
+actual user home. The external Gecko driver attaches to loopback Marionette;
+its system-access environment flag is scoped only to the test browser.
+
+On the host, from the repository root:
+
+```sh
+python3 -B tests/check_firefox_snap.py --vm /tmp/CONTROL/vm.json \
+  --app /usr/bin/vidgrab-desktop \
+  --home /home/vidgrabtest/validation/snap-deb \
+  --guest-report /home/vidgrabtest/validation/snap-deb.json \
+  --screenshots /tmp/CONTROL/snap-deb-screenshots \
+  --report /tmp/CONTROL/snap-deb-outer.json
+```
+
+Repeat with `/home/vidgrabtest/packages/VidGrab_0.1.0_amd64.AppImage`, `--fuse`
+and fresh paths. The harness requires the named private VM and its running
+receipt. It focuses visible Firefox, observes GNOME's real permission dialog and
+clicks Allow with the virtual tablet. Headless GNOME access can cache a denial;
+preparation/cleanup resets only this fixture's exact native-host permission via
+structured D-Bus calls and never grants it programmatically. Checks cover native
+activation, repeated activation, one gated download after full browser exit,
+completed history after owner restart, `APP_MISSING`, disconnection and both
+AppImage mounts disappearing. Failures capture the display before cleanup.
+
+The selected Ubuntu 24.04.5/Firefox 159.0.1 Snap configuration passes both
+packages through the WebExtensions portal with enforced AppArmor and content
+seccomp/NoNewPrivs. Flatpak and other portal configurations need separate checks;
+the planned explicitly paired fallback remains conditional on those results.
+
+## Virtual tray input and package removal
 
 On the **host**, use the private `vm.json` receipt to drive actual virtual USB
 mouse/keyboard tray input. Its VM name must match the control directory basename:

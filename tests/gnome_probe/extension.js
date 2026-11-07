@@ -1,6 +1,7 @@
 import Gio from 'gi://Gio';
 import Clutter from 'gi://Clutter';
 import Meta from 'gi://Meta';
+import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
@@ -14,6 +15,29 @@ function geometry(actor) {
   const [x, y] = actor.get_transformed_position();
   const [width, height] = actor.get_transformed_size();
   return { x, y, width, height };
+}
+
+function modalDialogs() {
+  return Main.layoutManager.modalDialogGroup.get_children()
+    .filter(actor => actor.mapped)
+    .map(actor => {
+      const labels = [];
+      const buttons = [];
+      function visit(child) {
+        if (!child.mapped)
+          return;
+        if (child instanceof St.Label && child.text)
+          labels.push(child.text);
+        if (child instanceof St.Button) {
+          const label = child.get_child()?.get_text?.() ?? child.label;
+          buttons.push({ label, reactive: child.reactive, ...geometry(child) });
+        }
+        for (const descendant of child.get_children())
+          visit(descendant);
+      }
+      visit(actor);
+      return { labels, buttons };
+    });
 }
 
 export default class Validation extends Extension {
@@ -50,6 +74,7 @@ export default class Validation extends Extension {
       pointer_events: this._events,
       pointer: { x: pointerX, y: pointerY,
         primary_down: (modifiers & Clutter.ModifierType.BUTTON1_MASK) !== 0 },
+      dialogs: modalDialogs(),
       windows: global.get_window_actors().map(actor => {
         const window = actor.meta_window;
         const frame = window.get_frame_rect();

@@ -1,0 +1,15 @@
+# Disposable QEMU user-network guest only; not a host firewall configuration.
+table inet vidgrab_validation {
+  chain output {
+    type filter hook output priority 0; policy drop;
+    oifname "lo" accept
+    ip daddr 10.0.2.2 tcp sport 22 accept
+    ip daddr { 10.0.2.2, 255.255.255.255 } udp sport 68 udp dport 67 accept
+  }
+  chain input {
+    type filter hook input priority 0; policy drop;
+    iifname "lo" accept
+    ip saddr 10.0.2.2 tcp dport 22 accept
+    ip saddr 10.0.2.2 udp sport 67 udp dport 68 accept
+  }
+}

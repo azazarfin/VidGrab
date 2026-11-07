@@ -48,9 +48,10 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 - [x] Validate both unchanged packages in a native Ubuntu 24.04.5/GNOME 46 KVM guest with its own 6.8 kernel: native Wayland, visible tray, compositor Close, hidden download, menu Open/Quit, activation/recovery and normal FUSE unmount. Virtual USB mouse/keyboard tray interaction also passes.
 - [x] Repeat native Chrome→Firefox handoff with content sandboxes enabled and observed `Seccomp=2`/`NoNewPrivs=1`. Both packages retain active downloads after browser exit and completed history after restart. Firefox's AppArmor user-namespace warning limits the confinement claim.
 - [x] Exercise guest-only CLI disconnection, apt `.deb` removal/reinstall and actual Unicode AppImage relocation/launch-path removal/restoration. Copied bridges report `APP_MISSING`; descriptors repair and completed state/media hashes are preserved.
+- [x] Validate strict Firefox Snap through Ubuntu's WebExtensions portal and the canonical package bridge for both `.deb` and actual FUSE AppImage: real Allow input, activation, download after full browser exit, restored history, missing-app and disconnection. AppArmor enforcement and content seccomp/NoNewPrivs are observed; no fallback is needed in this tested configuration.
 - [ ] Complete terminal-free release installation/connection/removal UX. KDE and physical-device behavior need separate evidence before support claims.
 - [ ] Implement and validate Windows x64 packaged paths, named pipes/Job Objects, WebView2/tray, Chrome/Firefox registration and installer lifecycle. Windows evidence is deferred at the user's request, not waived.
-- [ ] Evaluate Snap/Flatpak native-host access and the explicitly paired loopback fallback. Native browser content sandbox checks do not certify distribution confinement.
+- [ ] Evaluate Firefox Flatpak native-host access and the explicitly paired loopback fallback where needed. Snap results do not establish Flatpak or other portal configurations.
 - [ ] Acceptance: both target OSes pass the package/lifecycle gate, measurements are recorded and ADR-001 is finalized. This Linux spike does not complete P02; P03 has not started.
 - Suggested commit: `feat(desktop): prove bundled engine and browser bridge lifecycle`.
 

@@ -77,7 +77,7 @@ Record new decisions here with date, status, rationale, and the milestone that v
 
 ## ADR-010 — Ubuntu 24.04 LTS clean Linux baseline
 
-- **Date:** 2026-11-06. **Status:** explicitly user-selected target; Ubuntu userspace rebuild/integrity and native GNOME/Wayland/package/browser/FUSE checks pass. Release installer UX, Snap/Flatpak/fallback and full P02 acceptance remain open.
+- **Date:** 2026-11-06. **Status:** explicitly user-selected target; Ubuntu userspace rebuild/integrity, native GNOME/Wayland/package/browser/FUSE and strict Firefox Snap checks pass. Release installer UX, Flatpak/fallback and full P02 acceptance remain open.
 - **Decision:** build and validate Linux x86_64 AppImage and `.deb` previews on Ubuntu 24.04 LTS. The existing Fedora 43 artifacts remain development evidence.
 - **Consequence:** rebuild the Python interpreter/support libraries and Rust binaries on the selected target. Audit every shipped ELF against the actual package dependency; the Fedora bundle's glibc 2.42 requirement must not be lowered to Ubuntu's 2.39 without compatible replacement binaries.
 - **Gate:** clean build, frozen self-check, installed package/browser fixture lifecycle, relocation, tray/Wayland and measurements. Selecting the baseline does not certify support or complete P02/ADR-001; Windows remains deferred.
@@ -90,6 +90,14 @@ Record new decisions here with date, status, rationale, and the milestone that v
 - **Decision:** finish desktop dependency deployment, restore the complete original engine into a fresh AppDir, audit every ELF against the selected ceiling and run frozen component checks. Package that tree directly with appimagetool, retaining the original component manifest and a recorded runtime input.
 - **Boundary:** `prepare_appimage.py` refuses existing/dangling, overlapping, incomplete, ambiguous and escaped inputs. `check_appimage_package.py` covers the embedded runtime, extracted resources, actual relocation and private registration/removal. Ubuntu's glibc 2.39 override is separate from the older Fedora >=2.42 configuration.
 - **2026-11-07 evidence:** combined Chrome→Firefox reopen passes after fixing Xvfb's unread stderr pipe. Actual AppImage FUSE resource/tool/registration and GUI/browser checks also pass on the native Ubuntu GNOME VM, including unmount after tray Quit and Unicode relocation/repair. Packaged bytes are unchanged. Release installer UX, Snap/Flatpak/fallback and Windows acceptance remain open.
+
+## ADR-012 — Use the WebExtensions portal for tested Ubuntu Firefox Snap
+
+- **Date:** 2026-11-07. **Status:** verified for the selected Ubuntu/Snap configuration; P02 and ADR-001 remain open.
+- **Decision:** retain the existing package-generated native manifest and stable copied bridge. Ubuntu's WebExtensions portal finds and launches it for strict Firefox Snap; this configuration needs no loopback fallback or additional registration format.
+- **Evidence:** Firefox 159.0.1/Snap revision 9171 on Ubuntu 24.04.5/GNOME 46, with xdg-desktop-portal 1.18.4-1ubuntu2.24.04.3 and GNOME portal 46.2-0ubuntu1. Both unchanged packages pass real Allow input, owner activation, gated download after full browser exit, completed history after restart, `APP_MISSING` and disconnection. The browser AppArmor label is enforced and extension content seccomp/NoNewPrivs are observed; AppImage mounts clean up.
+- **Test boundary:** GNOME requires a focused visible app for its permission prompt. Headless failure cached a denial; only the fixture's exact permission is reset inside the guarded guest, and approval uses QMP mouse input. Marionette's system-access flag stays confined to that test browser. Application mutation forwarding, deadlines and confinement settings are unchanged.
+- **Remaining:** Firefox Flatpak and other portal versions/distributions need their own evidence. Evaluate explicit pairing only where native access is unavailable; do not silently fall back to the legacy unauthenticated API. Release installer UX and Windows acceptance remain pending.
 
 ## Pending decisions by gate
 
