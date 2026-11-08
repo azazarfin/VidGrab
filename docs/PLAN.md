@@ -1,6 +1,6 @@
 # VidGrab desktop-companion plan
 
-Status: P01 is complete. The user resumed on 2026-11-04 and requested Linux work now, Windows validation later. P02 now has Ubuntu `.deb`/AppImage previews with native GNOME/Wayland, tray, browser and CLI removal/repair evidence; its acceptance gate and the framework decision remain open.
+Status: P01 is complete. The user resumed on 2026-11-04 and requested Linux work now, Windows validation later. P02 now has Ubuntu `.deb`/AppImage previews with native GNOME/Wayland, tray, browser and CLI removal/repair evidence. Strict Firefox Snap passes, and Firefox Flatpak passes with guided portal opt-in; the acceptance gate and framework decision remain open.
 
 ## Approach
 
@@ -49,9 +49,9 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 - [x] Repeat native Chrome→Firefox handoff with content sandboxes enabled and observed `Seccomp=2`/`NoNewPrivs=1`. Both packages retain active downloads after browser exit and completed history after restart. Firefox's AppArmor user-namespace warning limits the confinement claim.
 - [x] Exercise guest-only CLI disconnection, apt `.deb` removal/reinstall and actual Unicode AppImage relocation/launch-path removal/restoration. Copied bridges report `APP_MISSING`; descriptors repair and completed state/media hashes are preserved.
 - [x] Validate strict Firefox Snap through Ubuntu's WebExtensions portal and the canonical package bridge for both `.deb` and actual FUSE AppImage: real Allow input, activation, download after full browser exit, restored history, missing-app and disconnection. AppArmor enforcement and content seccomp/NoNewPrivs are observed; no fallback is needed in this tested configuration.
+- [x] Evaluate Firefox Flatpak 159.0.1 with stock permissions: default portal preference `0` reports missing host; explicit integer `1` passes the same lifecycle in both packages. The user selected [guided native setup](BROWSER_CONNECTION.md) on 2026-11-08. Other configurations retain a conditional pairing decision; no fallback is implemented.
 - [ ] Complete terminal-free release installation/connection/removal UX. KDE and physical-device behavior need separate evidence before support claims.
 - [ ] Implement and validate Windows x64 packaged paths, named pipes/Job Objects, WebView2/tray, Chrome/Firefox registration and installer lifecycle. Windows evidence is deferred at the user's request, not waived.
-- [ ] Evaluate Firefox Flatpak native-host access and the explicitly paired loopback fallback where needed. Snap results do not establish Flatpak or other portal configurations.
 - [ ] Acceptance: both target OSes pass the package/lifecycle gate, measurements are recorded and ADR-001 is finalized. This Linux spike does not complete P02; P03 has not started.
 - Suggested commit: `feat(desktop): prove bundled engine and browser bridge lifecycle`.
 

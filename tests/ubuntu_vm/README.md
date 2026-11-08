@@ -172,8 +172,68 @@ AppImage mounts disappearing. Failures capture the display before cleanup.
 
 The selected Ubuntu 24.04.5/Firefox 159.0.1 Snap configuration passes both
 packages through the WebExtensions portal with enforced AppArmor and content
-seccomp/NoNewPrivs. Flatpak and other portal configurations need separate checks;
-the planned explicitly paired fallback remains conditional on those results.
+seccomp/NoNewPrivs. Snap entrypoints now delegate to the shared portal host/guest
+journey; both package regressions still pass.
+
+## Firefox Flatpak native portal
+
+Install Flatpak and official Flathub Firefox only in this disposable guest during
+a recorded provisioning interval, then restore [isolation.nft](isolation.nft)
+before checks. The validated app is Firefox 159.0.1, Flatpak 1.14.6 and runtime
+`org.freedesktop.Platform/x86_64/25.08`, with no user permission overrides. Start
+a new GNOME session after installation so Flatpak export directories and
+`org.mozilla.firefox.desktop` are discoverable; the recorded guest reboot fixed
+portal identity denial from its older session.
+
+Stock Firefox profiles have integer preference
+`widget.use-xdg-desktop-portal.native-messaging = 0`. With no explicit opt-in,
+the harness records a missing-host failure even after canonical registration,
+then verifies cleanup. Keep that negative receipt rather than claiming native
+activation passed. For the user-selected guided native path, explicitly request
+the setting in a fresh test profile:
+
+```sh
+python3 -B tests/check_firefox_flatpak.py --vm /tmp/CONTROL/vm.json \
+  --app /usr/bin/vidgrab-desktop \
+  --home /home/vidgrabtest/validation/flatpak-deb \
+  --guest-report /home/vidgrabtest/validation/flatpak-deb.json \
+  --screenshots /tmp/CONTROL/flatpak-deb-screenshots \
+  --report /tmp/CONTROL/flatpak-deb-outer.json --enable-native-portal
+```
+
+Repeat with the corrected AppImage, `--fuse` and fresh paths. The explicit flag
+writes integer `1` only in these test profiles; it is rejected for Snap and does
+not alter Flatpak permissions or grant consent. The launcher is
+`flatpak run --user org.mozilla.firefox`, profiles are under the guest's
+`~/.var/app/org.mozilla.firefox/`, and the portal reads canonical registration
+from the actual guest user home. Keep the visible browser focused and use the
+real virtual-tablet Allow click. Permission preparation/cleanup clears only
+`webextensions/com.vidgrab.companion/org.mozilla.firefox` inside this guest.
+
+Both packages pass native Wayland activation, repeated activation, one gated
+download after full browser exit, completed history, missing-app/disconnection
+and cleanup. `flatpak ps` can report outer bwrap in the host namespace. Map
+browser/content PIDs only through that instance's descendants at the browser
+namespace depth, including nested content namespaces. Kill the exact owned
+Flatpak instance and verify observed processes exited; killing only outer bwrap
+can leave Firefox alive. Browser/content private Flatpak PID namespaces,
+seccomp 2 and NoNewPrivs 1 are required. Record Firefox's remaining user-namespace
+warning instead of claiming additional Firefox namespaces work.
+
+Seventeen opt-in helpers pass on both Fedora and Ubuntu, including eight
+Flatpak mapping/cleanup cases; [DEVELOPMENT.md](../../docs/DEVELOPMENT.md) gives
+the command. [The setup guide](../../docs/BROWSER_CONNECTION.md) is manual;
+regular popup migration and terminal-free release controls remain unfinished.
+There is no paired fallback in this preview. Other configurations and Windows
+retain their own gates.
+
+Current controls use `guest-network-repaired.qcow2` over the preserved original
+disk and `resume-seed.iso`; read the current `vm.json`. Latest final audit passes,
+and the VM is stopped. The guest poweroff request did not exit QEMU within 30 s;
+private QMP quit verified process exit in 31.136 s. Preserve
+`flatpak-shutdown.json` as a fallback result, separately from the older successful
+Snap shutdown. Flatpak/Snap shared receipts and logs are in `flatpak-evidence/`
+with commands/screenshots alongside; these remain ephemeral, excluded from Git.
 
 ## Virtual tray input and package removal
 

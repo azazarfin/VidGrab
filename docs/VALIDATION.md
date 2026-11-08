@@ -192,7 +192,36 @@ The new [host driver](../tests/check_firefox_snap.py) and [guest peer](../tests/
 
 The signed stable Snap was installed during **2026-11-06 23:50:40.375782 UTC → 23:52:25.162334 UTC**; guest isolation was restored before acceptance. Resume required a repaired overlay preserving the original disk, scoped DHCP firewall allowances, managed static networkd configuration and restored `/etc/fstab` mode 0644. Reboot now proves configured `10.0.2.15/24`, active GNOME Wayland and the saved six-rule drop firewall. The first serial observer missed ANSI formatting; its failure and successful follow-up are separate receipts. Orderly guest poweroff/process exit passes in **8.680 s** without QMP fallback. No total desktop-boot timing is claimed.
 
-Passing receipts/logs are under `/tmp/vidgrab-native-ubuntu24-0xyzhvdi/snap-evidence/`, with outer commands/screenshots, final audit, reboot verification and shutdown receipt beside them; exact names are in HANDOFF. Packages and excluded user assets are preserved. This proves the selected strict Snap configuration and requires no fallback there. Flatpak, release installer UX, other portal configurations, physical devices and deferred Windows remain separate gates; P02/ADR-001 stay open and P03 has not started.
+Passing receipts/logs are under `/tmp/vidgrab-native-ubuntu24-0xyzhvdi/snap-evidence/`, with outer commands/screenshots, final audit, reboot verification and shutdown receipt beside them; exact names are in HANDOFF. Packages and excluded user assets are preserved. This proves the selected strict Snap configuration and requires no fallback there. Flatpak opt-in evidence follows below. Release installer UX, other portal configurations, physical devices and deferred Windows remain separate gates; P02/ADR-001 stay open and P03 has not started.
+
+## Firefox Flatpak portal opt-in checkpoint — 2026-11-08
+
+Official Flathub Firefox **159.0.1** passes the canonical native bridge for both unchanged Ubuntu packages after explicitly setting the existing integer `widget.use-xdg-desktop-portal.native-messaging` preference to **`1`**. Stock profiles have value **`0`** without a user override and return “No such native application com.vidgrab.companion” even after registration. The user selected [guided native setup](BROWSER_CONNECTION.md), recorded in ADR-013; no paired loopback fallback is implemented.
+
+Environment: Ubuntu 24.04.5/kernel **6.8.0-147-generic**/GNOME 46, Flatpak **1.14.6**, `org.freedesktop.Platform/x86_64/25.08`, app commit `df51b8005c4cd8f1e185d98ec86d15151ac35a453413e4629c2e46691015b207`. User Flatpak permission overrides are empty. Browser/content have private Flatpak PID namespaces, `Seccomp=2` and `NoNewPrivs=1`; Firefox still prints a user-namespace EPERM warning. This is observed Flatpak confinement, not proof of unrestricted additional Firefox namespaces or another distribution's support.
+
+| Check | Result for both packages |
+| --- | --- |
+| Stock profile | Expected missing-host diagnostic with registered bridge; negative receipts retain `result: failed`, and cleanup passes |
+| Explicit portal opt-in | Integer type, user value `1`; canonical portal activation and mapped native Wayland window |
+| Permission | Visible/focused Firefox and real QMP tablet Allow click for VidGrab; no programmatic grant |
+| Repeated activation | Same owner; no second engine |
+| Browser-independent fixture | Exactly one gated download survives full owned Flatpak instance exit |
+| Restart/history | New owner restores the completed MP3 with unchanged fixture hash |
+| Missing app/disconnection | Copied bridge reports `APP_MISSING`; registration removal reports missing host |
+| Cleanup | Owned browser/engine/monitor exited, exact test permission removed, both AppImage mounts gone |
+| Shared Snap regression | Both strict Snap package journeys pass the extracted shared harness |
+| Helper regressions | 17 cases pass on Fedora/Python 3.14.8 in **1.285 s** and Ubuntu/Python 3.12.3 in **1.219 s** |
+
+[The shared host driver](../tests/check_firefox_portal.py) and [guest peer](../tests/firefox_portal_guest.py) keep the guarded disposable VM, native deadlines and once-only mutations. `--enable-native-portal` is explicitly Flatpak-only. PID translation uses only the exact instance's descendants and the browser namespace depth; outer bwrap may remain in the host namespace. Cleanup invokes `flatpak kill` for the exact owned instance and verifies the observed tree has exited. Killing only outer bwrap was insufficient. Eight [mapping regressions](../tests/check_firefox_flatpak_protocol.py) cover host/nested namespaces, unrelated instances, missing/ambiguous PIDs and rejected unconfined content.
+
+Provisioning temporarily opened guest networking **2026-11-08 00:12:28.062014 UTC → 00:13:20.856011 UTC**; the saved drop firewall was restored before checks. A GNOME session predating Flatpak installation lacked export paths and denied portal identity; guest reboot restored `org.mozilla.firefox.desktop` discovery. Preparation/cleanup clears only the fixture's exact `webextensions/com.vidgrab.companion/org.mozilla.firefox` permission. It never grants access programmatically or disables confinement.
+
+Accepted receipts are `flatpak-evidence/flatpak-portal-deb-2.json`, `flatpak-evidence/flatpak-portal-image-1.json`, `flatpak-evidence/snap-shared-deb.json` and `flatpak-evidence/snap-shared-image.json` under `/tmp/vidgrab-native-ubuntu24-0xyzhvdi`; outer commands/screenshots are alongside. `flatpak-default-final-{deb,image}.json` retain stock failures with successful cleanup. Earlier failures, including initial incomplete cleanup subsequently repaired, remain preserved. The final audit verifies no app/browser/native processes, registrations or AppImage mounts, removed permissions, saved six-rule firewall, root-owned FUSE helper 4755 and `/etc/fstab` 0644. Package hashes remain `.deb` `c865903c793e089deca74fa15f7364671d2e623ecb02bd304ddeb1e4d14e22ef`, AppImage `97803a020ad48d659663ae3454f091276d5a78a01364505b94b5dce081b309b2`; fixture SHA-256 is `958bcfd31005dab8833844f7c058a3514e02baa209df62ab110228245a50f9a5`.
+
+Latest shutdown is **stopped with QMP fallback**, not orderly poweroff success. The guest accepted the poweroff command but QEMU remained alive past the 30-second budget; private QMP quit then verified process exit in **31.136 s** total. `flatpak-shutdown.json` records this separately from the earlier successful Snap shutdown.
+
+The source adds optional desktop setup help and a full guide. TypeScript/Vite build and the existing mocked renderer check pass at **1280×900, 620×600 and 390×720**. Expanded help also passes Enter/Space disclosure, 2px focus, 44px target and exact preference wrapping without horizontal overflow; all three screenshots were reviewed. No page errors, external page requests or new action commands; the App/CSS detector reports no findings. Receipts/screenshots are under `flatpak-guidance-ui/`. The missing offline Playwright cache was restored with pinned 1.64.1 in a temporary uv environment, leaving project dependencies unchanged. The package lifecycle evidence above covers unchanged earlier package bytes. Terminal-free release controls, rebuilt/manual-onboarding package acceptance, other portals/distributions, physical devices and Windows remain open. P02/ADR-001 stay open and P03 has not started.
 
 ## Deterministic coverage to extend through P05
 

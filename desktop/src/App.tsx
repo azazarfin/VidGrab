@@ -87,6 +87,20 @@ export function App() {
         <h1 id="title">Connection test</h1>
         <p>Try a local audio download. VidGrab keeps it running when the browser closes.</p>
       </section>
+      <details className="browser-setup">
+        <summary>Firefox Flatpak setup</summary>
+        <p>Firefox Flatpak needs one browser setting to allow the native connection test in this preview.</p>
+        <ol>
+          <li>Open VidGrab from its current location once to register the browser connection.</li>
+          <li>In Firefox, open <code>about:config</code>, accept the browser notice if shown, and search for
+            <code className="portal-preference">widget.use-xdg-desktop-portal.native-messaging</code>
+          </li>
+          <li>Set the existing <strong>Number</strong> value to <code>1</code> and save it. Fully quit Firefox, then reopen it.</li>
+          <li>Keep Firefox visible when starting the extension’s native connection test. Choose <strong>Allow</strong> when the desktop asks Firefox to launch <strong>VidGrab P02 desktop companion</strong>.</li>
+        </ol>
+        <p>If Firefox Flatpak was installed during this desktop session, sign out and back in before connecting so the desktop can recognize it.</p>
+        <p>The app’s Connected status means VidGrab is ready. Confirm Firefox access with the native connection test; the preview’s regular extension popup still uses the earlier backend.</p>
+      </details>
       <form className="download-form" onSubmit={download}>
         <label htmlFor="fixture-url">Fixture URL</label>
         <input id="fixture-url" type="url" value={url} required maxLength={2048}

@@ -208,3 +208,17 @@ uv run --no-project --offline --with playwright==1.64.1 --python .venv/bin/pytho
 ```
 
 This checks three widths with mocked Tauri commands and blocks other HTTP requests. It proves no native IPC, installed extension, Windows, physical tray, Wayland or clean-package behavior.
+
+## Firefox Snap/Flatpak native portal checks — 2026-11-08
+
+[Firefox Flatpak setup](BROWSER_CONNECTION.md) describes the user-selected guided native path. The source window now includes optional setup help; it does not implement release connection controls. Ubuntu's strict Firefox Snap 159.0.1 works through the existing portal without changing a preference. Official Flathub Firefox 159.0.1 has `widget.use-xdg-desktop-portal.native-messaging` set to integer `0` by default; explicit integer `1` enables the tested native portal path. Keep the browser visible/focused for the real GNOME Allow prompt. Restart a desktop session that predates Flatpak installation so GNOME recognizes its exported desktop entry.
+
+Use [the disposable VM recipe](../tests/ubuntu_vm/README.md) for both browser distributions. The compatibility Snap entrypoints and new Flatpak entrypoints share [the QMP host journey](../tests/check_firefox_portal.py) and [guarded guest lifecycle](../tests/firefox_portal_guest.py). Only the explicit Flatpak `--enable-native-portal` flag writes that preference into fresh test profiles. Without it, the stock Flatpak check records a missing-host failure despite registration and then cleans up; that negative receipt is diagnostic evidence, not a passing activation case. The flag never changes Flatpak permission overrides or grants desktop consent.
+
+Both unchanged Ubuntu packages pass the opted-in Flatpak journey and both Snap regressions. Flatpak cleanup uses its exact owned instance, because terminating outer bwrap alone can leave Firefox alive. PID mapping follows only the instance's descendants at the browser namespace depth, including nested content namespaces. Browser/content seccomp and NoNewPrivs remain required. The local helper command now includes eight Flatpak mapping/cleanup regressions:
+
+```sh
+.venv/bin/python -B -m unittest tests.check_firefox_flatpak_protocol tests.check_native_display tests.check_wayland_protocol tests.check_fixture_stream tests.check_package_installation_protocol -v
+```
+
+Seventeen helpers pass on Fedora/Python 3.14.8 and Ubuntu/Python 3.12.3; exact timings and receipts are in [VALIDATION.md](VALIDATION.md). The tested package bytes predate the new help copy. A future package rebuild must validate that UI in actual packages. Terminal-free release registration/connection/removal and Windows keep P02/ADR-001 open; no paired loopback fallback is implemented.

@@ -22,7 +22,7 @@ button, input { font: inherit; }
 button, input { min-height: 44px; border-radius: 6px; }
 button { cursor: pointer; font-weight: 600; padding: 10px 16px; border: 1px solid var(--line); }
 button:disabled { cursor: default; opacity: 0.65; }
-button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .shell { width: 100%; max-width: 760px; margin: auto; padding: 28px 32px; }
 .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .brand { display: flex; gap: 10px; align-items: center; font: 600 19px var(--font-display); }
@@ -34,6 +34,14 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .eyebrow { margin: 0 0 8px; color: var(--accent); font-size: 14px; font-weight: 600; }
 h1 { font: 600 34px/1.15 var(--font-display); letter-spacing: -0.035em; margin: 0 0 12px; }
 .intro > p:last-child { max-width: 440px; margin: 0; color: var(--muted); }
+.browser-setup { margin-bottom: 24px; }
+.browser-setup summary { min-height: 44px; padding: 10px 0; color: var(--accent); font-weight: 600; cursor: pointer; }
+.browser-setup summary:hover { color: var(--text); }
+.browser-setup p { margin: 8px 0 12px; color: var(--muted); }
+.browser-setup ol { margin: 12px 0; padding-left: 24px; }
+.browser-setup li { margin-bottom: 12px; }
+.browser-setup code { color: var(--text); font-size: 0.95em; overflow-wrap: anywhere; }
+.portal-preference { display: block; margin-top: 8px; user-select: all; }
 .download-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 12px; }
 label { grid-column: 1 / -1; font-weight: 600; }
 input { width: 100%; min-width: 0; background: var(--surface); color: var(--text); padding: 10px 12px; border: 1px solid var(--line); }
