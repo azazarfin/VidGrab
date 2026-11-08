@@ -78,6 +78,8 @@ pub fn failure(id: Option<&str>, code: &str) -> Value {
         "APP_MISSING" => "The installed companion could not be launched",
         "APP_UNAVAILABLE" => "The companion did not become ready before the deadline",
         "ENGINE_UNAVAILABLE" => "The engine is unavailable; reopen the app to try again",
+        "BROWSER_DISCONNECTED" => "Browser access is disabled; use Connect browsers in VidGrab",
+        "BROWSER_CONNECTION_UNAVAILABLE" => "The browser connection settings could not be read; open VidGrab to check them",
         "REQUEST_OUTCOME_UNKNOWN" => "The request may have been accepted; check the queue before trying again",
         "BAD_FRAME" => "The native message is incomplete, oversized or invalid JSON",
         _ => "The companion request was rejected",

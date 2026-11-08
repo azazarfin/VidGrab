@@ -6,6 +6,11 @@ use std::time::{Duration, Instant};
 use vidgrab_supervisor::{installation::HostConfig, protocol, transport};
 
 fn bridge(config: &HostConfig, path: &PathBuf, request: &protocol::Request) -> serde_json::Value {
+    match config.browser_enabled(path) {
+        Ok(true) => (),
+        Ok(false) => return protocol::failure(Some(&request.id), "BROWSER_DISCONNECTED"),
+        Err(_) => return protocol::failure(Some(&request.id), "BROWSER_CONNECTION_UNAVAILABLE"),
+    }
     let handshake = protocol::Request { spike_version: 1, id: "native-handshake".into(), op: "status".into(), params: Default::default() };
     let connected = match transport::call_socket(&config.socket_path(), &handshake) {
         Ok(response) => Some(response),
@@ -74,4 +79,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         protocol::write_message(&mut output, &response)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use vidgrab_supervisor::installation::{CHROME_ORIGIN, FIREFOX_ID};
+
+    #[test]
+    fn disconnected_packaged_host_rejects_before_launching_or_contacting_the_owner() {
+        let root = std::env::temp_dir().join(format!("vidgrab-native-disconnected-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("host-config.json");
+        let config: HostConfig = serde_json::from_value(json!({"package_version":1,
+            "app":root.join("missing-app"), "data_dir":root.join("state"), "download_dir":root.join("media"),
+            "chrome_origin":CHROME_ORIGIN, "firefox_id":FIREFOX_ID})).unwrap();
+        std::fs::write(root.join("browser-connection.json"), br#"{"connection_version":1,"enabled":false}"#).unwrap();
+        let request = protocol::Request { spike_version:1, id:"disconnected".into(), op:"status".into(), params:Default::default() };
+        let response = bridge(&config, &path, &request);
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(response["id"], "disconnected");
+        assert_eq!(response["error"]["code"], "BROWSER_DISCONNECTED");
+    }
 }

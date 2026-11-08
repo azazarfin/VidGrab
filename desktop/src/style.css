@@ -34,6 +34,13 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .eyebrow { margin: 0 0 8px; color: var(--accent); font-size: 14px; font-weight: 600; }
 h1 { font: 600 34px/1.15 var(--font-display); letter-spacing: -0.035em; margin: 0 0 12px; }
 .intro > p:last-child { max-width: 440px; margin: 0; color: var(--muted); }
+.browser-connections { margin: 0 0 16px; padding: 18px 0; border-top: 1px solid var(--line); }
+.browser-connection-summary { margin: 8px 0 12px; color: var(--muted); }
+.browser-registration { margin: 12px 0; }
+.browser-registration div { display: flex; justify-content: space-between; gap: 16px; margin: 6px 0; }
+.browser-registration dt { font-weight: 600; }
+.browser-registration dd { margin: 0; color: var(--muted); text-align: right; }
+.connection-actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0 12px; }
 .browser-setup { margin-bottom: 24px; }
 .browser-setup summary { min-height: 44px; padding: 10px 0; color: var(--accent); font-weight: 600; cursor: pointer; }
 .browser-setup summary:hover { color: var(--text); }

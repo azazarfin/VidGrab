@@ -37,6 +37,39 @@ class QMP:
     def key(self, *keys):
         self.call('send-key', {'keys': [{'type': 'qcode', 'data': key} for key in keys], 'hold-time': 50})
 
+    def press_keys(self, *keys):
+        if not keys or len(keys) != len(set(keys)) or any(key not in ('ctrl', 'l', 'a', 'q', 'ret') for key in keys):
+            raise ValueError('Select a supported manual Firefox setup shortcut')
+        sequence = [(key, True) for key in keys] + [(key, False) for key in reversed(keys)]
+        self.call('input-send-event', {'events': [
+            {'type': 'key', 'data': {'down': down, 'key': {'type': 'qcode', 'data': key}}}
+            for key, down in sequence]})
+
+    def type_text(self, text, observe=None):
+        if not text or len(text) > 2048:
+            raise ValueError('Select 1 to 2048 supported ASCII characters for virtual input')
+        if (len(text) > 1 and not callable(observe)) or (observe is not None and not callable(observe)):
+            raise ValueError('Observe each character before sending more virtual keyboard input')
+        symbols = {'.': ('dot', False), '-': ('minus', False), '/': ('slash', False),
+            ':': ('semicolon', True), '_': ('minus', True), ' ': ('spc', False)}
+        keys = []
+        for character in text:
+            if character in 'abcdefghijklmnopqrstuvwxyz0123456789':
+                keys.append((character, False))
+            elif character in symbols:
+                keys.append(symbols[character])
+            else:
+                raise ValueError('Unsupported virtual keyboard character')
+        for index, (key, shift) in enumerate(keys):
+            sequence = ([('shift', True)] if shift else []) + [(key, True), (key, False)]
+            if shift:
+                sequence.append(('shift', False))
+            self.call('input-send-event', {'events': [
+                {'type': 'key', 'data': {'down': down, 'key': {'type': 'qcode', 'data': name}}}
+                for name, down in sequence]})
+            if observe is not None:
+                observe(text[:index + 1])
+
     def click(self, rectangle, screen, guest, *, title=False):
         x = rectangle['x'] + rectangle['width'] / 2
         y = rectangle['y'] + (18 if title else rectangle['height'] / 2)

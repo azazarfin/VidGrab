@@ -18,6 +18,7 @@ from tests.check_installed_browsers import FIREFOX_UUID, completed_job, firefox_
 from tests.check_packaged_desktop import configure, launch_diagnostics
 from tests.check_wayland_desktop import Desktop, mounted_image
 from tests.firefox_flatpak_support import FlatpakProcesses, process_tree
+from tests.firefox_manual_setup import PREFERENCE, VirtualSetup, addon_info, browser_exited, packaged_guide, preference, setup_firefox
 from tests.native_support import WebDriver, fixture_server, local_call, stop_owner, wait_for
 
 
@@ -92,7 +93,9 @@ def main(default_distribution='snap'):
     parser.add_argument('--geckodriver', type=Path, default=Path('/mnt/inputs/geckodriver'))
     parser.add_argument('--fuse', action='store_true')
     parser.add_argument('--distribution', choices=('snap', 'flatpak'), default=default_distribution)
-    parser.add_argument('--enable-native-portal', action='store_true')
+    setup = parser.add_mutually_exclusive_group()
+    setup.add_argument('--enable-native-portal', action='store_true')
+    setup.add_argument('--manual-native-portal', action='store_true')
     args = parser.parse_args()
     guest_home = Path('/home/vidgrabtest')
     if os.environ.get('VIDGRAB_VALIDATION_VM_ISOLATED') != '1' or \
@@ -103,7 +106,7 @@ def main(default_distribution='snap'):
             args.home.exists() or args.report.exists():
         parser.error('Select fresh home/report paths in the disposable guest')
     distribution = args.distribution
-    if args.enable_native_portal and distribution != 'flatpak':
+    if (args.enable_native_portal or args.manual_native_portal) and distribution != 'flatpak':
         parser.error('The explicit portal preference check is for Firefox Flatpak')
     application = 'snap.firefox' if distribution == 'snap' else 'org.mozilla.firefox'
     if distribution == 'snap':
@@ -138,7 +141,9 @@ def main(default_distribution='snap'):
     receipt = {'result': 'running', 'app': str(args.app), 'kernel': platform.release(),
         'app_sha256': hashlib.sha256(args.app.read_bytes()).hexdigest(),
         'distribution': distribution,
-        'native_portal_opt_in': args.enable_native_portal,
+        'native_portal_opt_in': args.enable_native_portal or args.manual_native_portal,
+        'native_portal_preseeded': args.enable_native_portal,
+        'manual_native_portal': args.manual_native_portal,
         'browser_launcher': '/snap/bin/firefox' if distribution == 'snap' else 'flatpak run --user org.mozilla.firefox',
         'firewall': firewall, 'checks': [], 'limits': ['disposable Ubuntu GNOME VM and virtual input',
             'temporary development extension; loopback Marionette with isolated system-access flag',
@@ -162,13 +167,14 @@ def main(default_distribution='snap'):
     log = None
     flatpak_root_pid = None
     flatpak_instance = None
+    virtual = VirtualSetup(desktop, pointer_reply)
 
     def checkpoint(stage, **values):
         receipt['checks'].append({'stage': stage, **values})
         args.report.write_text(json.dumps(receipt, indent=2) + '\n')
         emit('checkpoint', stage=stage)
 
-    def connect():
+    def connect(*, expect_addon_missing=False):
         nonlocal browser, driver, log, flatpak_root_pid, flatpak_instance
         with socket.socket() as reserved:
             reserved.bind(('127.0.0.1', 0))
@@ -191,8 +197,17 @@ def main(default_distribution='snap'):
         driver = WebDriver(args.geckodriver, environment, args.home / 'driver.log',
             arguments=('--allow-system-access', '--connect-existing', f'--marionette-port={marionette_port}'))
         capabilities = driver.start({'browserName': 'firefox'})
+        before_install = None
+        if expect_addon_missing:
+            before_install = addon_info(driver, config['firefox_id'])
+            assert not before_install['present'], 'Firefox restart must remove the temporary add-on'
         identifier = driver.call('/moz/addon/install', {'path': str(archive), 'temporary': True})
         assert identifier == config['firefox_id'], identifier
+        if args.manual_native_portal:
+            installed = addon_info(driver, identifier)
+            assert installed['present'] and installed['temporary'], installed
+            receipt.setdefault('temporary_addons', []).append({'before_install': before_install,
+                'after_install': installed, 'id': identifier})
         driver.call('/url', {'url': f'moz-extension://{FIREFOX_UUID}/native-check.html'})
         if distribution == 'snap':
             content = firefox_content_sandbox(driver)
@@ -244,7 +259,7 @@ def main(default_distribution='snap'):
         receipt.setdefault('browser_windows', []).append(focus_browser(desktop, pid))
         return pid
 
-    def close_browser():
+    def close_browser(*, virtual_quit=False):
         nonlocal driver, browser, log, flatpak_root_pid, flatpak_instance
         owned = []
         if browser and distribution == 'flatpak':
@@ -266,17 +281,26 @@ def main(default_distribution='snap'):
                         owned.append(int(directory.name))
                 except (OSError, UnicodeError):
                     continue
+        if virtual_quit:
+            assert browser and distribution == 'flatpak' and owned
+            virtual.input('Fully quit Firefox before reopening',
+                lambda: browser_exited(browser, owned), keys=['ctrl', 'q'])
+            browser.wait(timeout=10)
+            receipt.setdefault('browser_stop_commands', []).append({'input': 'QMP Control+Q',
+                'pids': owned, 'all_exited': True})
         if driver:
             driver.close()
             driver = None
         if browser:
-            if distribution == 'flatpak' and flatpak_instance:
+            if virtual_quit:
+                pass
+            elif distribution == 'flatpak' and flatpak_instance:
                 # Gecko's connect-existing DELETE detaches. Killing only outer bwrap leaves Firefox alive.
                 command = ['flatpak', 'kill', flatpak_instance]
                 result = subprocess.run(command, capture_output=True, text=True, timeout=10)
                 receipt.setdefault('browser_stop_commands', []).append({'command': command,
                     'returncode': result.returncode, 'stdout': result.stdout, 'stderr': result.stderr})
-                assert result.returncode == 0 or not any(Path(f'/proc/{pid}').exists() for pid in owned), result.stderr
+                assert result.returncode == 0 or browser_exited(browser, owned), result.stderr
             else:
                 try:
                     browser.terminate()
@@ -308,6 +332,9 @@ browser.runtime.getBackgroundPage().then(background => background.vidGrabNative.
 
     try:
         receipt['previous_test_permission'] = reset_test_permission(application)
+        if args.manual_native_portal:
+            guide = packaged_guide(args.app, args.home / 'guide', environment, desktop, virtual, focus_browser)
+            checkpoint('packaged-guide', **guide)
         config, registration, manifest = configure(args.app, args.home / 'app বাংলা', environment, 'firefox')
         archive = firefox_fixture(profile_root)
         profile = profile_root / 'profile'
@@ -316,7 +343,19 @@ browser.runtime.getBackgroundPage().then(background => background.vidGrabNative.
             monitor = subprocess.Popen(['dbus-monitor', '--session',
                 "interface='org.freedesktop.portal.WebExtensions'"], env=environment,
                 stdout=portal_log, stderr=portal_log)
-        connect()
+        first_browser = connect()
+        if args.manual_native_portal:
+            assert PREFERENCE not in (profile / 'user.js').read_text()
+            manual = setup_firefox(driver, virtual)
+            checkpoint('manual-number-saved', **manual)
+            close_browser(virtual_quit=True)
+            restarted_browser = connect(expect_addon_missing=True)
+            retained = preference(driver)
+            assert retained == manual['saved'] and restarted_browser != first_browser, retained
+            assert PREFERENCE not in (profile / 'user.js').read_text()
+            checkpoint('manual-restart-retains-setting', preference=retained,
+                first_browser_pid=first_browser, restarted_browser_pid=restarted_browser,
+                temporary_addon=receipt['temporary_addons'][-1])
         request('status')
         missing = response()
         assert not missing['ok'] and not Path(config['data_dir']).exists(), missing

@@ -211,7 +211,7 @@ This checks three widths with mocked Tauri commands and blocks other HTTP reques
 
 ## Firefox Snap/Flatpak native portal checks — 2026-11-08
 
-[Firefox Flatpak setup](BROWSER_CONNECTION.md) describes the user-selected guided native path. The source window now includes optional setup help; it does not implement release connection controls. Ubuntu's strict Firefox Snap 159.0.1 works through the existing portal without changing a preference. Official Flathub Firefox 159.0.1 has `widget.use-xdg-desktop-portal.native-messaging` set to integer `0` by default; explicit integer `1` enables the tested native portal path. Keep the browser visible/focused for the real GNOME Allow prompt. Restart a desktop session that predates Flatpak installation so GNOME recognizes its exported desktop entry.
+[Firefox Flatpak setup](BROWSER_CONNECTION.md) describes the user-selected guided native path. The preview includes packaged setup help and verified browser registration controls; full release installation/removal remains open. Ubuntu's strict Firefox Snap 159.0.1 works through the existing portal without changing a preference. Official Flathub Firefox 159.0.1 has `widget.use-xdg-desktop-portal.native-messaging` set to integer `0` by default; explicit integer `1` enables the tested native portal path. Keep the browser visible/focused for the real GNOME Allow prompt. Restart a desktop session that predates Flatpak installation so GNOME recognizes its exported desktop entry.
 
 Use [the disposable VM recipe](../tests/ubuntu_vm/README.md) for both browser distributions. The compatibility Snap entrypoints and new Flatpak entrypoints share [the QMP host journey](../tests/check_firefox_portal.py) and [guarded guest lifecycle](../tests/firefox_portal_guest.py). Only the explicit Flatpak `--enable-native-portal` flag writes that preference into fresh test profiles. Without it, the stock Flatpak check records a missing-host failure despite registration and then cleans up; that negative receipt is diagnostic evidence, not a passing activation case. The flag never changes Flatpak permission overrides or grants desktop consent.
 
@@ -221,4 +221,40 @@ Both unchanged Ubuntu packages pass the opted-in Flatpak journey and both Snap r
 .venv/bin/python -B -m unittest tests.check_firefox_flatpak_protocol tests.check_native_display tests.check_wayland_protocol tests.check_fixture_stream tests.check_package_installation_protocol -v
 ```
 
-Seventeen helpers pass on Fedora/Python 3.14.8 and Ubuntu/Python 3.12.3; exact timings and receipts are in [VALIDATION.md](VALIDATION.md). The tested package bytes predate the new help copy. A future package rebuild must validate that UI in actual packages. Terminal-free release registration/connection/removal and Windows keep P02/ADR-001 open; no paired loopback fallback is implemented.
+Seventeen helpers pass on Fedora/Python 3.14.8 and Ubuntu/Python 3.12.3; exact timings and receipts are in [VALIDATION.md](VALIDATION.md). Those original package bytes predate the help. Later sections and VALIDATION cover the rebuilt help and connection controls. Terminal-free release installation/removal and Windows keep P02/ADR-001 open; no paired loopback fallback is implemented.
+
+## Manual rebuilt Firefox setup check
+
+Use `tests/check_firefox_flatpak.py --manual-native-portal` with the same disposable VM arguments and fresh home/report/screenshot paths. It is mutually exclusive with `--enable-native-portal` and Flatpak-only. Manual mode opens the actual packaged help and uses observed virtual keyboard/pointer input for the existing Number/Save, Control+Q and restart. It verifies that the temporary development add-on disappeared before reinstalling it after restart, and that the portal preference persisted without a `user.js` override. Desktop permission still requires the real Allow click.
+
+The two rebuilt guidance packages pass this mode. An equal-version local `.deb` can be skipped by APT; explicitly reinstall the selected preview in the disposable guest and compare its installed executable with the package before attributing UI evidence to it. Stop guest apt timers during offline package validation if they hold the lock; never remove package lock files. Restore the timers before shutdown.
+
+```sh
+.venv/bin/python -B -m unittest tests.check_gnome_keyboard tests.check_firefox_manual_setup tests.check_firefox_flatpak_protocol tests.check_native_display tests.check_wayland_protocol tests.check_fixture_stream tests.check_package_installation_protocol -v
+```
+
+These 30 opt-in helpers pass on Fedora/Python 3.14.8 and native Ubuntu/Python 3.12.3. Keyboard cases fake QMP; geometry cases fake observed windows; two exit cases use real local child processes. No VM, GUI or installed browser is started by the helper command. Actual guide/portal evidence and package hashes are recorded in VALIDATION.
+
+## Packaged browser connection controls
+
+The Linux window has explicit registration status and Connect/Repair/Disconnect actions. `companion_status` includes `browser_connection` and an independent `browser_connection_error`; `set_browser_connection(enabled: bool)` serializes mutations with status reads. A staged `--config` launch has no package-registration controls. CLI `--browser-connection-status` reads the selected home without creating registration/runtime directories or starting the engine; `--register-browser-host` explicitly reconnects, and `--unregister-browser-host` explicitly disconnects.
+
+The unchanged `package_version: 1` descriptor retains selected app/state/media paths. Private adjacent `browser-connection.json` has `connection_version: 1` and a strict Boolean `enabled`; absence keeps older preview behavior. Disconnect persists `false` before removing matching manifests, preserves foreign manifests and all user files, and survives normal reopening or AppImage relocation. Opening a disconnected image repairs its local descriptor/bridge without registering browsers. Copied packaged hosts reread this preference for every validated request and return `BROWSER_DISCONNECTED` before activation/owner contact. Invalid/unsafe preferences are refused. Browser origin/frame checks and the no-mutation-replay rule are unchanged.
+
+`tests/check_browser_connections.py` and `tests/browser_connections_guest.py` are opt-in actual-package checks in the named disposable Ubuntu GNOME VM. They use observed QMP pointer clicks for disconnection/reconnection, hold one fixture download across disconnect, reopen without automatic registration, preserve completed history/media, and refuse a foreign test manifest. They inspect the copied bridge's actual replies. This is separate from browser portal permission and package uninstallation.
+
+Both rebuilt Ubuntu previews pass the actual controls journey and native Chrome/Firefox, manual Flatpak and strict Snap checks. On the host, select the running disposable VM and fresh paths:
+
+```sh
+python3 -B tests/check_browser_connections.py --vm /tmp/CONTROL/vm.json \
+  --app /usr/bin/vidgrab-desktop \
+  --home /home/vidgrabtest/validation/controls-deb \
+  --guest-report /home/vidgrabtest/validation/controls-deb.json \
+  --report /tmp/controls-deb-outer.json --screenshots /tmp/controls-deb-screenshots
+```
+
+Repeat with the guest AppImage, `--fuse` and fresh paths. These pointer journeys preserve a gated download and reopened history, reject a copied host while disconnected, and refuse a foreign manifest. They do not install or uninstall a package.
+
+`check_wayland_browsers.py` now cleans canonical registrations and only its verified copied Chrome diagnostic alias, preserving state/media and refusing foreign or symlink aliases. Failure diagnostics are captured before cleanup. Its updated Chrome→Firefox journey passes for both packages. Refresh the VM's copied read-only source snapshot after host edits and verify hashes; changing the repository alone does not update that input.
+
+Nine existing native lifecycle cases pass with the new compiled owner/bridge. `NativeLifecycleChecks.test_live_packaged_host_observes_connection_changes` keeps one host alive while toggling its private packaged preference false/true/false; the real installed Ubuntu bridge passes it. Use a valid fixture URL with an explicit local port. The old bridge fails the revocation regression. Package hashes, runtime boundaries, audit and shutdown receipts are in VALIDATION/HANDOFF.

@@ -99,7 +99,7 @@ def check_ui(app, environment, url, screenshots, *, fuse=False):
             fuse_mount = {"executable": str(executable), "mountpoint": mounts[0].split()[4], "mountinfo": mounts[0]}
         driver.screenshot(screenshots / "package-empty.png")
         close_window("VidGrab")
-        assert driver.script("return document.querySelector('.secondary').textContent") == "Quit VidGrab"
+        assert driver.script("return document.querySelector('footer .secondary').textContent") == "Quit VidGrab"
         repeated = subprocess.run([str(app)], env=environment, capture_output=True, timeout=30)
         assert repeated.returncode == 0, repeated.stderr.decode(errors="replace")
         assert local_call(config)["supervisor_pid"] == first["supervisor_pid"]
@@ -121,7 +121,7 @@ def check_ui(app, environment, url, screenshots, *, fuse=False):
         assert recovered["jobs"][0]["status"] == "complete"
         assert hashlib.sha256(media.read_bytes()).hexdigest() == checksum
         wait_for(lambda: driver.script("return document.querySelector('.connection')?.textContent === 'Connected' && document.querySelectorAll('[role=alert]').length === 0"), label="packaged UI recovery")
-        driver.click(".secondary")
+        driver.click("footer .secondary")
         wait_for(lambda: not (Path(config["data_dir"]) / "ipc/control.sock").exists()
             and not Path(f'/proc/{first["supervisor_pid"]}').exists()
             and not Path(f'/proc/{recovered["engine_pid"]}').exists(), timeout=8, label="packaged explicit Quit")

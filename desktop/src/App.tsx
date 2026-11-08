@@ -15,6 +15,15 @@ interface Snapshot {
   state: 'starting' | 'ready' | 'recovering' | 'failed';
   tray_available: boolean;
   jobs?: Job[];
+  browser_connection?: BrowserConnection;
+  browser_connection_error?: string;
+}
+
+interface BrowserConnection {
+  enabled: boolean;
+  bridge_ready: boolean;
+  chrome: 'missing' | 'registered' | 'conflict';
+  firefox: 'missing' | 'registered' | 'conflict';
 }
 
 const states = { starting: 'Starting', ready: 'Connected', recovering: 'Reconnecting', failed: 'Engine stopped' };
@@ -76,6 +85,26 @@ export function App() {
     }
   }
 
+  async function setBrowserConnection(enabled: boolean) {
+    setBusy(true);
+    setActionError('');
+    setAnnouncement('');
+    try {
+      const connection = await invoke<BrowserConnection>('set_browser_connection', { enabled });
+      setSnapshot(current => ({ ...current, browser_connection: connection, browser_connection_error: undefined }));
+      setAnnouncement(enabled ? 'Browser registration saved.' : 'Browser access disconnected. Downloads keep running.');
+    } catch (reason) {
+      setActionError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const browserConnection = snapshot.browser_connection;
+  const registered = browserConnection?.enabled && browserConnection.bridge_ready
+    && browserConnection.chrome === 'registered' && browserConnection.firefox === 'registered';
+  const browserStates = { missing: 'Not registered', registered: 'Registered', conflict: 'Another installation' };
+
   return (
     <main className="shell">
       <header className="toolbar">
@@ -87,6 +116,29 @@ export function App() {
         <h1 id="title">Connection test</h1>
         <p>Try a local audio download. VidGrab keeps it running when the browser closes.</p>
       </section>
+      <section className="browser-connections" aria-labelledby="browser-title">
+        <h2 id="browser-title">Browser connections</h2>
+        {browserConnection ? <>
+          <p className="browser-connection-summary" role="status">{!browserConnection.enabled
+            ? 'Disconnected' : registered ? 'Registered for Chrome and Firefox' : 'Connection needs repair'}</p>
+          <dl className="browser-registration">
+            <div><dt>Google Chrome</dt><dd>{browserStates[browserConnection.chrome]}</dd></div>
+            <div><dt>Firefox</dt><dd>{browserStates[browserConnection.firefox]}</dd></div>
+          </dl>
+          <p className="helper">Registration lets the extension ask for access. Confirm access with its native connection test.</p>
+          <div className="connection-actions">
+            {!registered && <button className="secondary" type="button" disabled={busy}
+              data-connection-action="connect"
+              onClick={() => setBrowserConnection(true)}>{browserConnection.enabled ? 'Repair connection' : 'Connect browsers'}</button>}
+            {browserConnection.enabled && <button className="secondary" type="button" disabled={busy}
+              data-connection-action="disconnect"
+              onClick={() => setBrowserConnection(false)}>Disconnect browsers</button>}
+          </div>
+          <p className="helper">Disconnecting preserves your downloads and history, and stays in effect when VidGrab reopens.</p>
+        </> : <p className="helper">{snapshot.browser_connection_error
+          ? 'The browser connection settings need attention.' : 'Browser connection controls are available in packaged builds.'}</p>}
+        {snapshot.browser_connection_error && <p className="error" role="alert">{snapshot.browser_connection_error}</p>}
+      </section>
       <details className="browser-setup">
         <summary>Firefox Flatpak setup</summary>
         <p>Firefox Flatpak needs one browser setting to allow the native connection test in this preview.</p>
@@ -96,7 +148,7 @@ export function App() {
             <code className="portal-preference">widget.use-xdg-desktop-portal.native-messaging</code>
           </li>
           <li>Set the existing <strong>Number</strong> value to <code>1</code> and save it. Fully quit Firefox, then reopen it.</li>
-          <li>Keep Firefox visible when starting the extension’s native connection test. Choose <strong>Allow</strong> when the desktop asks Firefox to launch <strong>VidGrab P02 desktop companion</strong>.</li>
+          <li>After restarting Firefox, load the temporary VidGrab add-on, then run its native connection test with Firefox visible. Choose <strong>Allow</strong> when the desktop asks Firefox to launch <strong>VidGrab P02 desktop companion</strong>.</li>
         </ol>
         <p>If Firefox Flatpak was installed during this desktop session, sign out and back in before connecting so the desktop can recognize it.</p>
         <p>The app’s Connected status means VidGrab is ready. Confirm Firefox access with the native connection test; the preview’s regular extension popup still uses the earlier backend.</p>

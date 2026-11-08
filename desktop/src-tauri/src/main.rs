@@ -2,7 +2,7 @@ use gio::glib::variant::ToVariant;
 use gio::prelude::DBusProxyExt;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 use tauri::{Manager, State, menu::{Menu, MenuItem}, tray::TrayIconBuilder};
 use vidgrab_supervisor::{Config, Owner, UiEvent, protocol, transport};
 use vidgrab_supervisor::installation::{self, Layout, UserDirs};
@@ -11,6 +11,7 @@ struct DesktopState {
     config: Config,
     stop: Arc<AtomicBool>,
     tray_available: bool,
+    registration: Option<Arc<Mutex<(Layout, UserDirs)>>>,
 }
 
 fn command(config: &Config, operation: &str, params: serde_json::Map<String, Value>) -> Result<Value, String> {
@@ -28,7 +29,28 @@ async fn companion_status(state: State<'_, DesktopState>) -> Result<Value, Strin
     let mut value = tauri::async_runtime::spawn_blocking(move || command(&config, "status", Default::default()))
         .await.map_err(|_| "The status request failed".to_owned())??;
     value["tray_available"] = json!(tray);
+    if let Some(registration) = state.registration.clone() {
+        let connection = tauri::async_runtime::spawn_blocking(move || {
+            let selected = registration.lock().map_err(|_| "Browser connection settings are unavailable".to_owned())?;
+            installation::connection_status(&selected.0, &selected.1).map_err(|error| error.to_string())
+        }).await.map_err(|_| "The browser connection check failed".to_owned())?;
+        match connection {
+            Ok(connection) => value["browser_connection"] = json!(connection),
+            Err(error) => value["browser_connection_error"] = json!(error),
+        }
+    }
     Ok(value)
+}
+
+#[tauri::command]
+async fn set_browser_connection(enabled: bool, state: State<'_, DesktopState>) -> Result<Value, String> {
+    let registration = state.registration.clone().ok_or("Browser connection controls require a packaged launch")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let selected = registration.lock().map_err(|_| "Browser connection settings are unavailable".to_owned())?;
+        if enabled { installation::connect(&selected.0, &selected.1).map_err(|error| error.to_string())?; }
+        else { installation::disconnect(&selected.1).map_err(|error| error.to_string())?; }
+        installation::connection_status(&selected.0, &selected.1).map(|status| json!(status)).map_err(|error| error.to_string())
+    }).await.map_err(|_| "The browser connection change failed".to_owned())?
 }
 
 #[tauri::command]
@@ -58,11 +80,12 @@ fn tray_host_available() -> bool {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
     let context = tauri::generate_context!();
+    let mut registration = None;
     let config = if arguments.len() == 2 && arguments[0] == "--config" {
         Config::load(&PathBuf::from(&arguments[1]))?
     } else {
         let packaged = arguments.len() == 2 && arguments[0] == "--package-config";
-        let diagnostic = arguments.len() == 1 && ["--check-package", "--register-browser-host", "--unregister-browser-host"].iter().any(|flag| arguments[0] == *flag);
+        let diagnostic = arguments.len() == 1 && ["--check-package", "--browser-connection-status", "--register-browser-host", "--unregister-browser-host"].iter().any(|flag| arguments[0] == *flag);
         if !arguments.is_empty() && !packaged && !diagnostic {
             return Err("Use a packaged launch, --config FILE, --check-package, --register-browser-host or --unregister-browser-host".into());
         }
@@ -78,7 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let dirs = UserDirs { data_home: std::env::var_os("XDG_DATA_HOME").filter(|value| !value.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".local/share")),
             config_home: std::env::var_os("XDG_CONFIG_HOME").filter(|value| !value.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".config")), home };
         if arguments.first().is_some_and(|arg| arg == "--unregister-browser-host") {
-            println!("{}", json!({"removed": installation::unregister(&dirs)?}));
+            println!("{}", json!({"removed": installation::disconnect(&dirs)?}));
             return Ok(());
         }
         if packaged && PathBuf::from(&arguments[1]) != dirs.config_path() {
@@ -88,11 +111,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let resources = tauri::utils::platform::resource_dir(context.package_info(), &environment)?;
         let image = std::env::var_os("APPIMAGE");
         let layout = Layout::discover(&std::env::current_exe()?, &resources, image.as_deref().map(Path::new))?;
-        let saved = installation::register(&layout, &dirs)?;
+        if arguments.first().is_some_and(|arg| arg == "--browser-connection-status") {
+            println!("{}", serde_json::to_string(&installation::connection_status(&layout, &dirs)?)?);
+            return Ok(());
+        }
         if arguments.first().is_some_and(|arg| arg == "--register-browser-host") {
+            let saved = installation::connect(&layout, &dirs)?;
             println!("{}", serde_json::to_string(&saved)?);
             return Ok(());
         }
+        let saved = installation::prepare(&layout, &dirs)?;
+        registration = Some(Arc::new(Mutex::new((layout.clone(), dirs))));
         saved.runtime(&layout)
     };
     let Some(owner) = Owner::start(config.clone())? else {
@@ -102,7 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stop = owner.stop_handle();
     let exit_stop = stop.clone();
     let application = tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![companion_status, download_fixture, quit_companion])
+        .invoke_handler(tauri::generate_handler![companion_status, set_browser_connection, download_fixture, quit_companion])
         .setup(move |app| {
             let mut tray_available = false;
             if tray_host_available() {
@@ -120,7 +149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }).build(app).is_ok();
                 }
             }
-            app.manage(DesktopState { config, stop, tray_available });
+            app.manage(DesktopState { config, stop, tray_available, registration });
             let handle = app.handle().clone();
             std::thread::spawn(move || owner.run(move |event| match event {
                 UiEvent::Activate => {

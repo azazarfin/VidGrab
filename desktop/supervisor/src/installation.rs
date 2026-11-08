@@ -21,6 +21,7 @@ pub struct UserDirs {
 impl UserDirs {
     pub fn bridge_dir(&self) -> PathBuf { self.data_home.join("vidgrab-p02/native") }
     pub fn config_path(&self) -> PathBuf { self.bridge_dir().join("host-config.json") }
+    pub fn connection_path(&self) -> PathBuf { self.bridge_dir().join("browser-connection.json") }
 }
 
 #[derive(Clone, Debug)]
@@ -77,8 +78,25 @@ impl InstalledConfig {
 }
 
 pub fn register(layout: &Layout, dirs: &UserDirs) -> io::Result<InstalledConfig> {
+    let config = bridge_config(layout, dirs)?;
+    let native = dirs.bridge_dir().join("vidgrab-native-host");
+    let manifests = manifests(dirs);
+    for (path, firefox) in &manifests {
+        check_destination(path)?;
+        if path.exists() && !owned_manifest(path, &native, *firefox)? {
+            return Err(permission_denied("An existing browser host manifest belongs to another installation"));
+        }
+    }
+    write_bridge(layout, dirs, &config)?;
+    for (path, firefox) in manifests {
+        private_directory(path.parent().unwrap())?;
+        atomic_write(&path, &json_bytes(&manifest(&native, firefox))?, 0o600)?;
+    }
+    Ok(config)
+}
+
+fn check_bridge(dirs: &UserDirs) -> io::Result<()> {
     validate_dirs(dirs)?;
-    for file in [&layout.app, &layout.engine, &layout.native] { absolute(file)?; executable_file(file)?; }
     let bridge = dirs.bridge_dir();
     check_directory(&bridge)?;
     if let Ok(metadata) = fs::symlink_metadata(&bridge) {
@@ -89,6 +107,13 @@ pub fn register(layout: &Layout, dirs: &UserDirs) -> io::Result<InstalledConfig>
     let config_path = dirs.config_path();
     let native = bridge.join("vidgrab-native-host");
     for path in [&config_path, &native] { check_destination(path)?; }
+    Ok(())
+}
+
+fn bridge_config(layout: &Layout, dirs: &UserDirs) -> io::Result<InstalledConfig> {
+    check_bridge(dirs)?;
+    for file in [&layout.app, &layout.engine, &layout.native] { absolute(file)?; executable_file(file)?; }
+    let config_path = dirs.config_path();
     let mut config = if config_path.exists() { InstalledConfig::load(&config_path)? } else {
         InstalledConfig { package_version: 1, app: layout.app.clone(), data_dir: dirs.data_home.join("vidgrab-p02/state"),
             download_dir: dirs.home.join("Downloads/VidGrab-P02"), chrome_origin: CHROME_ORIGIN.into(), firefox_id: FIREFOX_ID.into() }
@@ -100,24 +125,18 @@ pub fn register(layout: &Layout, dirs: &UserDirs) -> io::Result<InstalledConfig>
             return Err(invalid_data("Runtime and media directories must be outside the package"));
         }
     }
-    let manifests = manifests(dirs);
-    for (path, firefox) in &manifests {
-        check_destination(path)?;
-        if path.exists() && !owned_manifest(path, &native, *firefox)? {
-            return Err(permission_denied("An existing browser host manifest belongs to another installation"));
-        }
-    }
-    private_directory(&bridge)?;
-    atomic_write(&native, &fs::read(&layout.native)?, 0o700)?;
-    atomic_write(&config_path, &json_bytes(&config)?, 0o600)?;
-    for (path, firefox) in manifests {
-        private_directory(path.parent().unwrap())?;
-        atomic_write(&path, &json_bytes(&manifest(&native, firefox))?, 0o600)?;
-    }
     Ok(config)
 }
 
-pub fn unregister(dirs: &UserDirs) -> io::Result<usize> {
+fn write_bridge(layout: &Layout, dirs: &UserDirs, config: &InstalledConfig) -> io::Result<()> {
+    let bridge = dirs.bridge_dir();
+    let native = bridge.join("vidgrab-native-host");
+    private_directory(&bridge)?;
+    atomic_write(&native, &fs::read(&layout.native)?, 0o700)?;
+    atomic_write(&dirs.config_path(), &json_bytes(config)?, 0o600)
+}
+
+fn owned_registrations(dirs: &UserDirs) -> io::Result<Vec<PathBuf>> {
     validate_dirs(dirs)?;
     let native = dirs.bridge_dir().join("vidgrab-native-host");
     let mut owned = Vec::new();
@@ -125,9 +144,84 @@ pub fn unregister(dirs: &UserDirs) -> io::Result<usize> {
         check_destination(&path)?;
         if path.exists() && owned_manifest(&path, &native, firefox)? { owned.push(path); }
     }
+    Ok(owned)
+}
+
+pub fn unregister(dirs: &UserDirs) -> io::Result<usize> {
+    let owned = owned_registrations(dirs)?;
     for path in &owned { fs::remove_file(path)?; }
     // User-owned runtime, media and the selected paths remain available for reconnecting.
     Ok(owned.len())
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ManifestState { Missing, Registered, Conflict }
+
+#[derive(Debug, Serialize)]
+pub struct ConnectionStatus {
+    pub enabled: bool,
+    pub bridge_ready: bool,
+    pub chrome: ManifestState,
+    pub firefox: ManifestState,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ConnectionPreference { connection_version: u32, enabled: bool }
+
+fn connection_enabled(path: &Path) -> io::Result<bool> {
+    check_destination(path)?;
+    if !path.exists() { return Ok(true); }
+    let preference: ConnectionPreference = serde_json::from_slice(&fs::read(path)?).map_err(invalid_data)?;
+    if preference.connection_version != 1 { return Err(invalid_data("Unsupported browser connection preference")); }
+    Ok(preference.enabled)
+}
+
+pub fn connection_status(layout: &Layout, dirs: &UserDirs) -> io::Result<ConnectionStatus> {
+    check_bridge(dirs)?;
+    let enabled = connection_enabled(&dirs.connection_path())?;
+    let native = dirs.bridge_dir().join("vidgrab-native-host");
+    let config = if dirs.config_path().exists() { Some(InstalledConfig::load(&dirs.config_path())?) } else { None };
+    let bridge_ready = config.is_some_and(|config| config.app == layout.app)
+        && executable_file(&native).is_ok();
+    let states = manifests(dirs).into_iter().map(|(path, firefox)| {
+        check_destination(&path)?;
+        Ok(if !path.exists() { ManifestState::Missing }
+            else if owned_manifest(&path, &native, firefox)? { ManifestState::Registered }
+            else { ManifestState::Conflict })
+    }).collect::<io::Result<Vec<_>>>()?;
+    let mut states = states.into_iter();
+    Ok(ConnectionStatus { enabled, bridge_ready, chrome: states.next().unwrap(), firefox: states.next().unwrap() })
+}
+
+pub fn connect(layout: &Layout, dirs: &UserDirs) -> io::Result<InstalledConfig> {
+    check_bridge(dirs)?;
+    // Refuse an unsafe preference before register() writes any package files.
+    connection_enabled(&dirs.connection_path())?;
+    let config = register(layout, dirs)?;
+    atomic_write(&dirs.connection_path(), &json_bytes(&ConnectionPreference { connection_version: 1, enabled: true })?, 0o600)?;
+    Ok(config)
+}
+
+pub fn disconnect(dirs: &UserDirs) -> io::Result<usize> {
+    check_bridge(dirs)?;
+    connection_enabled(&dirs.connection_path())?;
+    let owned = owned_registrations(dirs)?;
+    private_directory(&dirs.bridge_dir())?;
+    // Persist revocation before removing manifests. An interrupted removal must
+    // not let a remaining host or the next launch enable browser access again.
+    atomic_write(&dirs.connection_path(), &json_bytes(&ConnectionPreference { connection_version: 1, enabled: false })?, 0o600)?;
+    for path in &owned { fs::remove_file(path)?; }
+    Ok(owned.len())
+}
+
+pub fn prepare(layout: &Layout, dirs: &UserDirs) -> io::Result<InstalledConfig> {
+    if connection_enabled(&dirs.connection_path())? { return register(layout, dirs); }
+    let config = bridge_config(layout, dirs)?;
+    write_bridge(layout, dirs, &config)?;
+    unregister(dirs)?;
+    Ok(config)
 }
 
 #[derive(Deserialize)]
@@ -153,6 +247,9 @@ impl HostConfig {
     }
     pub fn chrome_origin(&self) -> &str { match self { Self::Staged(config) => &config.chrome_origin, Self::Packaged(config) => &config.chrome_origin } }
     pub fn firefox_id(&self) -> &str { match self { Self::Staged(config) => &config.firefox_id, Self::Packaged(config) => &config.firefox_id } }
+    pub fn browser_enabled(&self, config_path: &Path) -> io::Result<bool> {
+        match self { Self::Staged(_) => Ok(true), Self::Packaged(_) => connection_enabled(&config_path.with_file_name("browser-connection.json")) }
+    }
 }
 
 fn absolute(path: &Path) -> io::Result<()> {
@@ -436,6 +533,130 @@ mod tests {
             assert_eq!(host.socket_path(), fixture.0.join("state/ipc/control.sock"));
             assert_eq!(host.chrome_origin(), CHROME_ORIGIN);
             assert_eq!(host.firefox_id(), FIREFOX_ID);
+        }
+    }
+
+    #[test]
+    fn connection_status_reads_a_fresh_home_without_creating_files() {
+        let fixture = Fixture::new();
+        let dirs = fixture.dirs();
+        let layout = fixture.layout("deb");
+        let status = connection_status(&layout, &dirs).unwrap();
+        assert!(status.enabled);
+        assert!(!status.bridge_ready);
+        assert_eq!(status.chrome, ManifestState::Missing);
+        assert_eq!(status.firefox, ManifestState::Missing);
+        assert!(!dirs.home.exists() && !dirs.data_home.exists() && !dirs.config_home.exists());
+    }
+
+    #[test]
+    fn disconnect_persists_across_app_reopen_and_preserves_user_files() {
+        let fixture = Fixture::new();
+        let dirs = fixture.dirs();
+        let layout = fixture.layout("deb");
+        let config = connect(&layout, &dirs).unwrap();
+        fs::create_dir_all(&config.data_dir).unwrap();
+        fs::create_dir_all(&config.download_dir).unwrap();
+        let state = config.data_dir.join("vidgrab.db");
+        let media = config.download_dir.join("finished.mp3");
+        fs::write(&state, b"kept state").unwrap();
+        fs::write(&media, b"kept media").unwrap();
+        assert!(connection_status(&layout, &dirs).unwrap().bridge_ready);
+        assert_eq!(disconnect(&dirs).unwrap(), 2);
+        let reopened = prepare(&layout, &dirs).unwrap();
+        assert_eq!(reopened.data_dir, config.data_dir);
+        assert!(!connection_status(&layout, &dirs).unwrap().enabled);
+        assert!(!chrome(&dirs).exists() && !firefox(&dirs).exists());
+        assert_eq!(fs::read(&state).unwrap(), b"kept state");
+        assert_eq!(fs::read(&media).unwrap(), b"kept media");
+        assert!(dirs.config_path().is_file());
+        connect(&layout, &dirs).unwrap();
+        let status = connection_status(&layout, &dirs).unwrap();
+        assert!(status.enabled && status.bridge_ready);
+        assert_eq!(status.chrome, ManifestState::Registered);
+        assert_eq!(status.firefox, ManifestState::Registered);
+        assert_eq!(fs::read(&media).unwrap(), b"kept media");
+    }
+
+    #[test]
+    fn disconnected_relocation_repairs_only_the_local_bridge() {
+        let fixture = Fixture::new();
+        let dirs = fixture.dirs();
+        let first = fixture.layout("first");
+        let moved = fixture.layout("moved");
+        let original = connect(&first, &dirs).unwrap();
+        disconnect(&dirs).unwrap();
+        let saved = prepare(&moved, &dirs).unwrap();
+        assert_eq!(saved.app, moved.app);
+        assert_eq!(saved.data_dir, original.data_dir);
+        assert_eq!(saved.download_dir, original.download_dir);
+        assert!(!chrome(&dirs).exists() && !firefox(&dirs).exists());
+        assert_eq!(fs::read(dirs.bridge_dir().join("vidgrab-native-host")).unwrap(), b"moved");
+        let status = connection_status(&moved, &dirs).unwrap();
+        assert!(!status.enabled && status.bridge_ready);
+    }
+
+    #[test]
+    fn conflict_is_reported_and_reconnection_preserves_foreign_registration() {
+        let fixture = Fixture::new();
+        let dirs = fixture.dirs();
+        let layout = fixture.layout("deb");
+        connect(&layout, &dirs).unwrap();
+        disconnect(&dirs).unwrap();
+        let foreign = br#"{"name":"com.vidgrab.companion","path":"/another/host"}"#;
+        fs::write(firefox(&dirs), foreign).unwrap();
+        assert_eq!(connection_status(&layout, &dirs).unwrap().firefox, ManifestState::Conflict);
+        assert_eq!(connect(&layout, &dirs).unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        assert!(!connection_status(&layout, &dirs).unwrap().enabled);
+        assert!(!chrome(&dirs).exists());
+        assert_eq!(fs::read(firefox(&dirs)).unwrap(), foreign);
+        assert_eq!(disconnect(&dirs).unwrap(), 0);
+        assert_eq!(fs::read(firefox(&dirs)).unwrap(), foreign);
+    }
+
+    #[test]
+    fn unsafe_connection_preference_is_refused_before_mutation() {
+        let fixture = Fixture::new();
+        let dirs = fixture.dirs();
+        let layout = fixture.layout("deb");
+        connect(&layout, &dirs).unwrap();
+        let original = fs::read(chrome(&dirs)).unwrap();
+        let target = fixture.0.join("unrelated.json");
+        fs::write(&target, b"preserved").unwrap();
+        fs::remove_file(dirs.connection_path()).unwrap();
+        symlink(&target, dirs.connection_path()).unwrap();
+        assert_eq!(disconnect(&dirs).unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(connect(&layout, &dirs).unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(connection_status(&layout, &dirs).unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(fs::read(&target).unwrap(), b"preserved");
+        assert_eq!(fs::read(chrome(&dirs)).unwrap(), original);
+    }
+
+    #[test]
+    fn an_existing_packaged_host_observes_disconnection_without_reloading_config() {
+        let fixture = Fixture::new();
+        let dirs = fixture.dirs();
+        let layout = fixture.layout("deb");
+        connect(&layout, &dirs).unwrap();
+        let host = HostConfig::load(&dirs.config_path()).unwrap();
+        assert!(host.browser_enabled(&dirs.config_path()).unwrap());
+        disconnect(&dirs).unwrap();
+        assert!(!host.browser_enabled(&dirs.config_path()).unwrap());
+        connect(&layout, &dirs).unwrap();
+        assert!(host.browser_enabled(&dirs.config_path()).unwrap());
+    }
+
+    #[test]
+    fn unsupported_connection_preference_is_rejected() {
+        let fixture = Fixture::new();
+        let dirs = fixture.dirs();
+        let layout = fixture.layout("deb");
+        connect(&layout, &dirs).unwrap();
+        for bytes in [br#"{"connection_version":2,"enabled":false}"#.as_slice(),
+            br#"{"connection_version":1,"enabled":null}"#.as_slice(),
+            br#"{"connection_version":1,"enabled":true,"unknown":1}"#.as_slice()] {
+            fs::write(dirs.connection_path(), bytes).unwrap();
+            assert_eq!(prepare(&layout, &dirs).unwrap_err().kind(), io::ErrorKind::InvalidData);
         }
     }
 }

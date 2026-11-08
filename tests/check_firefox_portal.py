@@ -24,6 +24,8 @@ class Guest:
             remote.append('--fuse')
         if args.enable_native_portal:
             remote.append('--enable-native-portal')
+        if args.manual_native_portal:
+            remote.append('--manual-native-portal')
         command = ['ssh', '-i', str(root / 'ssh-key'), '-p', str(vm['ssh_port']), '-o', 'BatchMode=yes',
             '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=' + str(root / 'known-hosts'),
             'vidgrabtest@127.0.0.1', 'VIDGRAB_VALIDATION_VM_ISOLATED=1 PYTHONPATH=/usr/lib/python3/dist-packages ' + shlex.join(remote)]
@@ -69,10 +71,13 @@ def main(distribution='snap'):
     parser.add_argument('--report', type=Path, required=True)
     parser.add_argument('--screenshots', type=Path, required=True)
     parser.add_argument('--fuse', action='store_true')
-    parser.add_argument('--enable-native-portal', action='store_true',
+    setup = parser.add_mutually_exclusive_group()
+    setup.add_argument('--enable-native-portal', action='store_true',
         help='Explicit Firefox Flatpak profile opt-in; never changes sandbox permissions')
+    setup.add_argument('--manual-native-portal', action='store_true',
+        help='Read the packaged guide and use visible Number/Save/restart input in a fresh Flatpak profile')
     args = parser.parse_args()
-    if args.enable_native_portal and distribution != 'flatpak':
+    if (args.enable_native_portal or args.manual_native_portal) and distribution != 'flatpak':
         parser.error('The explicit portal preference check is for Firefox Flatpak')
     vm = json.loads(args.vm.read_text())
     root = Path(vm['root']).resolve(strict=True)
@@ -97,6 +102,18 @@ def main(distribution='snap'):
                 window = next(window for window in snapshot['windows'] if window['pid'] == event['pid'])
                 qmp.click(window['frame'], snapshot['screen'], guest, title=True)
                 guest.call('browser-focused')
+            elif event['event'] == 'setup-input':
+                assert args.manual_native_portal, event
+                if 'rectangle' in event:
+                    qmp.click(event['rectangle'], event['snapshot']['screen'], guest)
+                elif 'text' in event:
+                    assert event['text'] in ('about:config', 'widget.use-xdg-desktop-portal.native-messaging', '1'), event
+                    qmp.type_text(event['text'],
+                        observe=lambda prefix: guest.call('setup-text-progress', prefix=prefix))
+                else:
+                    assert event['keys'] in (['ctrl', 'l'], ['ctrl', 'a'], ['ctrl', 'q'], ['ret']), event
+                    qmp.press_keys(*event['keys'])
+                guest.call('setup-input-complete')
             elif event['event'] == 'permission':
                 text = ' '.join(event['dialog']['labels'])
                 assert 'VidGrab' in text or 'com.vidgrab.companion' in text, event
@@ -108,7 +125,8 @@ def main(distribution='snap'):
                 guest.call('permission-clicked')
             elif event['event'] == 'checkpoint':
                 print('Firefox ' + distribution.title() + ': ' + event['stage'], flush=True)
-                if event['stage'] in ('permission-and-activation', 'browser-exit-keeps-download', 'restart-restores-history'):
+                if event['stage'] in ('packaged-guide', 'manual-number-saved', 'manual-restart-retains-setting',
+                        'permission-and-activation', 'browser-exit-keeps-download', 'restart-restores-history'):
                     qmp.screenshot(args.screenshots / (event['stage'] + '.png'))
             elif event['event'] == 'failure':
                 qmp.screenshot(args.screenshots / 'failure-before-cleanup.png')

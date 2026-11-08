@@ -12,9 +12,29 @@ import traceback
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests import check_installed_browsers as browsers
-from tests.check_packaged_desktop import configure, launch_diagnostics
+from tests.check_packaged_desktop import HOST, configure, launch_diagnostics
 from tests.check_wayland_desktop import Desktop
 from tests.native_support import fixture_server
+
+
+def remove_browser_registration(app, environment, fixture_root):
+    result = subprocess.run([str(app), '--unregister-browser-host'], env=environment,
+        capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    registration = fixture_root / 'chrome-check/profile/NativeMessagingHosts' / HOST
+    profile_removed = False
+    if registration.exists() or registration.is_symlink():
+        assert not registration.is_symlink(), 'Refuse a symlinked diagnostic registration'
+        bridge = Path(environment['XDG_DATA_HOME']) / 'vidgrab-p02/native'
+        descriptor = json.loads((bridge / 'host-config.json').read_text())
+        manifest = json.loads(registration.read_text())
+        assert manifest.get('name') == HOST.removesuffix('.json') \
+            and manifest.get('type') == 'stdio' \
+            and manifest.get('path') == str(bridge / 'vidgrab-native-host') \
+            and manifest.get('allowed_origins') == [descriptor['chrome_origin']], manifest
+        registration.unlink()
+        profile_removed = True
+    return {'canonical': json.loads(result.stdout), 'diagnostic_profile_removed': profile_removed}
 
 
 def main():
@@ -82,8 +102,15 @@ def main():
         raise
     finally:
         browsers.configure = original
+        try:
+            receipt['cleanup'] = {'result': 'passed',
+                **remove_browser_registration(app, environment, args.home)}
+        except Exception:
+            receipt['cleanup'] = {'result': 'failed', 'failure': traceback.format_exc()}
+            receipt['result'] = 'failed'
         checkpoint()
         print(json.dumps(receipt, indent=2), flush=True)
+    assert receipt['result'] == 'passed', receipt['cleanup']
 
 
 if __name__ == '__main__':

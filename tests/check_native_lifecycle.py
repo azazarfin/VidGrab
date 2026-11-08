@@ -11,6 +11,7 @@ import io
 import json
 import os
 from pathlib import Path
+import select
 import signal
 import socket
 import struct
@@ -126,6 +127,57 @@ class NativeLifecycleChecks(unittest.TestCase):
                 self.assertFalse(self.invoke(raw=raw)['ok'])
         self.assertEqual(self.invoke('exec')['error']['code'], 'UNSUPPORTED_OPERATION')
         self.assertFalse((self.root / 'state').exists())
+
+    def test_live_packaged_host_observes_connection_changes(self):
+        packaged = {key: value for key, value in self.config.items() if key != 'engine'}
+        packaged.update(package_version=1, app=str(self.root / 'missing-app'))
+        self.config_path.write_text(json.dumps(packaged))
+        preference = self.root / 'browser-connection.json'
+        preference.write_text(json.dumps({'connection_version': 1, 'enabled': False}))
+        native = subprocess.Popen(
+            [str(self.host), '--config', str(self.config_path), self.config['chrome_origin']],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=self.environment, bufsize=0,
+        )
+        try:
+            for index, (enabled, operation, error) in enumerate([
+                (False, 'status', 'BROWSER_DISCONNECTED'),
+                (True, 'status', 'APP_MISSING'),
+                (False, 'fixture.download', 'BROWSER_DISCONNECTED'),
+            ]):
+                with self.subTest(enabled=enabled, operation=operation):
+                    preference.write_text(json.dumps({'connection_version': 1, 'enabled': enabled}))
+                    request = {'spike_version': 1, 'id': f'live-{index}', 'op': operation,
+                        'params': {'url': 'http://127.0.0.1:8080/fixture.wav'} if operation == 'fixture.download' else {}}
+                    native.stdin.write(frame(request))
+                    data = b''
+                    expected = 4
+                    deadline = time.monotonic() + 5
+                    while len(data) < expected:
+                        self.assertTrue(select.select([native.stdout], [], [],
+                            max(0, deadline - time.monotonic()))[0], 'A live native reply must be bounded')
+                        part = os.read(native.stdout.fileno(), expected - len(data))
+                        self.assertTrue(part, 'The host must retain its framed input session')
+                        data += part
+                        if len(data) == 4 and expected == 4:
+                            size = struct.unpack('=I', data)[0]
+                            self.assertTrue(0 < size <= 65536)
+                            expected += size
+                    response = unframe(data)
+                    self.assertEqual(response['id'], request['id'])
+                    self.assertEqual(response['error']['code'], error)
+                    self.assertIsNone(native.poll(), 'Connection changes must use the same host process')
+            self.assertFalse((self.root / 'state').exists())
+            self.assertFalse((self.root / 'media').exists())
+            native.stdin.close()
+            self.assertEqual(native.wait(timeout=5), 0)
+            self.assertNotIn(b'Bearer ', native.stderr.read())
+        finally:
+            if native.poll() is None:
+                native.terminate()
+                native.wait(timeout=5)
+            for stream in (native.stdin, native.stdout, native.stderr):
+                stream.close()
 
     def test_lost_mutation_response_is_not_replayed_or_relaunched(self):
         marker = self.root / 'unexpected-launch'

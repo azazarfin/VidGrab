@@ -284,3 +284,17 @@ If provisioning another browser distribution, record the temporary guest network
 interval and restore the rules before acceptance checks. These observations cover
 GNOME on a virtual display; KDE, physical input, Snap/Flatpak and Windows require
 their own evidence.
+
+## Rebuilt guide through visible Firefox setup
+
+For manual onboarding acceptance, use the Flatpak command above with `--manual-native-portal` instead of `--enable-native-portal`, and fresh paths. This mode opens the packaged help, sets the existing Number preference through observed input, fully quits Firefox, restarts it and reloads the temporary add-on. It verifies the preference survived without preseeding and observes that Firefox removed the temporary add-on. The actual rebuilt `.deb` and FUSE AppImage pass this journey.
+
+When rebuilding preview bytes at the same 0.1.0 version, APT may keep the installed executable. Explicitly reinstall the selected package and verify the installed-vs-extracted executable hash before checking the guide. During this checkpoint, the disposable guest's offline unattended updater held the frontend lock; only identified apt-upgrade processes were stopped, no active dpkg installation or lock file was removed, and the firewall stayed blocked. Pause guest timers during validation and restore them before shutdown. Preserve earlier failure receipts and record actual cleanup/shutdown; the VM state in `vm.json` is authoritative.
+
+## Persistent browser controls and cleanup
+
+The current Ubuntu previews pass `tests/check_browser_connections.py` from the host with the private running `vm.json`, fresh guest home/report paths and host screenshots/report paths. Repeat for the AppImage with `--fuse`. See DEVELOPMENT for the complete command. Actual pointer clicks prove disconnection during an active download, copied-host rejection, completion/history after reopening still disconnected, foreign-manifest refusal and reconnection.
+
+`check_wayland_browsers.py` now unregisters the canonical host and removes only its verified copied diagnostic Chrome alias, refusing foreign/symlink destinations. Both native browser journeys pass again; removal preserves completed state/media hashes. Refresh the host's copied `inputs/source` snapshot after repository edits and compare guest hashes before checking it; the read-only share is not the working repository.
+
+Current accepted browser/control reports and selected logs are in `connection-controls-evidence/` under the control root. `connection-controls-final-audit-retry2.json` records ten media and twelve databases, no selected processes/mounts/registrations, removed Snap/Flatpak permissions, restored apt timers and preserved drop firewall/modes. The current shutdown is in `connection-controls-shutdown.json`; use its actual result and current `vm.json`, preserving older shutdown receipts and the original backing disk. Terminal-free release installation/removal and Windows remain open.

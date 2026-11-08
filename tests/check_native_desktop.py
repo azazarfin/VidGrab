@@ -40,7 +40,7 @@ def main():
             assert first["state"] == "ready"
             driver.screenshot(arguments.screenshots / "native-empty.png")
             close_window("VidGrab")
-            assert driver.script("return document.querySelector('.secondary').textContent") == "Quit VidGrab"
+            assert driver.script("return document.querySelector('footer .secondary').textContent") == "Quit VidGrab"
             repeated = subprocess.run([config["app"], "--config", str(path)], env=environment, capture_output=True, timeout=10)
             assert repeated.returncode == 0, repeated.stderr.decode()
             assert local_call(config)["supervisor_pid"] == first["supervisor_pid"]
@@ -64,7 +64,7 @@ def main():
             assert recovered["jobs"][0]["status"] == "complete"
             assert hashlib.sha256(media.read_bytes()).hexdigest() == checksum
             wait_for(lambda: driver.script("return document.querySelector('.connection')?.textContent === 'Connected' && document.querySelectorAll('[role=alert]').length === 0"), label="native UI recovery")
-            driver.click(".secondary")
+            driver.click("footer .secondary")
             endpoint = Path(config["data_dir"]) / "ipc" / "control.sock"
             wait_for(lambda: not endpoint.exists() and not Path(f'/proc/{first["supervisor_pid"]}').exists() and not Path(f'/proc/{recovered["engine_pid"]}').exists(), timeout=8, label="explicit native Quit")
             print(json.dumps({"result": "passed", "webview": capabilities, "checks": ["compiled UI", "no-tray close fallback", "repeat activation", "frozen WAV to MP3", "engine recovery", "explicit Quit"], "media_sha256": checksum}, indent=2))

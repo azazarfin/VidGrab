@@ -29,7 +29,10 @@ def main():
                         request.abort()
                 page.route('**/*', route)
                 page.add_init_script('''
-                    window.__fixture = {state: 'ready', tray_available: false, jobs: []};
+                    window.__fixture = {state: 'ready', tray_available: false, jobs: [],
+                      browser_connection: JSON.parse(sessionStorage.getItem('connection') ||
+                        '{"enabled":true,"bridge_ready":true,"chrome":"registered","firefox":"registered"}')};
+                    window.__connectionActions = 0;
                     window.__statusFailures = 1;
                     window.__statusCalls = 0;
                     window.__TAURI_INTERNALS__ = {
@@ -48,6 +51,16 @@ def main():
                           setTimeout(() => { window.__fixture.jobs[0].status='complete'; window.__fixture.jobs[0].progress=100; window.__fixture.jobs[0].file_path='/tmp/media/fixture.mp3'; }, 500);
                           return {task_id:'fixture'};
                         }
+                        if (command === 'set_browser_connection') {
+                          window.__connectionActions++;
+                          if (window.__registrationFailure) throw 'An existing browser host manifest belongs to another installation';
+                          const enabled = arguments.enabled;
+                          const registration = {enabled, bridge_ready:true,
+                            chrome:enabled?'registered':'missing', firefox:enabled?'registered':'missing'};
+                          window.__fixture.browser_connection = registration;
+                          sessionStorage.setItem('connection', JSON.stringify(registration));
+                          return registration;
+                        }
                         if (command === 'quit_companion') return;
                         throw 'Unexpected command';
                       }
@@ -60,6 +73,38 @@ def main():
                 expect(page.get_by_role('alert')).to_have_count(0)
                 expect(page.get_by_text('No test downloads yet')).to_be_visible()
                 expect(page.get_by_text('This desktop has no tray.', exact=False)).to_be_visible()
+                expect(page.get_by_role('heading', name='Browser connections')).to_be_visible()
+                expect(page.locator('.browser-connection-summary')).to_have_text('Registered for Chrome and Firefox')
+                page.get_by_role('button', name='Disconnect browsers', exact=True).click()
+                expect(page.locator('.browser-connection-summary')).to_have_text('Disconnected')
+                expect(page.locator('.connection')).to_have_text('Connected')
+                expect(page.get_by_role('button', name='Download test audio')).to_be_enabled()
+                page.reload(wait_until='networkidle')
+                expect(page.locator('.browser-connection-summary')).to_have_text('Disconnected')
+                page.evaluate('window.__registrationFailure = true')
+                page.get_by_role('button', name='Connect browsers', exact=True).click()
+                expect(page.get_by_role('alert')).to_contain_text('another installation')
+                expect(page.locator('.browser-connection-summary')).to_have_text('Disconnected')
+                calls = page.evaluate('window.__statusCalls')
+                page.wait_for_function('window.__statusCalls > ' + str(calls))
+                assert page.evaluate('window.__connectionActions') == 1, 'Connection mutations must not retry automatically'
+                page.evaluate('window.__registrationFailure = false')
+                page.get_by_role('button', name='Connect browsers', exact=True).click()
+                expect(page.locator('.browser-connection-summary')).to_have_text('Registered for Chrome and Firefox')
+                expect(page.get_by_role('alert')).to_have_count(0)
+                help = page.locator('.browser-setup')
+                summary = help.locator('summary')
+                summary.focus()
+                summary.press('Enter')
+                expect(help.get_by_text('temporary VidGrab add-on', exact=False)).to_be_visible()
+                steps = help.locator('li').all_text_contents()
+                restart = next(index for index, text in enumerate(steps) if 'Fully quit Firefox' in text)
+                load = next(index for index, text in enumerate(steps) if 'temporary VidGrab add-on' in text)
+                assert restart < load, 'The temporary add-on must be loaded after the Firefox restart'
+                assert not page.evaluate('document.documentElement.scrollWidth > innerWidth'), f'Help overflow at {width}px'
+                page.screenshot(path=str(arguments.screenshots / f'{width}-setup.png'), full_page=True)
+                summary.press('Space')
+                expect(help).not_to_have_attribute('open', '')
                 page.screenshot(path=str(arguments.screenshots / f'{width}-empty.png'), full_page=True)
                 page.get_by_label('Fixture URL').fill('https://example.com/fixture.wav')
                 page.get_by_role('button', name='Download test audio').click()
@@ -77,7 +122,7 @@ def main():
                 assert not page.evaluate('document.documentElement.scrollWidth > innerWidth'), f'Overflow at {width}px'
                 page.screenshot(path=str(arguments.screenshots / f'{width}-complete.png'), full_page=True)
                 page.close()
-                print(f'{width}x{height}: empty state, error, download completion and overflow passed')
+                print(f'{width}x{height}: browser controls, help, recovery, download completion and overflow passed')
         finally:
             browser.close()
     assert not errors, errors
