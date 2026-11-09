@@ -1,0 +1,24 @@
+File: DEP-11
+Version: '0.12'
+Origin: vidgrab-p02
+---
+Type: desktop-application
+ID: com.vidgrab.desktop
+Package: vid-grab
+Name:
+  C: VidGrab
+Summary:
+  C: Test the packaged desktop and browser connection
+Description:
+  C: >-
+    <p>This P02 preview tests local audio fixtures, browser connections and download lifetime. The full download manager remains in development.</p>
+Icon:
+  stock: vidgrab-desktop
+Launchable:
+  desktop-id:
+    - VidGrab.desktop
+Categories:
+  - Utility
+Provides:
+  binaries:
+    - vidgrab-desktop

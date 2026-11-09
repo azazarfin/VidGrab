@@ -22,6 +22,12 @@
     "shortDescription": "VidGrab P02 desktop companion fixture spike",
     "externalBin": ["binaries/vidgrab-native-host"],
     "resources": {"resources/engine/": "engine/"},
-    "linux": {"deb": {"depends": ["libc6 (>= 2.42)", "libwebkit2gtk-4.1-0", "libgtk-3-0t64 | libgtk-3-0", "libayatana-appindicator3-1"]}}
+    "linux": {"deb": {
+      "depends": ["libc6 (>= 2.42)", "libwebkit2gtk-4.1-0", "libgtk-3-0t64 | libgtk-3-0", "libayatana-appindicator3-1"],
+      "files": {
+        "/var/lib/swcatalog/yaml/vidgrab-p02.yml": "../../packaging/vidgrab-p02.yml",
+        "/usr/share/swcatalog/xml/vidgrab-p02.xml": "../../packaging/vidgrab-p02.xml"
+      }
+    }}
   }
 }

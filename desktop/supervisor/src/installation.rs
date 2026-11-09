@@ -1,4 +1,5 @@
 //! Per-user Linux package discovery and browser registration.
+pub mod application;
 use crate::Config;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};

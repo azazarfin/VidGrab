@@ -1,6 +1,6 @@
 # VidGrab desktop-companion plan
 
-Status: P01 is complete. The user resumed on 2026-11-04 and requested Linux work now, Windows validation later. P02 now has Ubuntu `.deb`/AppImage previews with native GNOME/Wayland, tray, browser and CLI removal/repair evidence. Strict Firefox Snap passes, and Firefox Flatpak passes with guided portal opt-in; the acceptance gate and framework decision remain open.
+Status: P01 is complete. The user resumed on 2026-11-04 and requested Linux work now, Windows validation later. P02 now has Ubuntu `.deb`/AppImage previews with native GNOME/Wayland, tray, browser, CLI repair and terminal-free installation/removal evidence. Strict Firefox Snap passes, and Firefox Flatpak passes with guided portal opt-in; the acceptance gate and framework decision remain open.
 
 ## Approach
 
@@ -52,7 +52,8 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 - [x] Evaluate Firefox Flatpak 159.0.1 with stock permissions: default portal preference `0` reports missing host; explicit integer `1` passes the same lifecycle in both packages. The user selected [guided native setup](BROWSER_CONNECTION.md) on 2026-11-08. Other configurations retain a conditional pairing decision; no fallback is implemented.
 - [x] Rebuild the setup help into both Ubuntu previews and follow it through visible Number/Save, full Firefox restart, temporary add-on reload and real Allow in fresh Flatpak profiles. No preference preseed; package and confinement checks pass.
 - [x] Implement and validate terminal-free Linux browser registration/status/Connect/Repair/Disconnect in both actual Ubuntu previews. Explicit disconnection survives reopen/relocation, blocks copied/live hosts, preserves active downloads/history and refuses foreign manifests. Native Chrome/Firefox, strict Snap and manual Flatpak handoff pass again.
-- [ ] Complete terminal-free release installation/removal UX. KDE and physical-device behavior need separate evidence before support claims.
+- [x] Complete terminal-free Ubuntu preview installation/removal: Files/App Center `.deb` install/uninstall and managed AppImage/Applications install/remove/reinstall pass with preserved state/media and browser disconnection. Idle removal checks every unfinished job; actual-image file ownership/active-owner checks pass. See [the installation guide](LINUX_INSTALLATION.md) and the 2026-11-10 evidence in VALIDATION.
+- [ ] Record final-package startup measurements separately from GUI setup and complete the Linux ADR-001 acceptance review. KDE, other distributions and physical-device behavior need separate evidence before support claims.
 - [ ] Implement and validate Windows x64 packaged paths, named pipes/Job Objects, WebView2/tray, Chrome/Firefox registration and installer lifecycle. Windows evidence is deferred at the user's request, not waived.
 - [ ] Acceptance: both target OSes pass the package/lifecycle gate, measurements are recorded and ADR-001 is finalized. This Linux spike does not complete P02; P03 has not started.
 - Suggested commit: `feat(desktop): prove bundled engine and browser bridge lifecycle`.

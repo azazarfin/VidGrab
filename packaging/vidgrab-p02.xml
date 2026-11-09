@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<components version="0.16" origin="vidgrab-p02">
+  <component type="desktop-application">
+    <id>com.vidgrab.desktop</id>
+    <metadata_license>CC0-1.0</metadata_license>
+    <name>VidGrab</name>
+    <summary>Test the packaged desktop and browser connection</summary>
+    <description>
+      <p>This P02 preview tests local audio fixtures, browser connections and download lifetime. The full download manager remains in development.</p>
+    </description>
+    <pkgname>vid-grab</pkgname>
+    <launchable type="desktop-id">VidGrab.desktop</launchable>
+    <icon type="stock">vidgrab-desktop</icon>
+    <categories><category>Utility</category></categories>
+    <provides><binary>vidgrab-desktop</binary></provides>
+  </component>
+</components>

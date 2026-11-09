@@ -23,6 +23,7 @@ function modalDialogs() {
     .map(actor => {
       const labels = [];
       const buttons = [];
+      const entries = [];
       function visit(child) {
         if (!child.mapped)
           return;
@@ -32,12 +33,35 @@ function modalDialogs() {
           const label = child.get_child()?.get_text?.() ?? child.label;
           buttons.push({ label, reactive: child.reactive, ...geometry(child) });
         }
+        if (child instanceof St.Entry) {
+          entries.push({ characters: child.get_text().length,
+            focused: global.stage.get_key_focus() === child.clutter_text,
+            ...geometry(child) });
+        }
         for (const descendant of child.get_children())
           visit(descendant);
       }
       visit(actor);
-      return { labels, buttons };
+      return { labels, buttons, entries };
     });
+}
+
+function overviewActors() {
+  if (!Main.overview.visible)
+    return [];
+  const values = [];
+  function visit(actor, depth = 0) {
+    if (!actor.mapped || depth > 30 || values.length >= 400)
+      return;
+    if (actor instanceof St.Entry)
+      values.push({ kind: 'entry', text: actor.get_text(), ...geometry(actor) });
+    if (actor instanceof St.Label && actor.text)
+      values.push({ kind: 'label', text: actor.text, ...geometry(actor) });
+    for (const child of actor.get_children())
+      visit(child, depth + 1);
+  }
+  visit(global.stage);
+  return values;
 }
 
 export default class Validation extends Extension {
@@ -70,6 +94,7 @@ export default class Validation extends Extension {
     return JSON.stringify({
       wayland: Meta.is_wayland_compositor(),
       overview_visible: Main.overview.visible,
+      overview_actors: overviewActors(),
       screen: { width: global.stage.width, height: global.stage.height },
       pointer_events: this._events,
       pointer: { x: pointerX, y: pointerY,

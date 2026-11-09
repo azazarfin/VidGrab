@@ -102,6 +102,15 @@ impl Owner {
                         } else if request.op == "quit" {
                             self.stop.store(true, Ordering::Release);
                             protocol::success(&request, self.engine.snapshot())
+                        } else if request.op == "quit_if_idle" {
+                            match self.engine.request("status", &Default::default()) {
+                                Ok(data) if data.get("downloads_active").and_then(serde_json::Value::as_bool) == Some(false) => {
+                                    self.stop.store(true, Ordering::Release);
+                                    protocol::success(&request, data)
+                                }
+                                Ok(_) => protocol::failure(Some(&request.id), "DOWNLOADS_ACTIVE"),
+                                Err(_) => protocol::failure(Some(&request.id), "ENGINE_UNAVAILABLE"),
+                            }
                         } else if request.op == "activate" {
                             notify(UiEvent::Activate);
                             protocol::success(&request, self.engine.snapshot())
@@ -123,6 +132,8 @@ impl Owner {
         }
         self.engine = Engine::new(); // Drop and reap the owned group before releasing the lock.
         let _ = fs::remove_file(self.config.socket_path());
+        drop(self.listener);
+        drop(self._lock);
         notify(UiEvent::Stopped);
     }
 }

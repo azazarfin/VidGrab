@@ -14,14 +14,18 @@ from pathlib import Path
 import select
 import signal
 import socket
+import sqlite3
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 import unittest
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def frame(value):
@@ -99,6 +103,10 @@ class NativeLifecycleChecks(unittest.TestCase):
                 return last
             time.sleep(0.1)
         self.fail(f'Lifecycle deadline exceeded: {last}')
+
+    def ready(self):
+        # The host may validly report starting/recovering before accepting work.
+        return self.wait_for(lambda reply: reply.get('data', {}).get('state') == 'ready')
 
     def stop_owner(self):
         if not (self.root / 'state' / 'ipc' / 'control.sock').exists():
@@ -292,6 +300,7 @@ class NativeLifecycleChecks(unittest.TestCase):
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
         threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.ready()
         reply = self.invoke('fixture.download', {'url': f'http://127.0.0.1:{server.server_port}/fixture.wav'})
         self.assertTrue(reply['ok'], reply)
         task_id = reply['data']['task_id']
@@ -302,13 +311,45 @@ class NativeLifecycleChecks(unittest.TestCase):
         self.assertEqual(output.suffix, '.mp3', 'Bundled FFmpeg must actually postprocess the fixture')
         checksum = hashlib.sha256(output.read_bytes()).hexdigest()
         self.stop_owner()
-        reopened = self.invoke()
+        reopened = self.ready()
         self.assertTrue(reopened['ok'], reopened)
         self.assertEqual(next(job for job in reopened['data']['jobs'] if job['id'] == task_id)['status'], 'complete')
         self.assertEqual(hashlib.sha256(output.read_bytes()).hexdigest(), checksum)
 
+    def test_removal_shutdown_waits_for_download_completion(self):
+        from tests.native_support import fixture_server
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+        with fixture_server(gate) as url:
+            self.ready()
+            reply = self.invoke('fixture.download', {'url': url})
+            self.assertTrue(reply['ok'], reply)
+            active = self.wait_for(lambda response: any(job['status'] == 'downloading'
+                for job in response.get('data', {}).get('jobs', [])))
+            with sqlite3.connect(self.root / 'state/vidgrab.db') as database:
+                database.executemany(
+                    "INSERT INTO downloads (id, url, status, created_at) VALUES (?, ?, 'complete', ?)",
+                    [(f'recent-{index}', url, f'2099-01-01T00:00:{index:02d}') for index in range(50)],
+                )
+            self.assertTrue(all(job['status'] == 'complete' for job in self.invoke()['data']['jobs']),
+                            'The active job must be outside the recent history view')
+            refused = self.local('quit_if_idle')
+            self.assertFalse(refused['ok'], refused)
+            self.assertEqual(refused['error']['code'], 'DOWNLOADS_ACTIVE')
+            self.assertEqual(self.invoke()['data']['supervisor_pid'], active['data']['supervisor_pid'])
+            self.assertTrue((self.root / 'state/ipc/control.sock').exists())
+            self.assertFalse(self.invoke('quit_if_idle')['ok'], 'Browser shutdown remains unavailable')
+            gate.set()
+            self.wait_for(lambda response: response.get('data', {}).get('downloads_active') is False)
+        removed = self.local('quit_if_idle')
+        self.assertTrue(removed['ok'], removed)
+        deadline = time.monotonic() + 8
+        while (self.root / 'state/ipc/control.sock').exists() and time.monotonic() < deadline:
+            time.sleep(0.025)
+        self.assertFalse((self.root / 'state/ipc/control.sock').exists())
+
     def test_engine_crash_restarts_once_and_preserves_owner(self):
-        first = self.invoke()
+        first = self.ready()
         self.assertTrue(first['ok'], first)
         os.kill(first['data']['engine_pid'], signal.SIGKILL)
         recovered = self.wait_for(lambda r: r.get('data', {}).get('engine_generation', 0) == 2 and r['data'].get('state') == 'ready')

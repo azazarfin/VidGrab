@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -15,8 +15,18 @@ interface Snapshot {
   state: 'starting' | 'ready' | 'recovering' | 'failed';
   tray_available: boolean;
   jobs?: Job[];
+  downloads_active?: boolean;
   browser_connection?: BrowserConnection;
   browser_connection_error?: string;
+  application?: ApplicationStatus;
+  application_error?: string;
+}
+
+interface ApplicationStatus {
+  kind: 'deb' | 'appimage';
+  installed: boolean;
+  app: string;
+  shortcut?: string;
 }
 
 interface BrowserConnection {
@@ -36,6 +46,8 @@ export function App() {
   const [connectionError, setConnectionError] = useState('');
   const [actionError, setActionError] = useState('');
   const [announcement, setAnnouncement] = useState('');
+  const [removalError, setRemovalError] = useState('');
+  const removalDialog = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -100,10 +112,53 @@ export function App() {
     }
   }
 
+  async function installAppImage() {
+    setBusy(true);
+    setActionError('');
+    setAnnouncement('');
+    try {
+      const application = await invoke<ApplicationStatus>('install_appimage');
+      setSnapshot(current => ({ ...current, application, application_error: undefined }));
+      setAnnouncement('Installed in Applications. Your current download session stays open.');
+    } catch (reason) {
+      setActionError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeApplication() {
+    setBusy(true);
+    setRemovalError('');
+    try {
+      const application = await invoke<ApplicationStatus>('remove_application');
+      setSnapshot(current => ({ ...current, application }));
+      removalDialog.current?.close();
+    } catch (reason) {
+      setRemovalError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openAppCenter() {
+    setActionError('');
+    try { await invoke('open_software_manager'); }
+    catch (reason) { setActionError(String(reason)); }
+  }
+
+  function confirmRemoval() {
+    setRemovalError('');
+    removalDialog.current?.showModal();
+  }
+
   const browserConnection = snapshot.browser_connection;
   const registered = browserConnection?.enabled && browserConnection.bridge_ready
     && browserConnection.chrome === 'registered' && browserConnection.firefox === 'registered';
   const browserStates = { missing: 'Not registered', registered: 'Registered', conflict: 'Another installation' };
+  const application = snapshot.application;
+  const activeDownloads = snapshot.downloads_active
+    ?? (snapshot.jobs?.some(job => !['complete', 'failed', 'cancelled'].includes(job.status)) || false);
 
   return (
     <main className="shell">
@@ -116,6 +171,33 @@ export function App() {
         <h1 id="title">Connection test</h1>
         <p>Try a local audio download. VidGrab keeps it running when the browser closes.</p>
       </section>
+      <details className="application-setup">
+        <summary>Install and remove VidGrab</summary>
+        {application?.kind === 'appimage' ? <>
+          <p className="installation-status" role="status">{application.installed ? 'Installed in Applications' : 'Running from an AppImage file'}</p>
+          {application.installed ? <>
+            <p>Open <strong>VidGrab (AppImage preview)</strong> from Applications. The installed copy stays in its own folder.</p>
+            <p className="installation-path">{application.app}</p>
+            <p>Removing the installed copy disconnects browser access and quits VidGrab. Your history and saved files are kept. The AppImage you downloaded stays available for reinstalling.</p>
+            <button className="secondary critical" type="button" onClick={confirmRemoval}
+              disabled={busy || activeDownloads}>Remove installed copy…</button>
+          </> : <>
+            <p>Install a copy and an Applications shortcut for this user. You can keep using this window while the copy is installed.</p>
+            <button className="secondary" type="button" onClick={installAppImage} disabled={busy}>Install AppImage</button>
+            <p>To remove a portable AppImage, quit VidGrab and move the downloaded file to Trash in Files.</p>
+          </>}
+        </> : application?.kind === 'deb' ? <>
+          <p className="installation-status">Installed as an Ubuntu package</p>
+          <p>To install again, open the <strong>.deb</strong> file in Files with <strong>App Center</strong> and select <strong>Install</strong>.</p>
+          <p>Prepare for removal here, then use <strong>Manage</strong> in App Center to uninstall <strong>VidGrab</strong>. Browser access is disconnected before the app quits; your history and saved files are kept.</p>
+          <div className="connection-actions">
+            <button className="secondary" type="button" onClick={openAppCenter} disabled={busy}>Open App Center</button>
+            <button className="secondary critical" type="button" onClick={confirmRemoval}
+              disabled={busy || activeDownloads}>Prepare to remove…</button>
+          </div>
+        </> : <p className="helper">{snapshot.application_error || 'Installation controls are available in the Linux packages.'}</p>}
+        {activeDownloads && application?.installed && <p className="helper">Finish active downloads before removing VidGrab.</p>}
+      </details>
       <section className="browser-connections" aria-labelledby="browser-title">
         <h2 id="browser-title">Browser connections</h2>
         {browserConnection ? <>
@@ -183,6 +265,20 @@ export function App() {
           : 'This desktop has no tray. Keep this window open; use Quit VidGrab to close the app.'}</p>
         <button className="secondary" type="button" onClick={quit} disabled={busy}>Quit VidGrab</button>
       </footer>
+      <dialog className="removal-dialog" ref={removalDialog} aria-labelledby="remove-title" aria-describedby="remove-description">
+        <h2 id="remove-title">{application?.kind === 'appimage' ? 'Remove the installed copy?' : 'Prepare to remove VidGrab?'}</h2>
+        <p id="remove-description">{application?.kind === 'appimage'
+          ? 'VidGrab will disconnect browser access, quit and remove its installed AppImage and Applications shortcut. Your history and saved files are kept.'
+          : 'VidGrab will disconnect browser access, quit and open App Center. Use Manage to uninstall the Ubuntu package. Your history and saved files are kept.'}</p>
+        {activeDownloads && <p className="helper">Finish active downloads before removing VidGrab.</p>}
+        {removalError && <p className="error" role="alert">{removalError}</p>}
+        <div className="dialog-actions">
+          <button className="secondary" type="button" autoFocus disabled={busy} onClick={() => removalDialog.current?.close()}>Keep VidGrab</button>
+          <button className="secondary critical" type="button" disabled={busy || activeDownloads} onClick={removeApplication}>
+            {busy ? 'Working…' : application?.kind === 'appimage' ? 'Remove and quit' : 'Disconnect and quit'}
+          </button>
+        </div>
+      </dialog>
     </main>
   );
 }

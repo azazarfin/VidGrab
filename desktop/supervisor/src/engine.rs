@@ -159,6 +159,7 @@ impl Engine {
                 let mut snapshot = self.snapshot();
                 let response = transport::engine_request(self.port, &self.token, "GET", "/spike/status", None)?;
                 snapshot["jobs"] = response["jobs"].clone();
+                snapshot["downloads_active"] = response["downloads_active"].clone();
                 Ok(snapshot)
             }
             "fixture.download" => transport::engine_request(self.port, &self.token, "POST", "/spike/fixture", Some(Value::Object(params.clone()))),

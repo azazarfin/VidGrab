@@ -1,17 +1,28 @@
 use gio::glib::variant::ToVariant;
-use gio::prelude::DBusProxyExt;
+use gio::prelude::{AppInfoExt, DBusProxyExt};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
+use std::sync::{Arc, Condvar, Mutex, atomic::{AtomicBool, Ordering}};
+use std::time::Duration;
 use tauri::{Manager, State, menu::{Menu, MenuItem}, tray::TrayIconBuilder};
 use vidgrab_supervisor::{Config, Owner, UiEvent, protocol, transport};
 use vidgrab_supervisor::installation::{self, Layout, UserDirs};
+use vidgrab_supervisor::installation::application;
+
+struct Shutdown { stopped: Mutex<bool>, ready: Condvar }
+
+struct Maintenance(Arc<AtomicBool>);
+impl Drop for Maintenance {
+    fn drop(&mut self) { self.0.store(false, Ordering::Release); }
+}
 
 struct DesktopState {
     config: Config,
     stop: Arc<AtomicBool>,
     tray_available: bool,
-    registration: Option<Arc<Mutex<(Layout, UserDirs)>>>,
+    registration: Option<Arc<Mutex<(Layout, UserDirs, bool)>>>,
+    shutdown: Arc<Shutdown>,
+    maintenance: Arc<AtomicBool>,
 }
 
 fn command(config: &Config, operation: &str, params: serde_json::Map<String, Value>) -> Result<Value, String> {
@@ -30,16 +41,74 @@ async fn companion_status(state: State<'_, DesktopState>) -> Result<Value, Strin
         .await.map_err(|_| "The status request failed".to_owned())??;
     value["tray_available"] = json!(tray);
     if let Some(registration) = state.registration.clone() {
-        let connection = tauri::async_runtime::spawn_blocking(move || {
+        let information = tauri::async_runtime::spawn_blocking(move || -> Result<Value, String> {
             let selected = registration.lock().map_err(|_| "Browser connection settings are unavailable".to_owned())?;
-            installation::connection_status(&selected.0, &selected.1).map_err(|error| error.to_string())
+            let mut information = json!({});
+            match installation::connection_status(&selected.0, &selected.1) {
+                Ok(connection) => information["browser_connection"] = json!(connection),
+                Err(error) => information["browser_connection_error"] = json!(error.to_string()),
+            }
+            match application::status(&selected.0, &selected.1, selected.2) {
+                Ok(status) => information["application"] = json!(status),
+                Err(error) => information["application_error"] = json!(error.to_string()),
+            }
+            Ok(information)
         }).await.map_err(|_| "The browser connection check failed".to_owned())?;
-        match connection {
-            Ok(connection) => value["browser_connection"] = json!(connection),
+        match information {
+            Ok(information) => for (key, item) in information.as_object().unwrap() { value[key] = item.clone(); },
             Err(error) => value["browser_connection_error"] = json!(error),
         }
     }
     Ok(value)
+}
+
+#[tauri::command]
+async fn install_appimage(state: State<'_, DesktopState>) -> Result<Value, String> {
+    let registration = state.registration.clone().ok_or("Installation controls require a packaged launch")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut selected = registration.lock().map_err(|_| "Installation settings are unavailable".to_owned())?;
+        selected.0 = application::install(&selected.0, &selected.1, selected.2, include_bytes!("../icons/icon.png"))
+            .map_err(|error| error.to_string())?;
+        application::status(&selected.0, &selected.1, selected.2).map(|status| json!(status)).map_err(|error| error.to_string())
+    }).await.map_err(|_| "The AppImage installation failed".to_owned())?
+}
+
+fn software_manager() -> Result<gio::DesktopAppInfo, String> {
+    ["/var/lib/snapd/desktop/applications/snap-store_snap-store.desktop", "/usr/share/applications/org.gnome.Software.desktop"]
+        .iter().find_map(gio::DesktopAppInfo::from_filename)
+        .ok_or_else(|| "Open your desktop's software manager to remove the VidGrab package".to_owned())
+}
+
+#[tauri::command]
+fn open_software_manager() -> Result<(), String> {
+    software_manager()?.launch(&[], None::<&gio::AppLaunchContext>).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn remove_application(app: tauri::AppHandle, state: State<'_, DesktopState>) -> Result<Value, String> {
+    let registration = state.registration.clone().ok_or("Installation controls require a packaged launch")?;
+    state.maintenance.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .map_err(|_| "An installation action is already running".to_owned())?;
+    let _maintenance = Maintenance(state.maintenance.clone());
+    let config = state.config.clone();
+    let shutdown = state.shutdown.clone();
+    let (result, is_image) = tauri::async_runtime::spawn_blocking(move || {
+        let selected = registration.lock().map_err(|_| "Installation settings are unavailable".to_owned())?;
+        application::check_removal(&selected.1, selected.2).map_err(|error| error.to_string())?;
+        if !selected.2 { software_manager()?; }
+        command(&config, "quit_if_idle", Default::default())?;
+        let stopped = shutdown.stopped.lock().map_err(|_| "The app shutdown state is unavailable".to_owned())?;
+        let (stopped, _) = shutdown.ready.wait_timeout_while(stopped, Duration::from_secs(10), |stopped| !*stopped)
+            .map_err(|_| "The app shutdown state is unavailable".to_owned())?;
+        if !*stopped { return Err("VidGrab has not finished shutting down; keep the installed files and try again".to_owned()); }
+        if selected.2 { application::remove(&selected.1).map_err(|error| error.to_string())?; }
+        else { installation::disconnect(&selected.1).map_err(|error| error.to_string())?; }
+        application::status(&selected.0, &selected.1, selected.2)
+            .map(|status| (json!(status), selected.2)).map_err(|error| error.to_string())
+    }).await.map_err(|_| "The removal action failed; reopen VidGrab to try again".to_owned())??;
+    if !is_image { open_software_manager()?; }
+    app.exit(0);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -62,7 +131,10 @@ async fn download_fixture(url: String, state: State<'_, DesktopState>) -> Result
 }
 
 #[tauri::command]
-fn quit_companion(state: State<'_, DesktopState>) { state.stop.store(true, Ordering::Release); }
+fn quit_companion(app: tauri::AppHandle, state: State<'_, DesktopState>) {
+    if state.shutdown.stopped.lock().is_ok_and(|stopped| *stopped) { app.exit(0); }
+    else { state.stop.store(true, Ordering::Release); }
+}
 
 fn tray_host_available() -> bool {
     if std::env::var_os("VIDGRAB_DISABLE_TRAY").is_some() { return false; }
@@ -85,9 +157,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Config::load(&PathBuf::from(&arguments[1]))?
     } else {
         let packaged = arguments.len() == 2 && arguments[0] == "--package-config";
-        let diagnostic = arguments.len() == 1 && ["--check-package", "--browser-connection-status", "--register-browser-host", "--unregister-browser-host"].iter().any(|flag| arguments[0] == *flag);
+        let diagnostic = arguments.len() == 1 && ["--check-package", "--browser-connection-status", "--register-browser-host", "--unregister-browser-host", "--installation-status", "--install-appimage", "--remove-appimage"].iter().any(|flag| arguments[0] == *flag);
         if !arguments.is_empty() && !packaged && !diagnostic {
-            return Err("Use a packaged launch, --config FILE, --check-package, --register-browser-host or --unregister-browser-host".into());
+            return Err("Use a packaged launch, --config FILE, --check-package, --installation-status, --install-appimage, --remove-appimage, --register-browser-host or --unregister-browser-host".into());
         }
         if arguments.first().is_some_and(|arg| arg == "--check-package") {
             let environment = tauri::Env::default();
@@ -111,6 +183,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let resources = tauri::utils::platform::resource_dir(context.package_info(), &environment)?;
         let image = std::env::var_os("APPIMAGE");
         let layout = Layout::discover(&std::env::current_exe()?, &resources, image.as_deref().map(Path::new))?;
+        let is_image = image.is_some();
+        if arguments.first().is_some_and(|arg| arg == "--installation-status") {
+            println!("{}", json!(application::status(&layout, &dirs, is_image)?));
+            return Ok(());
+        }
+        if arguments.first().is_some_and(|arg| arg == "--install-appimage") {
+            let installed = application::install(&layout, &dirs, is_image, include_bytes!("../icons/icon.png"))?;
+            println!("{}", json!(application::status(&installed, &dirs, is_image)?));
+            return Ok(());
+        }
+        if arguments.first().is_some_and(|arg| arg == "--remove-appimage") {
+            if !is_image { return Err("Only an AppImage has a managed copy to remove".into()); }
+            application::remove(&dirs)?;
+            println!("{}", json!(application::status(&layout, &dirs, is_image)?));
+            return Ok(());
+        }
         if arguments.first().is_some_and(|arg| arg == "--browser-connection-status") {
             println!("{}", serde_json::to_string(&installation::connection_status(&layout, &dirs)?)?);
             return Ok(());
@@ -120,8 +208,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", serde_json::to_string(&saved)?);
             return Ok(());
         }
+        let layout = application::preferred_layout(&layout, &dirs, is_image);
         let saved = installation::prepare(&layout, &dirs)?;
-        registration = Some(Arc::new(Mutex::new((layout.clone(), dirs))));
+        registration = Some(Arc::new(Mutex::new((layout.clone(), dirs, is_image))));
         saved.runtime(&layout)
     };
     let Some(owner) = Owner::start(config.clone())? else {
@@ -130,8 +219,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let stop = owner.stop_handle();
     let exit_stop = stop.clone();
+    let shutdown = Arc::new(Shutdown { stopped: Mutex::new(false), ready: Condvar::new() });
+    let owner_shutdown = shutdown.clone();
+    let maintenance = Arc::new(AtomicBool::new(false));
+    let owner_maintenance = maintenance.clone();
     let application = tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![companion_status, set_browser_connection, download_fixture, quit_companion])
+        .invoke_handler(tauri::generate_handler![companion_status, set_browser_connection, install_appimage, remove_application, open_software_manager, download_fixture, quit_companion])
         .setup(move |app| {
             let mut tray_available = false;
             if tray_host_available() {
@@ -149,7 +242,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }).build(app).is_ok();
                 }
             }
-            app.manage(DesktopState { config, stop, tray_available, registration });
+            app.manage(DesktopState { config, stop, tray_available, registration, shutdown, maintenance });
             let handle = app.handle().clone();
             std::thread::spawn(move || owner.run(move |event| match event {
                 UiEvent::Activate => {
@@ -158,7 +251,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Some(window) = activate.get_webview_window("main") { let _ = window.show(); let _ = window.set_focus(); }
                     });
                 }
-                UiEvent::Stopped => handle.exit(0),
+                UiEvent::Stopped => {
+                    if let Ok(mut stopped) = owner_shutdown.stopped.lock() {
+                        *stopped = true;
+                        owner_shutdown.ready.notify_all();
+                    }
+                    if !owner_maintenance.load(Ordering::Acquire) { handle.exit(0); }
+                }
             }));
             Ok(())
         })

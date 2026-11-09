@@ -17,6 +17,7 @@ import struct
 import subprocess
 import tempfile
 import time
+import xml.etree.ElementTree as ET
 
 HOST = "com.vidgrab.companion"
 ORIGIN = "chrome-extension://ikjpekhbbaehdhigakbahlhafaojbjpm/"
@@ -54,6 +55,23 @@ def check(artifact):
         extraction_seconds = time.monotonic() - started
         binary = prefix / "usr/bin/vidgrab-desktop"
         assert binary.is_file(), "The package must contain the compiled desktop executable"
+        # Stock App Center can list the DEP-11 yaml/ directory, but its sandbox
+        # refuses catalog-root listing, so root-level XML is silently skipped.
+        catalog = prefix / "var/lib/swcatalog/yaml/vidgrab-p02.yml"
+        native_catalog = prefix / "usr/share/swcatalog/xml/vidgrab-p02.xml"
+        assert catalog.is_file() and native_catalog.is_file(), "Ship the VidGrab catalog for App Center and native AppStream discovery"
+        components = ET.parse(native_catalog).getroot().findall("component")
+        assert len(components) == 1 and components[0].get("type") == "desktop-application"
+        component = components[0]
+        assert component.findtext("id") == "com.vidgrab.desktop"
+        assert component.findtext("name") == "VidGrab"
+        package = run(["dpkg-deb", "--field", str(artifact), "Package"], environment).stdout.decode().strip()
+        assert component.findtext("pkgname") == package, "App Center must map the installed package to VidGrab"
+        dep11 = catalog.read_text()
+        assert "File: DEP-11\n" in dep11 and f"Package: {package}\n" in dep11
+        assert f"ID: {component.findtext('id')}\n" in dep11 and "  C: VidGrab\n" in dep11
+        launchable = component.find("launchable[@type='desktop-id']")
+        assert launchable is not None and (prefix / "usr/share/applications" / launchable.text).is_file()
         discovery = json.loads(run([str(binary), "--check-package"], environment).stdout)
         engine = Path(discovery["engine"])
         assert engine.is_relative_to(prefix / "usr/lib"), "Tauri must discover package resources independently of the executable directory"
@@ -136,7 +154,7 @@ def check(artifact):
             "headless_check_seconds": round(time.monotonic() - started, 3), "elf_files": elf_count,
             "required_glibc": ".".join(map(str, maximum)), "depends": depends, "components": components,
             "os_release": platform.freedesktop_os_release(),
-            "checks": ["compiled Tauri resource discovery", "frozen self-check with empty PATH", "private native registration",
+            "checks": ["App Center and native AppStream package/desktop discovery", "compiled Tauri resource discovery", "frozen self-check with empty PATH", "private native registration",
                 "native origin/frame rejection", "foreign manifest refusal", "simulated AppImage relocation preserving paths",
                 "registration removal preserving fixture state/media", "declared glibc covers shipped ELF files"],
             "limits": ["extracted .deb, not an install/uninstall", "headless extraction, not clean installation evidence",

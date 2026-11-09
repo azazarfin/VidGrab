@@ -211,7 +211,7 @@ This checks three widths with mocked Tauri commands and blocks other HTTP reques
 
 ## Firefox Snap/Flatpak native portal checks — 2026-11-08
 
-[Firefox Flatpak setup](BROWSER_CONNECTION.md) describes the user-selected guided native path. The preview includes packaged setup help and verified browser registration controls; full release installation/removal remains open. Ubuntu's strict Firefox Snap 159.0.1 works through the existing portal without changing a preference. Official Flathub Firefox 159.0.1 has `widget.use-xdg-desktop-portal.native-messaging` set to integer `0` by default; explicit integer `1` enables the tested native portal path. Keep the browser visible/focused for the real GNOME Allow prompt. Restart a desktop session that predates Flatpak installation so GNOME recognizes its exported desktop entry.
+[Firefox Flatpak setup](BROWSER_CONNECTION.md) describes the user-selected guided native path. The preview includes packaged setup help, verified browser registration controls and [Ubuntu installation/removal controls](LINUX_INSTALLATION.md); final release/Windows acceptance remains open. Ubuntu's strict Firefox Snap 159.0.1 works through the existing portal without changing a preference. Official Flathub Firefox 159.0.1 has `widget.use-xdg-desktop-portal.native-messaging` set to integer `0` by default; explicit integer `1` enables the tested native portal path. Keep the browser visible/focused for the real GNOME Allow prompt. Restart a desktop session that predates Flatpak installation so GNOME recognizes its exported desktop entry.
 
 Use [the disposable VM recipe](../tests/ubuntu_vm/README.md) for both browser distributions. The compatibility Snap entrypoints and new Flatpak entrypoints share [the QMP host journey](../tests/check_firefox_portal.py) and [guarded guest lifecycle](../tests/firefox_portal_guest.py). Only the explicit Flatpak `--enable-native-portal` flag writes that preference into fresh test profiles. Without it, the stock Flatpak check records a missing-host failure despite registration and then cleans up; that negative receipt is diagnostic evidence, not a passing activation case. The flag never changes Flatpak permission overrides or grants desktop consent.
 
@@ -221,7 +221,7 @@ Both unchanged Ubuntu packages pass the opted-in Flatpak journey and both Snap r
 .venv/bin/python -B -m unittest tests.check_firefox_flatpak_protocol tests.check_native_display tests.check_wayland_protocol tests.check_fixture_stream tests.check_package_installation_protocol -v
 ```
 
-Seventeen helpers pass on Fedora/Python 3.14.8 and Ubuntu/Python 3.12.3; exact timings and receipts are in [VALIDATION.md](VALIDATION.md). Those original package bytes predate the help. Later sections and VALIDATION cover the rebuilt help and connection controls. Terminal-free release installation/removal and Windows keep P02/ADR-001 open; no paired loopback fallback is implemented.
+Seventeen helpers pass on Fedora/Python 3.14.8 and Ubuntu/Python 3.12.3; exact timings and receipts are in [VALIDATION.md](VALIDATION.md). Those original package bytes predate the help. Later sections and VALIDATION cover the rebuilt help and connection controls. The terminal-free Ubuntu preview installation/removal evidence follows below; final acceptance and Windows keep P02/ADR-001 open. No paired loopback fallback is implemented.
 
 ## Manual rebuilt Firefox setup check
 
@@ -258,3 +258,63 @@ Repeat with the guest AppImage, `--fuse` and fresh paths. These pointer journeys
 `check_wayland_browsers.py` now cleans canonical registrations and only its verified copied Chrome diagnostic alias, preserving state/media and refusing foreign or symlink aliases. Failure diagnostics are captured before cleanup. Its updated Chrome→Firefox journey passes for both packages. Refresh the VM's copied read-only source snapshot after host edits and verify hashes; changing the repository alone does not update that input.
 
 Nine existing native lifecycle cases pass with the new compiled owner/bridge. `NativeLifecycleChecks.test_live_packaged_host_observes_connection_changes` keeps one host alive while toggling its private packaged preference false/true/false; the real installed Ubuntu bridge passes it. Use a valid fixture URL with an explicit local port. The old bridge fails the revocation regression. Package hashes, runtime boundaries, audit and shutdown receipts are in VALIDATION/HANDOFF.
+
+
+## Packaged application installation and removal
+
+The Ubuntu preview follows [the terminal-free guide](LINUX_INSTALLATION.md). The
+AppImage creates a managed copy, icon and checksum receipt under the selected
+`XDG_DATA_HOME/vidgrab-p02/application`, with an Applications shortcut under
+`XDG_DATA_HOME/applications`. Its native descriptor points to that stable copy.
+Opening the same portable image keeps that target. A different image, changed
+managed bytes, foreign destinations and symlinks are refused; app replacement
+and update policy remain P07 work.
+
+The packaged executable adds `--installation-status`, `--install-appimage` and
+`--remove-appimage`. Status does not start the engine or create user storage.
+Removal preserves state/media, the descriptor and explicit browser disconnection.
+An owner lock blocks headless removal while the app is running. Desktop removal
+uses the local-only `quit_if_idle` operation, waits for engine/group shutdown,
+then removes the managed copy or opens App Center for `.deb` removal. The engine's
+`downloads_active` covers all unfinished jobs, including ones outside its latest
+50 history rows. Missing/unknown readiness never authorizes idle shutdown.
+
+`tests/check_application_installation.py` runs seven file lifecycle cases with
+private temporary HOME/XDG paths against a selected actual AppImage. It starts no
+engine or GUI. Run it in the Ubuntu test environment with a fresh report:
+
+```sh
+python3 -B tests/check_application_installation.py \
+  --appimage /tmp/SELECTED/VidGrab_0.1.0_amd64.AppImage \
+  --report /tmp/SELECTED/application-files.json
+```
+
+`tests/check_release_installation.py` drives actual Files, Applications, the
+compiled window and App Center using the named disposable guest's virtual input.
+It requires an already selected fixture descriptor/state/media and the package
+folder open in Files. Reports/screenshots must be fresh and inside the private
+VM control root. The authentication file is private test data and is never
+included in a report. Example after the fixture history exists and browsers are
+disconnected:
+
+```sh
+.venv/bin/python -B tests/check_release_installation.py \
+  --vm /tmp/CONTROL/vm.json \
+  --package /home/vidgrabtest/packages/release-ux/VidGrab_0.1.0_amd64.deb \
+  --fixture-root /home/vidgrabtest/validation/release-ux-gui \
+  --password-file /tmp/CONTROL/guest-authentication \
+  --report /tmp/CONTROL/release-cycle.json \
+  --screenshots /tmp/CONTROL/release-cycle \
+  --steps launch-applications history prepare-remove deb-remove save \
+          deb-install launch-applications history quit save
+```
+
+App Center exposes its installed heading before the rows finish loading and can
+retain package state while open. The harness reopens it, waits for rows, filters
+VidGrab and reads the name/button from the same screenshot before removal. It
+waits for dpkg's desktop/icon triggers and verifies all other OS packages retain
+their settled states. AT-SPI, Tesseract and GdkPixbuf observations are restricted
+to the named VM; cropped OCR preserves original screen coordinates. Flutter
+filter typing uses bounded virtual HID holds, and the resulting sole VidGrab row
+must be visible before any mutation. These checks do not certify KDE, physical
+input, Windows or the migrated extension download UI.

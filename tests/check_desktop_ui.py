@@ -30,11 +30,15 @@ def main():
                 page.route('**/*', route)
                 page.add_init_script('''
                     window.__fixture = {state: 'ready', tray_available: false, jobs: [],
+                      application: JSON.parse(sessionStorage.getItem('application') ||
+                        '{"kind":"appimage","installed":false,"app":"/tmp/VidGrab.AppImage","shortcut":null}'),
                       browser_connection: JSON.parse(sessionStorage.getItem('connection') ||
                         '{"enabled":true,"bridge_ready":true,"chrome":"registered","firefox":"registered"}')};
                     window.__connectionActions = 0;
                     window.__statusFailures = 1;
                     window.__statusCalls = 0;
+                    window.__installActions = 0;
+                    window.__removeActions = 0;
                     window.__TAURI_INTERNALS__ = {
                       invoke: async (command, arguments) => {
                         if (command === 'companion_status') {
@@ -61,6 +65,23 @@ def main():
                           sessionStorage.setItem('connection', JSON.stringify(registration));
                           return registration;
                         }
+                        if (command === 'install_appimage') {
+                          window.__installActions++;
+                          if (window.__installFailure) throw 'The Applications shortcut belongs to another installation';
+                          window.__fixture.application = {kind:'appimage', installed:true,
+                            app:'/tmp/data/vidgrab-p02/application/VidGrab.AppImage', shortcut:'/tmp/data/applications/com.vidgrab.P02.AppImage.desktop'};
+                          sessionStorage.setItem('application', JSON.stringify(window.__fixture.application));
+                          return structuredClone(window.__fixture.application);
+                        }
+                        if (command === 'remove_application') {
+                          window.__removeActions++;
+                          if (window.__fixture.jobs.some(job => !['complete','failed'].includes(job.status))) {
+                            throw 'Finish active downloads before removing VidGrab';
+                          }
+                          window.__fixture.application.installed = false;
+                          sessionStorage.setItem('application', JSON.stringify(window.__fixture.application));
+                          return structuredClone(window.__fixture.application);
+                        }
                         if (command === 'quit_companion') return;
                         throw 'Unexpected command';
                       }
@@ -73,6 +94,25 @@ def main():
                 expect(page.get_by_role('alert')).to_have_count(0)
                 expect(page.get_by_text('No test downloads yet')).to_be_visible()
                 expect(page.get_by_text('This desktop has no tray.', exact=False)).to_be_visible()
+                installation = page.locator('.application-setup')
+                installation.locator('summary').click(timeout=3000)
+                page.evaluate('window.__installFailure = true')
+                page.get_by_role('button', name='Install AppImage', exact=True).click()
+                expect(page.get_by_role('alert')).to_contain_text('another installation')
+                calls = page.evaluate('window.__statusCalls')
+                page.wait_for_function('window.__statusCalls > ' + str(calls))
+                assert page.evaluate('window.__installActions') == 1, 'Install actions must not retry automatically'
+                page.evaluate('window.__installFailure = false')
+                page.get_by_role('button', name='Install AppImage', exact=True).click()
+                expect(installation.get_by_text('Installed in Applications', exact=True)).to_be_visible()
+                page.get_by_role('button', name='Remove installed copy…', exact=True).click()
+                expect(page.get_by_role('dialog')).to_be_visible()
+                expect(page.get_by_role('button', name='Keep VidGrab', exact=True)).to_be_focused()
+                page.keyboard.press('Escape')
+                expect(page.get_by_role('dialog')).not_to_be_visible()
+                assert page.evaluate('window.__removeActions') == 0
+                page.screenshot(path=str(arguments.screenshots / f'{width}-installation.png'), full_page=True)
+                installation.locator('summary').click()
                 expect(page.get_by_role('heading', name='Browser connections')).to_be_visible()
                 expect(page.locator('.browser-connection-summary')).to_have_text('Registered for Chrome and Firefox')
                 page.get_by_role('button', name='Disconnect browsers', exact=True).click()
@@ -121,6 +161,22 @@ def main():
                 expect(page.get_by_role('alert')).to_have_count(0)
                 assert not page.evaluate('document.documentElement.scrollWidth > innerWidth'), f'Overflow at {width}px'
                 page.screenshot(path=str(arguments.screenshots / f'{width}-complete.png'), full_page=True)
+                installation.locator('summary').click()
+                page.evaluate("window.__fixture.jobs.push({id:'active',title:'Active fixture',status:'downloading',progress:25})")
+                expect(page.get_by_role('button', name='Remove installed copy…', exact=True)).to_be_disabled(timeout=5000)
+                expect(installation.get_by_text('Finish active downloads before removing VidGrab.', exact=True)).to_be_visible()
+                calls = page.evaluate("window.__fixture.jobs.pop(); window.__fixture.downloads_active = true; window.__statusCalls")
+                page.wait_for_function('window.__statusCalls > ' + str(calls + 1))
+                expect(page.get_by_role('button', name='Remove installed copy…', exact=True)).to_be_disabled(timeout=5000)
+                page.evaluate("window.__fixture.downloads_active = false")
+                expect(page.get_by_role('button', name='Remove installed copy…', exact=True)).to_be_enabled(timeout=5000)
+                page.get_by_role('button', name='Remove installed copy…', exact=True).click()
+                expect(page.get_by_role('dialog')).to_be_visible()
+                assert not page.evaluate('document.documentElement.scrollWidth > innerWidth')
+                page.screenshot(path=str(arguments.screenshots / f'{width}-remove-confirmation.png'), full_page=True)
+                page.get_by_role('button', name='Remove and quit', exact=True).click()
+                expect(page.get_by_role('button', name='Install AppImage', exact=True)).to_be_visible(timeout=5000)
+                assert page.evaluate('window.__removeActions') == 1
                 page.close()
                 print(f'{width}x{height}: browser controls, help, recovery, download completion and overflow passed')
         finally:

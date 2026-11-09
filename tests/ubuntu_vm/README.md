@@ -297,4 +297,32 @@ The current Ubuntu previews pass `tests/check_browser_connections.py` from the h
 
 `check_wayland_browsers.py` now unregisters the canonical host and removes only its verified copied diagnostic Chrome alias, refusing foreign/symlink destinations. Both native browser journeys pass again; removal preserves completed state/media hashes. Refresh the host's copied `inputs/source` snapshot after repository edits and compare guest hashes before checking it; the read-only share is not the working repository.
 
-Current accepted browser/control reports and selected logs are in `connection-controls-evidence/` under the control root. `connection-controls-final-audit-retry2.json` records ten media and twelve databases, no selected processes/mounts/registrations, removed Snap/Flatpak permissions, restored apt timers and preserved drop firewall/modes. The current shutdown is in `connection-controls-shutdown.json`; use its actual result and current `vm.json`, preserving older shutdown receipts and the original backing disk. Terminal-free release installation/removal and Windows remain open.
+The earlier accepted browser/control reports and selected logs are in `connection-controls-evidence/` under the control root. `connection-controls-final-audit-retry2.json` records ten media and twelve databases, no selected processes/mounts/registrations, removed Snap/Flatpak permissions, restored apt timers and preserved drop firewall/modes. That checkpoint shutdown is in `connection-controls-shutdown.json`. The later terminal-free release checkpoint below has the current audit/shutdown; always use current `vm.json`, preserving older receipts and the original backing disk. Windows remains deferred.
+
+
+## Terminal-free release installation/removal
+
+The release GUI driver is documented in [DEVELOPMENT.md](../../docs/DEVELOPMENT.md#packaged-application-installation-and-removal).
+Use only this disposable guest, a copied/hash-verified source snapshot, a selected
+fixture descriptor and fresh report/screenshots. Guest preparation additionally
+needs Files, App Center, `python3-pyatspi`, `tesseract-ocr-eng` and GdkPixbuf.
+Authentication uses a private test file in the VM controls; do not copy it into
+source or evidence exports. User-facing steps are in
+[LINUX_INSTALLATION.md](../../docs/LINUX_INSTALLATION.md).
+
+Keep App Center row loading separate from package absence. Filter for VidGrab and
+bind its uninstall button to the name in the same captured frame; scrolling an
+unfiltered list while it loads can select another package. The driver checks
+other installed package states after desktop/icon triggers finish. Finish with
+state/media/descriptor, process/mount/registration/permission, firewall, FUSE and
+apt-timer audits, then orderly guest poweroff and observed QEMU exit.
+
+The 2026-11-10 final `.deb` cycle 13 and AppImage cycle 6 pass; seven actual-image
+file cases also pass. `release-ux-final-audit.json` verifies 28 media/41 databases,
+1,041 unrelated OS package states and cleanup. `release-ux-shutdown.json` records
+orderly poweroff in 9.203 s with observed QEMU exit; current `vm.json` is stopped.
+`release-ux-evidence/manifest.json` indexes 135 selected files and 103 screenshots,
+including the labelled earlier partial journey and the five-package App Center
+incident/exact-version restoration. Do not copy the private authentication/key
+files. Keep Ubuntu's packaged accessibility environment defaults; removing a
+runtime override does not remove those `/etc/environment.d` defaults.

@@ -96,7 +96,12 @@ def create_engine_app(runtime: RuntimeConfig, *, token: str, port: int, componen
                 "ORDER BY created_at DESC, id DESC LIMIT 50"
             ) as cursor:
                 jobs = [dict(row) for row in await cursor.fetchall()]
-        return {"spike_version": 1, "jobs": jobs}
+            async with database.execute(
+                "SELECT EXISTS(SELECT 1 FROM downloads "
+                "WHERE status NOT IN ('complete', 'failed', 'cancelled'))"
+            ) as cursor:
+                downloads_active = bool((await cursor.fetchone())[0])
+        return {"spike_version": 1, "jobs": jobs, "downloads_active": downloads_active}
 
     @app.post("/spike/fixture")
     async def fixture(request: FixtureRequest):

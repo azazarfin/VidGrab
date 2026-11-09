@@ -263,6 +263,36 @@ The current `connection-controls-final-audit-retry2.json` and evidence-copy rece
 
 Terminal-free release installation/removal, other desktop/portal configurations, physical devices and deferred Windows keep P02/ADR-001 open. P03 has not started; real-user homes/runtime/legacy DB and dirty ZIPs/banner are preserved.
 
+## Terminal-free Ubuntu installation/removal checkpoint — 2026-11-10
+
+The final Ubuntu `.deb` and corrected FUSE AppImage now pass installation/removal through Files, Applications and the compiled desktop window. The guest is Ubuntu 24.04.5/kernel 6.8.0-147-generic/GNOME 46/Wayland at 1280×800, with virtual keyboard/pointer input and external traffic blocked. No host-user installation or public download is involved.
+
+| Final artifact | Bytes | SHA-256 | Shipped ELFs / maximum glibc |
+| --- | ---: | --- | --- |
+| `.deb` | 135,657,230 | `b3a70bb88b6696488c018c7d6246d75ec006779911c178dfddd6e68d6332e72f` | 50 / 2.39 |
+| Corrected AppImage | 202,910,200 | `0fb51fa9089fe661540a123318395b09601a59d3b88d3bac406d7706ae6ad224` | 235 / 2.39 |
+
+| Check | Actual result |
+| --- | --- |
+| Final `.deb` GUI cycle | `removal-deb-cycle-13.json` passes Applications launch/history, removal preparation, App Center uninstall/authentication, Files/App Center reinstall, second launch/history and Quit. Every other OS package retains its settled state after both mutations. |
+| Final AppImage GUI cycle | `removal-appimage-cycle-6.json` passes Applications discovery, confirmed removal, portable Files launch, managed install, second Applications launch and removal. State/media and browser disconnection remain unchanged. |
+| Executable permission | `removal-file-properties-1.json` passes the Files Properties Executable as Program control. |
+| Install while downloading | Completed stages in the earlier failed `removal-final-image-gui-2.json` prove portable launch/fixture, install without interrupting the session, disabled removal during active work, completion and Quit. Its later search failure remains explicitly partial evidence; the subsequent full Applications cycles pass. |
+| Actual-image file lifecycle | Seven cases pass in 11.621 s: read-only status, install/remove/reinstall preservation, changed image refusal, foreign shortcut/file preservation, symlink refusal and active-owner removal refusal. |
+| Guarded backend and native regressions | 62 default cases pass; 25 supervisor plus one native-host Rust cases pass in Ubuntu. The active-job regression fails before the fix and passes afterward: 50 newer completed rows cannot hide an older downloading job from removal. Eleven rebuilt native lifecycle cases pass in 33.485 s. |
+| Builds and renderer | Fresh Ubuntu engine freeze/self-check and native build pass; TypeScript/Vite and mocked rendering at 1280×900, 620×600 and 390×720 pass, including confirmation focus/Escape, active work and wrapped paths. |
+| Final package extraction/ABI | `.deb` headless check 2.785 s after 1.505 s extraction; AppImage check 4.860 s. AppStream/DEP-11 package mapping, immutable frozen tools, resource discovery and 50/235 shipped ELFs fit declared glibc 2.39. |
+
+Removal deletes only the managed AppImage/shortcut/icon/receipt or hands the `.deb` to the OS manager. State/media, selected descriptor and copied bridge remain. Both final cycles preserve database SHA-256 `5caac3f88d95ad492d27aa5e36980e33c8f5fcfa87278a9cd063fc9514997655`, MP3 SHA-256 `958bcfd31005dab8833844f7c058a3514e02baa209df62ab110228245a50f9a5` and `enabled: false`. Installed desktop/native binaries match the final `.deb` bytes.
+
+The harness required GNOME search/workspace observation fixes and App Center row/cache handling; no production shortcut change was needed. One failed unfiltered App Center test clicked Vim after rows shifted between captures and removed `vim`, `vim-common`, `vim-tiny`, `ubuntu-server` and `ubuntu-minimal` in the disposable guest. All five were restored offline to their exact versions (`2:9.1.0016-1ubuntu7.20` and `1.539.2`) from archives verified against guest apt metadata; `removal-vim-restore-result-3.json` records success. The corrected harness reopens App Center, waits for loaded rows, types a bounded VidGrab filter, verifies the sole result and reads the name/button from the same PNG with separate OCR crops. It waits for dpkg desktop/icon triggers and checks every other OS package after each mutation. Earlier failures remain preserved.
+
+`release-ux-final-audit.json` passes all **28 fixture MP3 and 41 database** inventories, including the previous ten/twelve hashes, and **1,041 unrelated OS package** states. No selected app/browser/driver process, image mount, native manifest, managed application file or Snap/Flatpak permission remains. Ten stale matching registrations in five older isolated test homes were ownership/hash-verified and removed without changing their descriptors/media/state. Apt timers are active; the saved/live drop firewall, root-owned FUSE helper 4755 and fstab 0644 remain correct. Runtime accessibility overrides were unset; Ubuntu's `/etc/environment.d` accessibility defaults and pre-existing toolkit-accessibility=true remain. Failed audit receipts retain the corrected package-name-format and default-environment observations.
+
+The guest completed orderly poweroff in **9.203 s**, with QEMU exit observed through its pidfd and no QMP fallback. `release-ux-shutdown.json` and current `vm.json` record stopped state. `release-ux-evidence/` under `/tmp/vidgrab-native-ubuntu24-0xyzhvdi` contains 135 selected reports, inputs, logs and screenshots, plus a checksummed manifest; 103 screenshots are included. The earlier partial journey and incident/restoration are labelled separately. Private authentication/key files are excluded. Packages/build receipts remain under `/tmp/vidgrab-ubuntu-p02-f7mg65zi/target-removal-final/` and `appimage-removal-final/`; all artifacts remain ephemeral.
+
+Next: final-package startup measurements and the Linux ADR-001 acceptance review. Other desktop/distribution configurations, physical devices, release updates/interrupted installation and deferred Windows remain separate gates. P02/ADR-001 stay open; P03 has not started. The legacy source DB, dirty browser ZIPs and promotional image are preserved.
+
 ## Deterministic coverage to extend through P05
 
 Use temporary runtime directories/databases and a local HTTP fixture server. External network access should fail the default suite; inject extractor, clock, randomness, process, and update boundaries where needed. Keep tests tied to observable behavior, not the internal refactoring shape.

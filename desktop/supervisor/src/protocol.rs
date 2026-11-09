@@ -24,7 +24,7 @@ impl Request {
         }
         match self.op.as_str() {
             "status" | "activate" if self.params.is_empty() => Ok(()),
-            "quit" if !browser && self.params.is_empty() => Ok(()),
+            "quit" | "quit_if_idle" if !browser && self.params.is_empty() => Ok(()),
             "fixture.download" => {
                 let url = self.params.get("url").and_then(Value::as_str).ok_or("BAD_REQUEST")?;
                 let local = url.strip_prefix("http://127.0.0.1:").ok_or("BAD_REQUEST")?;
@@ -35,7 +35,7 @@ impl Request {
                 }
                 Ok(())
             }
-            "status" | "activate" | "quit" => Err("BAD_REQUEST"),
+            "status" | "activate" | "quit" | "quit_if_idle" => Err("BAD_REQUEST"),
             _ => Err("UNSUPPORTED_OPERATION"),
         }
     }
@@ -78,6 +78,7 @@ pub fn failure(id: Option<&str>, code: &str) -> Value {
         "APP_MISSING" => "The installed companion could not be launched",
         "APP_UNAVAILABLE" => "The companion did not become ready before the deadline",
         "ENGINE_UNAVAILABLE" => "The engine is unavailable; reopen the app to try again",
+        "DOWNLOADS_ACTIVE" => "Finish active downloads before removing VidGrab",
         "BROWSER_DISCONNECTED" => "Browser access is disabled; use Connect browsers in VidGrab",
         "BROWSER_CONNECTION_UNAVAILABLE" => "The browser connection settings could not be read; open VidGrab to check them",
         "REQUEST_OUTCOME_UNKNOWN" => "The request may have been accepted; check the queue before trying again",
@@ -85,4 +86,22 @@ pub fn failure(id: Option<&str>, code: &str) -> Value {
         _ => "The companion request was rejected",
     };
     json!({"spike_version": 1, "id": id, "ok": false, "error": {"code": code, "message": message}})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn idle_removal_shutdown_is_available_only_to_the_local_desktop() {
+        let request = Request { spike_version: 1, id: "remove".into(), op: "quit_if_idle".into(), params: Default::default() };
+        assert_eq!(request.validate(false), Ok(()));
+        assert!(request.validate(true).is_err(), "Browser requests cannot shut down the app for removal");
+    }
+
+    #[test]
+    fn active_downloads_have_an_actionable_removal_error() {
+        assert_eq!(failure(Some("remove"), "DOWNLOADS_ACTIVE")["error"]["message"],
+            "Finish active downloads before removing VidGrab");
+    }
 }

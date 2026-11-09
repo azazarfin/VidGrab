@@ -1,6 +1,7 @@
 """The packaged entrypoint must not expose the legacy development API."""
 
 import importlib.util
+import sqlite3
 from pathlib import Path
 from unittest.mock import patch
 
@@ -72,6 +73,24 @@ else:
             self.assertEqual(result.status_code, 200)
             self.assertEqual(result.json()["jobs"], [])
             self.assertEqual(result.json()["spike_version"], 1)
+
+    def test_removal_detects_active_downloads_outside_recent_history(self):
+        app = self.engine()
+        with self.client(app) as client:
+            with sqlite3.connect(app.app.state.runtime.db_path) as database:
+                database.executemany(
+                    "INSERT INTO downloads (id, url, status, created_at) VALUES (?, ?, ?, ?)",
+                    [(str(index), "http://127.0.0.1:8080/fixture.wav",
+                      "downloading" if index == 0 else "complete", index) for index in range(51)],
+                )
+            snapshot = client.get("/spike/status").json()
+            self.assertEqual(len(snapshot["jobs"]), 50)
+            self.assertNotIn("0", [job["id"] for job in snapshot["jobs"]])
+            self.assertIs(snapshot.get("downloads_active"), True,
+                          "Removal must include active jobs outside the bounded history view")
+            with sqlite3.connect(app.app.state.runtime.db_path) as database:
+                database.execute("UPDATE downloads SET status = 'complete' WHERE id = '0'")
+            self.assertIs(client.get("/spike/status").json().get("downloads_active"), False)
 
     def test_legacy_endpoints_and_websockets_are_unavailable(self):
         with self.client(self.engine()) as client:
