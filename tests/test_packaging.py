@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import io
+import os
 from pathlib import Path
 import tarfile
 
@@ -31,7 +32,8 @@ class ComponentPackagingTests(OfflineTestCase):
         self.assertEqual((tauri / "resources" / "engine" / "_internal" / "tools" / "ffmpeg").read_bytes(), b"bundled-ffmpeg")
         native = tauri / "binaries" / "vidgrab-native-host-x86_64-unknown-linux-gnu"
         self.assertEqual(native.read_bytes(), b"native-host")
-        self.assertTrue(native.stat().st_mode & 0o111)
+        if os.name != "nt":
+            self.assertTrue(native.stat().st_mode & 0o111)
 
     def test_desktop_preparation_refuses_missing_inputs_before_writes(self):
         preparer = self.preparer()

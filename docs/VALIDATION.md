@@ -423,3 +423,13 @@ Maintain an opt-in live compatibility table containing date, platform, extractor
 Current commands are in [AGENTS.md](../AGENTS.md) and [DEVELOPMENT.md](DEVELOPMENT.md). P01 provides locked setup, deterministic backend checks and an opt-in mocked settings render. Later milestones add codegen, frontend and target-native packaging commands when the corresponding configuration exists. Do not document an invented `npm test` or Tauri build command as currently runnable.
 
 For each checkpoint record the command, platform, result, skipped checks, and remaining blocker in HANDOFF. Commit the state before exporting a bundle and verify a fresh clone matches its recorded HEAD.
+
+## P02 Windows build preparation — 2026-11-10
+
+The selected Windows 11 Pro x64 build 26200/QEMU-KVM guest has eight vCPUs/8 GiB RAM. The user explicitly accepts destruction and requests no backups/snapshots. The successful Linux sudo helper mounts D-backed ext4 and attaches a fresh 40 GiB SATA disk; verified RAW/nonboot disk 1 is now E: GPT/NTFS VidGrabBuild. Build work/caches are on E; no host mount persistence is installed.
+
+Verified tools are Git 2.56.0.windows.4, Node 22.22.2, uv 0.13.7, Rust/Cargo 1.99.1 Windows MSVC, managed Python 3.12.16 and VS 2022 C++/SDK 26100. Microsoft installer checksum/signature pass; install exit 0/no reboot. Real C/Rust smoke programs compile/link/run correctly. Locked uv sync with the packaging group and locked npm ci/TypeScript/Vite build pass against a hash-verified 154-file snapshot of dbdf027. E has 37,259,145,216 bytes free and C 11,599,241,216 bytes after checks.
+
+The first Windows suite exposed test portability failures: unavailable AF_UNIX, path spelling/JSON escaping, Unix execution modes and test-owned SQLite handles. A failing socket regression precedes the guard fix. Five corrected/new test files yield **63 guarded cases passing in 4.266 s on Windows** and **1.746 s on Linux**. External network/process guards remain; production backend code is unchanged. Compiler orchestration failures and their bounded .NET-process replacement are private harness evidence, not Windows app lifecycle proof.
+
+Original pinned SSH/key/host controls and receipts are under `/tmp/vidgrab-windows-p02-e_ektizc`; HANDOFF lists exact files and remount requirements. No native Rust Windows build, named-pipe/Job Object, WebView2 rendering/tray, browser registry handoff, frozen Windows tool bundle or standard-user installer gate has passed. P02/ADR-001 stay open and P03 unstarted. Ubuntu and protected user files remain preserved; no export/push was requested.

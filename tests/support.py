@@ -19,7 +19,7 @@ class OfflineTestCase(unittest.TestCase):
         self.original_popen_init = subprocess.Popen.__init__
 
         def deny_external_socket(sock, address):
-            if sock.family == socket.AF_UNIX:
+            if sock.family == getattr(socket, "AF_UNIX", None):
                 return original_connect(sock, address)
             if isinstance(address, tuple) and is_loopback(address[0]):
                 return original_connect(sock, address)

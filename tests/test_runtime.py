@@ -1,4 +1,5 @@
 import hashlib
+import json
 import shutil
 import sqlite3
 import textwrap
@@ -201,7 +202,7 @@ class SettingsTests(OfflineTestCase):
         with TestClient(self.app(runtime)):
             pass
         with closing(sqlite3.connect(runtime.db_path)) as db, db:
-            db.execute("UPDATE config SET value=? WHERE key='filename_template'", ('"' + str(runtime.db_path) + '"',))
+            db.execute("UPDATE config SET value=? WHERE key='filename_template'", (json.dumps(str(runtime.db_path)),))
         with self.assertRaises(ValueError):
             with TestClient(self.app(runtime)):
                 self.fail("Unsafe stored output settings must fail before the app is ready")
