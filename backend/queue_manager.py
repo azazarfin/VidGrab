@@ -4,7 +4,6 @@ import time
 import json
 import os
 import sys
-import glob
 import subprocess
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -18,6 +17,8 @@ from backend.runtime import OutputPathError, RuntimeConfig
 from backend.downloader import run_download
 from backend.cookie_manager import write_cookies_to_netscape_format
 from backend.sanitizer import sanitize_text
+from backend.engine.execution import ProcessDownloadExecutor, ThreadDownloadExecutor
+from backend.services.job_state import TERMINAL, accepts_progress
 
 logger = logging.getLogger("vidgrab.queue_manager")
 
@@ -89,11 +90,14 @@ class ConnectionManager:
 # Queue Manager State
 class QueueManager:
     def __init__(self, runtime: RuntimeConfig, settings: SettingsStore, connections: ConnectionManager,
-                 download_runner=run_download, clock=time.time, open_folder=None):
+                 download_runner=run_download, clock=time.time, open_folder=None, download_executor=None):
         self.runtime = runtime
         self.settings = settings
         self.connections = connections
         self.download_runner = download_runner
+        self.download_executor = download_executor or (
+            ProcessDownloadExecutor() if download_runner is run_download else ThreadDownloadExecutor(download_runner)
+        )
         self.clock = clock
         self.open_folder = open_folder
         self.active_tasks: Dict[str, asyncio.Task] = {}
@@ -104,14 +108,18 @@ class QueueManager:
         self.wakeup_event = asyncio.Event()
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.task_cookies: Dict[str, List[Dict[str, Any]]] = {}
+        self.cancel_locks: Dict[str, asyncio.Lock] = {}
+        self.stopping = False
 
     def start(self):
+        self.stopping = False
         self.loop = asyncio.get_running_loop()
         self.worker_task = asyncio.create_task(self._worker_loop())
         self.scheduler_task = asyncio.create_task(self._scheduler_loop())
         logger.info("Queue manager worker loop and scheduler loop started.")
 
     async def stop(self):
+        self.stopping = True
         if self.worker_task:
             self.worker_task.cancel()
             try:
@@ -124,10 +132,22 @@ class QueueManager:
                 await self.scheduler_task
             except asyncio.CancelledError:
                 pass
-        logger.info("Queue manager worker loop and scheduler loop stopped.")
+        active = dict(self.active_tasks)
+        for task_id, task in active.items():
+            if not task.done() and task_id not in self.cancelled_tasks:
+                task.cancel()
+        if active:
+            await asyncio.gather(*active.values(), return_exceptions=True)
+            # A coroutine cancelled before its first turn cannot run its finally block.
+            for task_id in active:
+                status = "cancelled" if task_id in self.cancelled_tasks else "queued"
+                await self._finish(task_id, status)
+        self.active_tasks.clear()
+        self.task_cookies.clear()
+        logger.info("Queue manager loops and active execution stopped.")
 
     def is_cancelled(self, task_id: str) -> bool:
-        return task_id in self.cancelled_tasks
+        return self.stopping or task_id in self.cancelled_tasks
 
     async def enqueue(
         self,
@@ -226,29 +246,53 @@ class QueueManager:
         return task_id
 
     async def cancel(self, task_id: str):
-        self.cancelled_tasks.add(task_id)
+        async with self.cancel_locks.setdefault(task_id, asyncio.Lock()):
+            async with aiosqlite.connect(self.runtime.db_path) as db:
+                async with db.execute("SELECT status FROM downloads WHERE id=?", (task_id,)) as cursor:
+                    row = await cursor.fetchone()
+                if row is None or row[0] in TERMINAL:
+                    return
+                await db.execute(
+                    "UPDATE downloads SET status='cancelling' WHERE id=? AND status NOT IN ('complete', 'failed', 'cancelled')",
+                    (task_id,),
+                )
+                await db.commit()
+            self.cancelled_tasks.add(task_id)
+            if task_id in self.in_memory_progress:
+                self.in_memory_progress[task_id]["status"] = "cancelling"
+            task = self.active_tasks.get(task_id)
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    if not task.done():
+                        raise
+            await self._finish(task_id, "cancelled")
+            self.task_cookies.pop(task_id, None)
+            self.cancelled_tasks.discard(task_id)
 
-        # If running, cancel the asyncio task
-        if task_id in self.active_tasks:
-            self.active_tasks[task_id].cancel()
-
+    async def _finish(self, task_id, status, **fields):
+        fields.update(status=status, speed=0.0, eta=None)
+        if status in TERMINAL:
+            fields["completed_at"] = datetime.fromtimestamp(self.clock(), timezone.utc).isoformat()
+        else:
+            fields["completed_at"] = None
+        assignments = ", ".join(f"{key}=?" for key in fields)
         async with aiosqlite.connect(self.runtime.db_path) as db:
-            await db.execute(
-                "UPDATE downloads SET status = ?, completed_at = ? WHERE id = ?",
-                ("cancelled", datetime.fromtimestamp(self.clock(), timezone.utc).isoformat(), task_id)
+            cursor = await db.execute(
+                f"UPDATE downloads SET {assignments} WHERE id=? AND status NOT IN ('complete', 'failed', 'cancelled')",
+                (*fields.values(), task_id),
             )
+            changed = cursor.rowcount
             await db.commit()
-
-        if task_id in self.in_memory_progress:
-            self.in_memory_progress[task_id]["status"] = "cancelled"
-            await self.connections.broadcast({
-                "event": "task_cancelled",
-                "data": self.in_memory_progress[task_id]
-            })
+        if changed and task_id in self.in_memory_progress:
+            self.in_memory_progress[task_id].update(fields)
+            await self.connections.broadcast({"event": f"task_{status}", "data": self.in_memory_progress[task_id]})
 
     def handle_progress(self, task_id: str, payload: Dict[str, Any]):
         """Callback from downloader. Updates in-memory state and broadcasts."""
-        if task_id not in self.in_memory_progress:
+        if task_id not in self.in_memory_progress or self.stopping or not accepts_progress(self.in_memory_progress[task_id]["status"]):
             return
 
         self.in_memory_progress[task_id].update(payload)
@@ -313,8 +357,12 @@ class QueueManager:
         # Reset any stuck tasks from previous crash
         async with aiosqlite.connect(self.runtime.db_path) as db:
             await db.execute(
-                "UPDATE downloads SET status = ? WHERE status IN (?, ?)",
-                ("queued", "downloading", "probing")
+                "UPDATE downloads SET status = ? WHERE status IN (?, ?, ?)",
+                ("queued", "downloading", "probing", "postprocessing")
+            )
+            await db.execute(
+                "UPDATE downloads SET status='cancelled', completed_at=? WHERE status='cancelling'",
+                (datetime.fromtimestamp(self.clock(), timezone.utc).isoformat(),),
             )
             await db.commit()
 
@@ -392,197 +440,78 @@ class QueueManager:
     async def _run_task(self, task_id: str, url: str, format_id: str, config: Dict[str, Any], options: Dict[str, Any], retry_count: int = 0):
         download_dir = options.get("download_dir") or config.get("download_dir")
         filename_template = options.get("output_template") or config.get("filename_template")
-        speed_limit = config.get("speed_limit", 0)
-
-        # Extract SponsorBlock and post-processing options from config
-        sponsorblock_enabled = config.get("sponsorblock_enabled", False)
-        sponsorblock_categories = config.get("sponsorblock_categories", [])
-        sponsorblock_mode = config.get("sponsorblock_mode", "remove")
-        postprocess_codec = config.get("postprocess_codec", "none")
-        postprocess_normalize_audio = config.get("postprocess_normalize_audio", False)
-        custom_ytdlp_args = config.get("custom_ytdlp_args", "")
-        download_threads = config.get("download_threads", 4)
-        gpu_accelerated_conversion = config.get("gpu_accelerated_conversion", False)
-        user_agent = options.get("user_agent")
-
-        # Retrieve and write cookies if present
-        cookies = self.task_cookies.pop(task_id, None)
         cookies_file_path = None
-        if cookies:
-            try:
-                cookies_file_path = write_cookies_to_netscape_format(cookies, self.runtime.temp_dir)
-            except Exception as e:
-                logger.warning(f"Failed to generate Netscape cookies for task {task_id}: {e}")
-
-        paths_validated = False
+        fields = {}
+        status = "failed"
         try:
             directory, _ = self.runtime.validate_output(download_dir, filename_template)
             download_dir = str(directory)
-            paths_validated = True
-            # Run the blocking download in a separate thread
-            # Pass a lambda that checks if the task is cancelled
-            result = await asyncio.to_thread(
-                self.download_runner,
-                runtime=self.runtime,
-                task_id=task_id,
-                url=url,
-                format_id=format_id,
-                download_dir=download_dir,
-                filename_template=filename_template,
+            cookies = self.task_cookies.pop(task_id, None)
+            if cookies:
+                cookies_file_path = write_cookies_to_netscape_format(cookies, self.runtime.temp_dir)
+            result = await self.download_executor.run(
+                runtime=self.runtime, task_id=task_id, url=url, format_id=format_id,
+                download_dir=download_dir, filename_template=filename_template,
                 progress_callback=self.handle_progress,
-                speed_limit=speed_limit,
-                cookies_file_path=cookies_file_path,
+                speed_limit=config.get("speed_limit", 0), cookies_file_path=cookies_file_path,
                 is_cancelled_cb=lambda: self.is_cancelled(task_id),
-                audio_only=options.get("audio_only", False),
-                audio_format=options.get("audio_format", "mp3"),
-                download_subtitles=options.get("download_subtitles", False),
-                subtitle_langs=options.get("subtitle_langs"),
-                subtitle_format=options.get("subtitle_format", "srt"),
-                embed_subtitles=options.get("embed_subtitles", False),
-                embed_thumbnail=options.get("embed_thumbnail", False),
-                playlist_items=options.get("playlist_items"),
-                is_playlist=options.get("is_playlist", False),
-                sponsorblock_enabled=sponsorblock_enabled,
-                sponsorblock_categories=sponsorblock_categories,
-                sponsorblock_mode=sponsorblock_mode,
-                postprocess_codec=postprocess_codec,
-                postprocess_normalize_audio=postprocess_normalize_audio,
-                custom_args_str=custom_ytdlp_args,
-                download_threads=download_threads,
-                gpu_accelerated_conversion=gpu_accelerated_conversion,
-                extra_args=options.get("extra_args"),
-                user_agent=user_agent
+                audio_only=options.get("audio_only", False), audio_format=options.get("audio_format", "mp3"),
+                download_subtitles=options.get("download_subtitles", False), subtitle_langs=options.get("subtitle_langs"),
+                subtitle_format=options.get("subtitle_format", "srt"), embed_subtitles=options.get("embed_subtitles", False),
+                embed_thumbnail=options.get("embed_thumbnail", False), playlist_items=options.get("playlist_items"),
+                is_playlist=options.get("is_playlist", False), sponsorblock_enabled=config.get("sponsorblock_enabled", False),
+                sponsorblock_categories=config.get("sponsorblock_categories", []), sponsorblock_mode=config.get("sponsorblock_mode", "remove"),
+                postprocess_codec=config.get("postprocess_codec", "none"), postprocess_normalize_audio=config.get("postprocess_normalize_audio", False),
+                custom_args_str=config.get("custom_ytdlp_args", ""), download_threads=config.get("download_threads", 4),
+                gpu_accelerated_conversion=config.get("gpu_accelerated_conversion", False), extra_args=options.get("extra_args"),
+                user_agent=options.get("user_agent"),
             )
-
-            filepath = result.get("filepath")
-            extracted_title = sanitize_text(result.get("title"))
-            extracted_thumbnail = result.get("thumbnail_url")
-
             if self.is_cancelled(task_id):
-                raise Exception("Download cancelled by user")
-
-            if not filepath or not os.path.exists(filepath):
-                # yt-dlp might have changed the extension during postprocessing
-                if filepath:
-                    base, ext = os.path.splitext(filepath)
-                    found = False
-                    for possible_ext in ['.mp4', '.mkv', '.webm', '.m4a', '.mp3']:
-                        if os.path.exists(base + possible_ext):
-                            filepath = base + possible_ext
-                            found = True
-                            break
-                    if not found:
-                        raise Exception(f"Final file was not created. Download failed or was aborted by yt-dlp.")
-                else:
-                    raise Exception(f"Final file was not created. Download failed or was aborted by yt-dlp.")
-
-            # Download completed successfully
-            completed_at = datetime.fromtimestamp(self.clock(), timezone.utc).isoformat()
-            async with aiosqlite.connect(self.runtime.db_path) as db:
-                await db.execute(
-                    "UPDATE downloads SET status = ?, file_path = ?, completed_at = ?, progress = 100.0, title = COALESCE(title, ?), thumbnail_url = COALESCE(thumbnail_url, ?) WHERE id = ?",
-                    ("complete", filepath, completed_at, extracted_title, extracted_thumbnail, task_id)
-                )
-                await db.commit()
-
-            if task_id in self.in_memory_progress:
-                self.in_memory_progress[task_id].update({
-                    "status": "complete",
-                    "progress": 100.0,
-                    "file_path": filepath,
-                    "completed_at": completed_at
-                })
-                # Apply extracted title if missing
-                if not self.in_memory_progress[task_id].get("title") and extracted_title:
-                    self.in_memory_progress[task_id]["title"] = extracted_title
-                if not self.in_memory_progress[task_id].get("thumbnail_url") and extracted_thumbnail:
-                    self.in_memory_progress[task_id]["thumbnail_url"] = extracted_thumbnail
-
-                await self.connections.broadcast({
-                    "event": "task_complete",
-                    "data": self.in_memory_progress[task_id]
-                })
-
-        except Exception as e:
-            # Handle failure or cancellation
-            is_cancelled = self.is_cancelled(task_id)
-            error_msg = sanitize_text(str(e))
-            completed_at = datetime.fromtimestamp(self.clock(), timezone.utc).isoformat()
-
-            max_retries = config.get("max_retries", 3)
-
-            if is_cancelled:
+                raise asyncio.CancelledError
+            filepath = result.get("filepath")
+            # Preserve the legacy fallback until P03's authoritative artifact records replace it.
+            if filepath and not os.path.exists(filepath):
+                base, _ = os.path.splitext(filepath)
+                filepath = next((base + ext for ext in ('.mp4', '.mkv', '.webm', '.m4a', '.mp3') if os.path.exists(base + ext)), None)
+            if not filepath or not os.path.isfile(filepath):
+                raise RuntimeError("Final file was not created. Download failed or was aborted by yt-dlp.")
+            status = "complete"
+            fields = {"file_path": filepath, "progress": 100.0, "error_message": None}
+            current = self.in_memory_progress.get(task_id, {})
+            if not current.get("title") and result.get("title"):
+                fields["title"] = sanitize_text(result["title"])
+            if not current.get("thumbnail_url") and result.get("thumbnail_url"):
+                fields["thumbnail_url"] = result["thumbnail_url"]
+        except asyncio.CancelledError:
+            status = "cancelled" if task_id in self.cancelled_tasks else "queued"
+            fields = {"error_message": None}
+        except Exception as error:
+            error_message = sanitize_text(str(error))
+            if task_id in self.cancelled_tasks:
                 status = "cancelled"
-                logger.error(f"Task {task_id} ended with status {status}: {error_msg}")
-            elif isinstance(e, OutputPathError):
+            elif self.stopping:
+                status = "queued"
+            elif isinstance(error, OutputPathError) or retry_count >= config.get("max_retries", 3):
                 status = "failed"
-                logger.error(f"Task {task_id} has an unsafe output path: {error_msg}")
-            elif retry_count < max_retries:
+                logger.error("Task %s failed: %s", task_id, error_message)
+            else:
                 status = "queued"
                 retry_count += 1
-                logger.warning(f"Task {task_id} failed, retrying ({retry_count}/{max_retries}). Error: {error_msg}")
-            else:
-                status = "failed"
-                logger.error(f"Task {task_id} ended with status {status}: {error_msg}")
-
-            async with aiosqlite.connect(self.runtime.db_path) as db:
-                if status == "queued":
-                    await db.execute(
-                        "UPDATE downloads SET status = ?, error_message = ?, retry_count = ? WHERE id = ?",
-                        (status, error_msg, retry_count, task_id)
-                    )
-                else:
-                    await db.execute(
-                        "UPDATE downloads SET status = ?, error_message = ?, completed_at = ? WHERE id = ?",
-                        (status, error_msg, completed_at, task_id)
-                    )
-                await db.commit()
-
-            if task_id in self.in_memory_progress:
-                self.in_memory_progress[task_id].update({
-                    "status": status,
-                    "error_message": error_msg,
-                })
-                if status != "queued":
-                    self.in_memory_progress[task_id]["completed_at"] = completed_at
-
-                await self.connections.broadcast({
-                    "event": f"task_{status}",
-                    "data": self.in_memory_progress[task_id]
-                })
-
-            # If we queued it for retry, wake up the worker
-            if status == "queued":
-                self.wakeup_event.set()
-
-            # Clean up orphaned .part files if the task has permanently failed or was cancelled
-            if status in ("failed", "cancelled") and download_dir and paths_validated:
-                try:
-                    title = self.in_memory_progress.get(task_id, {}).get("title")
-                    if title:
-                        safe_title = title.replace("/", "_").replace("\\", "_")
-                        search_pattern = os.path.join(download_dir, f"{safe_title}*")
-                        for f in glob.glob(search_pattern):
-                            if ".part" in f or ".ytdl" in f:
-                                try:
-                                    os.remove(f)
-                                except OSError:
-                                    pass
-                except Exception as clean_e:
-                    logger.warning(f"Failed to cleanup temp files for task {task_id}: {clean_e}")
-
-
+                logger.warning("Task %s failed, retrying (%s/%s): %s", task_id, retry_count, config.get("max_retries", 3), error_message)
+            fields = {"error_message": error_message, "retry_count": retry_count}
         finally:
-            # Clean up tracking sets
-            self.cancelled_tasks.discard(task_id)
-
-            # Delete temporary cookie file
-            if cookies_file_path and os.path.exists(cookies_file_path):
+            # The executor has joined the worker tree before returning or raising cancellation.
+            if cookies_file_path:
                 try:
                     os.unlink(cookies_file_path)
-                    logger.info(f"Deleted temporary cookie file: {cookies_file_path}")
-                except Exception as ce:
-                    logger.warning(f"Failed to delete temporary cookie file {cookies_file_path}: {ce}")
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    logger.exception("Failed to remove the owned cookie file for task %s", task_id)
+        await self._finish(task_id, status, **fields)
+        if status == "queued" and not self.stopping:
+            self.wakeup_event.set()
+
 
 def open_folder(parent_dir: str):
     """Platform process boundary; desktop integration can replace this adapter."""

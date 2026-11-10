@@ -1,4 +1,3 @@
-import functools
 import re
 import secrets
 from urllib.parse import urlsplit
@@ -8,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.responses import JSONResponse
 
 from backend.app import create_app
-from backend.downloader import run_download
+from backend.engine.execution import ProcessDownloadExecutor
 from backend.runtime import RuntimeConfig
 
 
@@ -84,8 +83,8 @@ def create_engine_app(runtime: RuntimeConfig, *, token: str, port: int, componen
     """
     if not re.fullmatch(r"[0-9a-f]{64}", token) or not 1 <= port <= 65535:
         raise ValueError("An app-generated credential and bound port are required")
-    runner = functools.partial(run_download, components=dict(components))
-    app = create_app(runtime, start_queue=start_queue, download_runner=runner)
+    executor = ProcessDownloadExecutor(components=dict(components), fixture_only=True)
+    app = create_app(runtime, start_queue=start_queue, download_executor=executor)
 
     @app.get("/spike/status")
     async def status():

@@ -2,7 +2,6 @@
 
 import argparse
 import asyncio
-import ipaddress
 import json
 import logging
 import os
@@ -14,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 import uvicorn
 
 from backend.engine import create_engine_app
+from backend.engine.network_guard import fixture_network_guard
 from backend.engine.resources import check_components
 from backend.runtime import RuntimeConfig
 
@@ -25,23 +25,6 @@ class Bootstrap(BaseModel):
     download_dir: str = Field(min_length=1)
 
 
-def fixture_network_guard(event, arguments):
-    """The P02 process may contact the controlled fixture and local IPC only."""
-    if event == "socket.getaddrinfo":
-        host = arguments[0]
-    elif event == "socket.connect":
-        connection, address = arguments[:2]
-        if connection.family == getattr(socket, "AF_UNIX", None):
-            return
-        host = address[0]
-    else:
-        return
-    try:
-        allowed = ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        allowed = False
-    if not allowed:
-        raise PermissionError("External networking is disabled in the P02 fixture spike")
 
 
 class ReadyServer(uvicorn.Server):

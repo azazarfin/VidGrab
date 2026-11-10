@@ -1,6 +1,6 @@
 # VidGrab desktop-companion plan
 
-Status: P01 and P02 are complete for the selected Ubuntu 24.04/GNOME x86_64 and Windows 11 x64 preview baselines. Both platform reviews, packaged lifecycle/browser gates and measured size/startup results pass on 2026-11-10. Windows missing-WebView2 behavior uses reversible SDK discovery unavailability and an actual offline per-user install/render journey; physical runtime absence is not claimed. ADR-001 is accepted for this feasibility scope. P03 has not started.
+Status: P01 and P02 are complete for the selected Ubuntu 24.04/GNOME x86_64 and Windows 11 x64 preview baselines. Both platform reviews, packaged lifecycle/browser gates and measured size/startup results pass on 2026-11-10. Windows missing-WebView2 behavior uses reversible SDK discovery unavailability and an actual offline per-user install/render journey; physical runtime absence is not claimed. ADR-001 is accepted for this feasibility scope. P03 worker-boundary work started on 2026-11-11 and remains WIP; no P03 acceptance criterion is complete.
 
 ## Approach
 
@@ -65,6 +65,8 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 - Suggested commit: `feat(desktop): prove bundled engine and browser bridge lifecycle`.
 
 ### [ ] P03 — Make downloads durable and cancellation enforceable
+
+Current checkpoint: source worker ownership/queue cancellation changes and synthetic Linux checks exist, but shutdown emits an unhandled-thread-exception warning. Resolve cancellation/transition races, then validate actual/frozen Linux and Windows workers. See HANDOFF’s 2026-11-11 WIP section. No P03 item is marked complete.
 
 - Extract queue/state-machine and retry policy from `backend/queue_manager.py`. Run each active extraction/download in an owned worker process; isolate FFmpeg descendants and stop them before terminal state or cleanup.
 - Add resumable artifacts, per-item playlist jobs, idempotent enqueue, persisted retry deadlines, and crash recovery. Track final output paths from completed post-processing rather than guessed extensions.

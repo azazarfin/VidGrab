@@ -23,12 +23,13 @@ logger = logging.getLogger("vidgrab.app")
 def create_app(
     runtime: RuntimeConfig | None = None, *, start_queue: bool = True,
     probe_runner=None, download_runner=run_download, clock=time.time, open_folder=open_folder,
+    download_executor=None,
 ) -> FastAPI:
     runtime = RuntimeConfig.from_env() if runtime is None else runtime
     runtime.validate()
     settings = SettingsStore(runtime)
     connections = ConnectionManager()
-    queue = QueueManager(runtime, settings, connections, download_runner, clock, open_folder)
+    queue = QueueManager(runtime, settings, connections, download_runner, clock, open_folder, download_executor)
     probes = ProbeService(runtime, runner=probe_runner, clock=clock)
 
     @asynccontextmanager
