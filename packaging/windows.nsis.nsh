@@ -1,23 +1,29 @@
-!macro VIDGRAB_PREPARE_FILES
-  !define VidGrabPrepareId ${__LINE__}
-  IfFileExists "$INSTDIR\${MAINBINARYNAME}.exe" 0 vidgrab_prepare_done_${VidGrabPrepareId}
-  nsExec::ExecToStack /TIMEOUT=30000 '"$INSTDIR\${MAINBINARYNAME}.exe" --prepare-uninstall'
+; The checker is compiled beside the desktop, then embedded in setup and its
+; uninstaller. Destination executables never provide their own trust decision.
+!macro VIDGRAB_CHECK Operation Directory
+  InitPluginsDir
+  !searchreplace VidGrabChecker "${MAINBINARYSRCPATH}" "${MAINBINARYNAME}.exe" "vidgrab-supervisor.exe"
+  File "/oname=$PLUGINSDIR\vidgrab-installer-check.exe" "${VidGrabChecker}"
+  !undef VidGrabChecker
+  nsExec::ExecToStack /TIMEOUT=60000 '"$PLUGINSDIR\vidgrab-installer-check.exe" ${Operation} "${Directory}"'
   Pop $0
   Pop $1
   ${If} $0 != 0
     IfSilent +2 0
-    MessageBox MB_OK|MB_ICONEXCLAMATION "Finish active downloads and quit VidGrab before changing its installed files.$\r$\n$1"
+    MessageBox MB_OK|MB_ICONEXCLAMATION "VidGrab cannot change these installed files.$\r$\nFinish active downloads, or restore changed files before continuing.$\r$\n$1"
     SetErrorLevel 2
     Abort
   ${EndIf}
-  vidgrab_prepare_done_${VidGrabPrepareId}:
-  !undef VidGrabPrepareId
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL
-  !insertmacro VIDGRAB_PREPARE_FILES
+  !insertmacro VIDGRAB_CHECK --installer-prepare-install "$INSTDIR"
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
-  !insertmacro VIDGRAB_PREPARE_FILES
+  !insertmacro VIDGRAB_CHECK --installer-prepare-uninstall "$INSTDIR"
+!macroend
+
+!macro NSIS_HOOK_POSTINSTALL
+  !insertmacro VIDGRAB_CHECK --installer-record "$INSTDIR"
 !macroend

@@ -494,3 +494,11 @@ unproven. In particular, the current preinstall hook invokes an existing
 destination executable before independent ownership validation. Arbitrary
 nested/restricted Job Object configurations are not certified. Windows
 acceptance is incomplete and P03 has not started.
+
+## Windows Firefox and trusted installer files — 2026-11-10
+
+Firefox 158.0.1/Gecko 0.37.1 passes actual standard-user native activation, a gated download after all observed browser PIDs exit, MP3 completion and six restored history rows. The extension process has a restricted token, integrity RID 0 and no elevation. Firefox's normal `eAttemptQuit` path is required with connect-existing; WebDriver session deletion/window closure does not stop that controlled browser. Earlier failures remain preserved. The 1.613 s activation sample is separate from final startup measurement. MP3 SHA-256 is `00d7df3ea029c529bfafb37642b87ced2f9d10a4a9338a58b97c2658376a0683`.
+
+The new NSIS embeds a compiled supervisor checker in setup/uninstall, validates complete installation receipts before maintenance, rejects reparse paths and foreign/changed/missing/added files, and invokes only a receipt-verified fixed previous-uninstaller path. It validates the destination before WebView2 or SetOutPath and records only a complete payload. Eight real standard-user refusal cases exit 2 with unchanged fixture/receipt/target bytes, no canary executable run and no connection directory created. 26 Windows Rust entries, five frozen lifecycle cases (9.814 s), 26 Linux Rust entries and TypeScript/Vite/Tauri/NSIS pass. Backend/frontend behavior is unchanged; previous guarded Python/renderer evidence is reused.
+
+Exact setup: 316,488,624 bytes, SHA-256 `ae56463515f3943e1338a31eb6d69370e832aa1adb51a663ec46d5ab87753c83`; build 220.341 s. Extracted desktop SHA-256 `b639352985cdde1b7996a085e311a56432219fd1a4ead139d8604518762f00b3` and embedded checker SHA-256 `598189a99cef67d3a0445e967ff4b5eb213d7885dc24fac174ec08b37cd25dff` are audited. HANDOFF identifies the ignored artifact/receipts and preserved failures. Fresh graphical install/remove/reinstall, final exact-package active refusal, Unicode/no-tray and absent/present WebView2/startup remain open. Release updates/interrupted installation and arbitrary nested/restricted browser jobs are not certified. P02/ADR-001 remain open; P03 is unstarted.

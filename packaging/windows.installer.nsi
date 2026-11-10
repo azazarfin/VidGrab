@@ -363,6 +363,13 @@ Function PageLeaveReinstall
   ${EndIf}
 
   reinst_uninstall:
+    ; The P02 preview does not migrate an arbitrary legacy WiX package.
+    ${If} $WixMode = 1
+      MessageBox MB_ICONEXCLAMATION "Remove the previous legacy package through Windows Settings before installing this preview."
+      Abort
+    ${EndIf}
+    ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
+    !insertmacro VIDGRAB_CHECK --installer-verify "$4"
     HideWindow
     ClearErrors
 
@@ -371,7 +378,8 @@ Function PageLeaveReinstall
       ExecWait '$R1' $0
     ${Else}
       ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
-      ReadRegStr $R1 SHCTX "${UNINSTKEY}" "UninstallString"
+      ; Use the receipt-verified executable, never a registry command string.
+      StrCpy $R1 '$"$4\uninstall.exe$"'
       ${IfThen} $UpdateMode = 1 ${|} StrCpy $R1 "$R1 /UPDATE" ${|} ; append /UPDATE
       ${IfThen} $PassiveMode = 1 ${|} StrCpy $R1 "$R1 /P" ${|} ; append /P
       StrCpy $R1 "$R1 _?=$4" ; append uninstall directory
@@ -589,6 +597,11 @@ Function .onInit
   !endif
 FunctionEnd
 
+Section VidGrabDestination
+  ; Refuse an unsafe destination before WebView2 or SetOutPath can write.
+  !insertmacro VIDGRAB_CHECK --installer-check-destination "$INSTDIR"
+SectionEnd
+
 Section WebView2
   ; Check if Webview2 is already installed and skip this section
   ${If} ${RunningX64}
@@ -682,11 +695,12 @@ Section WebView2
 SectionEnd
 
 Section Install
-  SetOutPath $INSTDIR
-
   !ifmacrodef NSIS_HOOK_PREINSTALL
     !insertmacro NSIS_HOOK_PREINSTALL
   !endif
+
+  ClearErrors
+  SetOutPath $INSTDIR
 
   ; VidGrab preinstall/preuninstall hooks perform idle-only orderly shutdown.
   ; Never force-close an active download through Restart Manager.
@@ -707,6 +721,11 @@ Section Install
     File /a "/oname={{this}}" "{{no-escape @key}}"
   {{/each}}
 
+  ${If} ${Errors}
+    SetErrorLevel 2
+    Abort "The complete VidGrab package could not be written."
+  ${EndIf}
+
   ; Create file associations
   {{#each file_associations as |association| ~}}
     {{#each association.ext as |ext| ~}}
@@ -724,6 +743,14 @@ Section Install
 
   ; Create uninstaller
   WriteUninstaller "$INSTDIR\uninstall.exe"
+  ${If} ${Errors}
+    SetErrorLevel 2
+    Abort "The VidGrab uninstaller could not be written."
+  ${EndIf}
+
+  !ifmacrodef NSIS_HOOK_POSTINSTALL
+    !insertmacro NSIS_HOOK_POSTINSTALL
+  !endif
 
   ; Save $INSTDIR in registry for future installations
   WriteRegStr SHCTX "${MANUPRODUCTKEY}" "" $INSTDIR
@@ -733,13 +760,6 @@ Section Install
     ; or when uninstalling
     WriteRegStr SHCTX "${UNINSTKEY}" $MultiUser.InstallMode 1
   !endif
-
-  ; Remove old main binary if it doesn't match new main binary name
-  ReadRegStr $OldMainBinaryName SHCTX "${UNINSTKEY}" "MainBinaryName"
-  ${If} $OldMainBinaryName != ""
-  ${AndIf} $OldMainBinaryName != "${MAINBINARYNAME}.exe"
-    Delete "$INSTDIR\$OldMainBinaryName"
-  ${EndIf}
 
   ; Save current MAINBINARYNAME for future updates
   WriteRegStr SHCTX "${UNINSTKEY}" "MainBinaryName" "${MAINBINARYNAME}.exe"
@@ -776,10 +796,6 @@ Section Install
   ${OrIf} ${Silent}
     Call CreateOrUpdateDesktopShortcut
   ${EndIf}
-
-  !ifmacrodef NSIS_HOOK_POSTINSTALL
-    !insertmacro NSIS_HOOK_POSTINSTALL
-  !endif
 
   ; Auto close this page for passive mode
   ${If} $PassiveMode = 1
