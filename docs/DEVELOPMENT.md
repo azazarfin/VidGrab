@@ -332,3 +332,13 @@ Run guarded backend checks from the source root and locked native checks with ca
 ```
 
 The diagnostic owner accepts --config FILE --request status (also activate, quit and quit_if_idle); it never starts a second owner for a request. Native framing reads are bounded on Windows; activation must keep its explicit handle whitelist. The old bridge in bundle-win-1 remains an opt-in negative fixture via --native-host and --test test_activation_leaves_no_native_stdio_handle_in_the_running_app. Do not use it as a working bundle. Current checks run elevated Azaz; actual desktop/browser/standard-user installer gates remain open.
+
+## Windows Tauri/NSIS preview build
+
+On the selected Windows MSVC build guest, prepare_desktop.py --bundle SELECTED --target x86_64-pc-windows-msvc prepares the complete frozen engine/sidecar. Run the locked frontend/Tauri command from the source root:
+
+```powershell
+npm --prefix desktop run tauri -- build --config E:\VidGrabWork\Source\vidgrab\packaging\windows.bundle.json --bundles nsis --ci
+```
+
+The override uses currentUser NSIS, an offline WebView2 payload, the existing PNG-derived ICO and a pinned template with Programs/VidGrab-P02 as the default per-user install directory. Preinstall/preuninstall call --prepare-uninstall before file changes and do not force-close an active owner. This diagnostic sends local quit_if_idle once, waits for shutdown and disconnects without starting another owner. Ordinary Windows launches use USERPROFILE/LOCALAPPDATA, not HOME/XDG. The Windows renderer helper is tests/check_windows_desktop_ui.py; use the same local built frontend server as the Linux mocked check. Actual GUI probes currently remain private, ephemeral and scoped to the fresh standard test account; their receipt/connection locations are in HANDOFF. Complete browser/installer/tray acceptance is still pending.

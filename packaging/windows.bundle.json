@@ -1,0 +1,17 @@
+{
+  "bundle": {
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "windows": {
+      "webviewInstallMode": {"type": "offlineInstaller", "silent": true},
+      "nsis": {
+        "installMode": "currentUser",
+        "template": "../../packaging/windows.installer.nsi",
+        "installerHooks": "../../packaging/windows.nsis.nsh",
+        "displayLanguageSelector": false,
+        "languages": ["English"],
+        "compression": "lzma"
+      }
+    }
+  }
+}

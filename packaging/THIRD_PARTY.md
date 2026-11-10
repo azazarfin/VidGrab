@@ -13,3 +13,7 @@ This file is build provenance, not completed release licensing. Project ownershi
 ## Windows component pin
 
 packaging/windows.components.lock.json selects Gyan FFmpeg 7.0.2 essentials (FFmpeg/ffprobe) and Deno 2.9.8 Windows x64 alongside the existing EJS 0.8.0 pin. Gyan archive SHA-256 is d5308d30872b2739cf53169df61faba8639d39a19b20b91e611c177ef676f64c: the GitHub release API publishes no checksum, so provenance is an HTTPS download followed by exact-byte SHA pinning. Deno archive SHA-256 cba84b26e0df5ae7f74fc66b86a95b866872a86292ebd84fa1e959927edd93bf matches its upstream-published digest. Extraction checks the selected ZIP members; the staged integrity manifest verifies every selected runtime/tool file. License/source redistribution obligations still require the P07 review.
+
+## Windows installer template and WebView2
+
+windows.installer.nsi derives from Tauri upstream commit 52081e0 under its MIT/Apache-2.0 license. Original template SHA-256 is d00089d3b1a2c4a30d7b6e098079100cb8f25e980f84d4515aca4597b95e967d. Preview changes select the per-user Programs/VidGrab-P02 directory and replace forceful Restart Manager closure with VidGrab idle-only hooks. The Windows bundle embeds the Microsoft WebView2 offline installer via Tauri; exact payload/version/signature inventory and redistribution review remain required before release. The first actual preview uses an existing system WebView2 runtime; missing-runtime acceptance is not yet claimed.

@@ -1,6 +1,9 @@
 //! Per-user package discovery and browser connection state.
 #[cfg(target_os = "linux")]
 pub mod application;
+#[cfg(windows)]
+#[path = "installation/windows_application.rs"]
+pub mod application;
 use crate::Config;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -29,6 +32,25 @@ pub struct UserDirs {
 }
 
 impl UserDirs {
+    pub fn from_env() -> io::Result<Self> {
+        #[cfg(windows)]
+        let dirs = {
+            let home = PathBuf::from(std::env::var_os("USERPROFILE").filter(|v| !v.is_empty())
+                .ok_or_else(|| invalid_data("USERPROFILE must select a user directory"))?);
+            let data_home = PathBuf::from(std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty())
+                .ok_or_else(|| invalid_data("LOCALAPPDATA must select a user directory"))?);
+            Self { home, config_home: data_home.clone(), data_home }
+        };
+        #[cfg(target_os = "linux")]
+        let dirs = {
+            let home = PathBuf::from(std::env::var_os("HOME").filter(|v| !v.is_empty())
+                .ok_or_else(|| invalid_data("HOME must select a user directory"))?);
+            Self { data_home: std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".local/share")),
+                config_home: std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".config")), home }
+        };
+        validate_dirs(&dirs)?;
+        Ok(dirs)
+    }
     pub fn bridge_dir(&self) -> PathBuf { self.data_home.join("vidgrab-p02/native") }
     pub fn config_path(&self) -> PathBuf { self.bridge_dir().join("host-config.json") }
     pub fn connection_path(&self) -> PathBuf { self.bridge_dir().join("browser-connection.json") }

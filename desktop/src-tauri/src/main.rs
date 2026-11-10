@@ -1,4 +1,8 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
+#[cfg(target_os = "linux")]
 use gio::glib::variant::ToVariant;
+#[cfg(target_os = "linux")]
 use gio::prelude::{AppInfoExt, DBusProxyExt};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -73,6 +77,7 @@ async fn install_appimage(state: State<'_, DesktopState>) -> Result<Value, Strin
     }).await.map_err(|_| "The AppImage installation failed".to_owned())?
 }
 
+#[cfg(target_os = "linux")]
 fn software_manager() -> Result<gio::DesktopAppInfo, String> {
     ["/var/lib/snapd/desktop/applications/snap-store_snap-store.desktop", "/usr/share/applications/org.gnome.Software.desktop"]
         .iter().find_map(gio::DesktopAppInfo::from_filename)
@@ -81,7 +86,15 @@ fn software_manager() -> Result<gio::DesktopAppInfo, String> {
 
 #[tauri::command]
 fn open_software_manager() -> Result<(), String> {
-    software_manager()?.launch(&[], None::<&gio::AppLaunchContext>).map_err(|error| error.to_string())
+    #[cfg(target_os = "linux")]
+    { software_manager()?.launch(&[], None::<&gio::AppLaunchContext>).map_err(|error| error.to_string()) }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
+        let target: Vec<u16> = "ms-settings:appsfeatures".encode_utf16().chain([0]).collect();
+        let result = unsafe { ShellExecuteW(std::ptr::null_mut(), std::ptr::null(), target.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) };
+        if result as isize > 32 { Ok(()) } else { Err("Open Settings → Apps → Installed apps to uninstall VidGrab".into()) }
+    }
 }
 
 #[tauri::command]
@@ -95,6 +108,7 @@ async fn remove_application(app: tauri::AppHandle, state: State<'_, DesktopState
     let (result, is_image) = tauri::async_runtime::spawn_blocking(move || {
         let selected = registration.lock().map_err(|_| "Installation settings are unavailable".to_owned())?;
         application::check_removal(&selected.1, selected.2).map_err(|error| error.to_string())?;
+        #[cfg(target_os = "linux")]
         if !selected.2 { software_manager()?; }
         command(&config, "quit_if_idle", Default::default())?;
         let stopped = shutdown.stopped.lock().map_err(|_| "The app shutdown state is unavailable".to_owned())?;
@@ -138,6 +152,10 @@ fn quit_companion(app: tauri::AppHandle, state: State<'_, DesktopState>) {
 
 fn tray_host_available() -> bool {
     if std::env::var_os("VIDGRAB_DISABLE_TRAY").is_some() { return false; }
+    #[cfg(windows)]
+    { return true; }
+    #[cfg(target_os = "linux")]
+    {
     let proxy = gio::DBusProxy::for_bus_sync(
         gio::BusType::Session, gio::DBusProxyFlags::DO_NOT_LOAD_PROPERTIES,
         None::<&gio::DBusInterfaceInfo>, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
@@ -147,9 +165,10 @@ fn tray_host_available() -> bool {
         "NameHasOwner", Some(&("org.kde.StatusNotifierWatcher",).to_variant()),
         gio::DBusCallFlags::NONE, 1000, None::<&gio::Cancellable>,
     ).ok()).and_then(|value| value.get::<(bool,)>()).is_some_and(|value| value.0)
+    }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
     let context = tauri::generate_context!();
     let mut registration = None;
@@ -157,7 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Config::load(&PathBuf::from(&arguments[1]))?
     } else {
         let packaged = arguments.len() == 2 && arguments[0] == "--package-config";
-        let diagnostic = arguments.len() == 1 && ["--check-package", "--browser-connection-status", "--register-browser-host", "--unregister-browser-host", "--installation-status", "--install-appimage", "--remove-appimage"].iter().any(|flag| arguments[0] == *flag);
+        let diagnostic = arguments.len() == 1 && ["--check-package", "--browser-connection-status", "--register-browser-host", "--unregister-browser-host", "--installation-status", "--install-appimage", "--remove-appimage", "--prepare-uninstall"].iter().any(|flag| arguments[0] == *flag);
         if !arguments.is_empty() && !packaged && !diagnostic {
             return Err("Use a packaged launch, --config FILE, --check-package, --installation-status, --install-appimage, --remove-appimage, --register-browser-host or --unregister-browser-host".into());
         }
@@ -169,9 +188,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", json!({"app":layout.app, "engine":layout.engine, "native":layout.native}));
             return Ok(());
         }
-        let home = PathBuf::from(std::env::var_os("HOME").ok_or("HOME must select an explicit user directory")?);
-        let dirs = UserDirs { data_home: std::env::var_os("XDG_DATA_HOME").filter(|value| !value.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".local/share")),
-            config_home: std::env::var_os("XDG_CONFIG_HOME").filter(|value| !value.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".config")), home };
+        let dirs = UserDirs::from_env()?;
         if arguments.first().is_some_and(|arg| arg == "--unregister-browser-host") {
             println!("{}", json!({"removed": installation::disconnect(&dirs)?}));
             return Ok(());
@@ -184,6 +201,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let image = std::env::var_os("APPIMAGE");
         let layout = Layout::discover(&std::env::current_exe()?, &resources, image.as_deref().map(Path::new))?;
         let is_image = image.is_some();
+        #[cfg(windows)]
+        if arguments.first().is_some_and(|arg| arg == "--prepare-uninstall") {
+            application::prepare_uninstall(&layout, &dirs)?;
+            println!("{}", json!({"prepared": true}));
+            return Ok(());
+        }
         if arguments.first().is_some_and(|arg| arg == "--installation-status") {
             println!("{}", json!(application::status(&layout, &dirs, is_image)?));
             return Ok(());
@@ -274,4 +297,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     Ok(())
+}
+
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("{error}");
+        #[cfg(windows)]
+        if std::env::args_os().len() == 1 {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_OK, MB_ICONERROR};
+            let message: Vec<u16> = error.to_string().encode_utf16().chain([0]).collect();
+            let title: Vec<u16> = "VidGrab".encode_utf16().chain([0]).collect();
+            unsafe { MessageBoxW(std::ptr::null_mut(), message.as_ptr(), title.as_ptr(), MB_OK | MB_ICONERROR); }
+        }
+        std::process::exit(1);
+    }
 }

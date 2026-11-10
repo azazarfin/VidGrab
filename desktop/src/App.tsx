@@ -23,7 +23,7 @@ interface Snapshot {
 }
 
 interface ApplicationStatus {
-  kind: 'deb' | 'appimage';
+  kind: 'deb' | 'appimage' | 'windows';
   installed: boolean;
   app: string;
   shortcut?: string;
@@ -195,7 +195,15 @@ export function App() {
             <button className="secondary critical" type="button" onClick={confirmRemoval}
               disabled={busy || activeDownloads}>Prepare to remove…</button>
           </div>
-        </> : <p className="helper">{snapshot.application_error || 'Installation controls are available in the Linux packages.'}</p>}
+        </> : application?.kind === 'windows' ? <>
+          <p className="installation-status">{application.installed ? 'Installed for this Windows user' : 'Running from a Windows preview folder'}</p>
+          <p>Open the <strong>VidGrab installer</strong> to install or reinstall for your Windows account.</p>
+          <p>Prepare for removal here, then uninstall <strong>VidGrab</strong> in <strong>Settings → Apps → Installed apps</strong>. Your history and saved files are kept.</p>
+          <div className="connection-actions">
+            <button className="secondary" type="button" onClick={openAppCenter} disabled={busy}>Open Installed apps</button>
+            <button className="secondary critical" type="button" onClick={confirmRemoval} disabled={busy || activeDownloads}>Prepare to remove…</button>
+          </div>
+        </> : <p className="helper">{snapshot.application_error || 'Installation controls are available in packaged builds.'}</p>}
         {activeDownloads && application?.installed && <p className="helper">Finish active downloads before removing VidGrab.</p>}
       </details>
       <section className="browser-connections" aria-labelledby="browser-title">
@@ -221,7 +229,7 @@ export function App() {
           ? 'The browser connection settings need attention.' : 'Browser connection controls are available in packaged builds.'}</p>}
         {snapshot.browser_connection_error && <p className="error" role="alert">{snapshot.browser_connection_error}</p>}
       </section>
-      <details className="browser-setup">
+      {application?.kind !== 'windows' && <details className="browser-setup">
         <summary>Firefox Flatpak setup</summary>
         <p>Firefox Flatpak needs one browser setting to allow the native connection test in this preview.</p>
         <ol>
@@ -234,7 +242,7 @@ export function App() {
         </ol>
         <p>If Firefox Flatpak was installed during this desktop session, sign out and back in before connecting so the desktop can recognize it.</p>
         <p>The app’s Connected status means VidGrab is ready. Confirm Firefox access with the native connection test; the preview’s regular extension popup still uses the earlier backend.</p>
-      </details>
+      </details>}
       <form className="download-form" onSubmit={download}>
         <label htmlFor="fixture-url">Fixture URL</label>
         <input id="fixture-url" type="url" value={url} required maxLength={2048}
@@ -269,6 +277,8 @@ export function App() {
         <h2 id="remove-title">{application?.kind === 'appimage' ? 'Remove the installed copy?' : 'Prepare to remove VidGrab?'}</h2>
         <p id="remove-description">{application?.kind === 'appimage'
           ? 'VidGrab will disconnect browser access, quit and remove its installed AppImage and Applications shortcut. Your history and saved files are kept.'
+          : application?.kind === 'windows'
+          ? 'VidGrab will disconnect browser access, quit and open Installed apps. Uninstall VidGrab there. Your history and saved files are kept.'
           : 'VidGrab will disconnect browser access, quit and open App Center. Use Manage to uninstall the Ubuntu package. Your history and saved files are kept.'}</p>
         {activeDownloads && <p className="helper">Finish active downloads before removing VidGrab.</p>}
         {removalError && <p className="error" role="alert">{removalError}</p>}
