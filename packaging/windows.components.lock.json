@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "target": "x86_64-pc-windows-msvc",
+  "assets": {
+    "ffmpeg": {
+      "version": "7.0.2",
+      "file": "ffmpeg-7.0.2-essentials_build.zip",
+      "url": "https://github.com/GyanD/codexffmpeg/releases/download/7.0.2/ffmpeg-7.0.2-essentials_build.zip",
+      "sha256": "d5308d30872b2739cf53169df61faba8639d39a19b20b91e611c177ef676f64c",
+      "license": "GPL-3.0",
+      "provenance": "Downloaded from the pinned GyanD upstream GitHub release over HTTPS; SHA-256 pins these exact bytes (release API publishes no digest)."
+    },
+    "deno": {
+      "version": "2.9.8",
+      "file": "deno-x86_64-pc-windows-msvc.zip",
+      "url": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-pc-windows-msvc.zip",
+      "sha256": "cba84b26e0df5ae7f74fc66b86a95b866872a86292ebd84fa1e959927edd93bf",
+      "license": "MIT",
+      "provenance": "SHA-256 published on the official Deno GitHub release asset."
+    }
+  }
+}

@@ -1,12 +1,21 @@
-//! Per-user Linux package discovery and browser registration.
+//! Per-user package discovery and browser connection state.
+#[cfg(target_os = "linux")]
 pub mod application;
 use crate::Config;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::fs::{self, DirBuilder, OpenOptions};
+use std::fs;
+#[cfg(target_os = "linux")]
+use std::fs::OpenOptions;
+#[cfg(target_os = "linux")]
+use std::fs::DirBuilder;
 use std::io::{self, Write};
+#[cfg(target_os = "linux")]
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+
+fn native_name() -> &'static str { if cfg!(windows) { "vidgrab-native-host.exe" } else { "vidgrab-native-host" } }
+fn engine_name() -> &'static str { if cfg!(windows) { "vidgrab-engine.exe" } else { "vidgrab-engine" } }
 
 pub const HOST_NAME: &str = "com.vidgrab.companion";
 pub const CHROME_ORIGIN: &str = "chrome-extension://ikjpekhbbaehdhigakbahlhafaojbjpm/";
@@ -38,8 +47,8 @@ impl Layout {
         let executable = executable.canonicalize()?;
         let app = appimage.unwrap_or(&executable);
         absolute(app)?;
-        let layout = Self { app: app.canonicalize()?, engine: resources.join("engine/vidgrab-engine").canonicalize()?,
-            native: executable.parent().ok_or_else(|| io::Error::other("Missing executable directory"))?.join("vidgrab-native-host").canonicalize()? };
+        let layout = Self { app: app.canonicalize()?, engine: resources.join("engine").join(engine_name()).canonicalize()?,
+            native: executable.parent().ok_or_else(|| io::Error::other("Missing executable directory"))?.join(native_name()).canonicalize()? };
         for file in [&layout.app, &layout.engine, &layout.native] { executable_file(file)?; }
         let tools = layout.engine.parent().unwrap().join("_internal/tools/manifest.json");
         if !tools.is_file() { return Err(io::Error::new(io::ErrorKind::NotFound, "Missing frozen engine support tree")); }
@@ -80,8 +89,10 @@ impl InstalledConfig {
 
 pub fn register(layout: &Layout, dirs: &UserDirs) -> io::Result<InstalledConfig> {
     let config = bridge_config(layout, dirs)?;
-    let native = dirs.bridge_dir().join("vidgrab-native-host");
+    let native = dirs.bridge_dir().join(native_name());
     let manifests = manifests(dirs);
+    #[cfg(windows)]
+    crate::windows::registry::preflight(&manifests)?;
     for (path, firefox) in &manifests {
         check_destination(path)?;
         if path.exists() && !owned_manifest(path, &native, *firefox)? {
@@ -89,10 +100,12 @@ pub fn register(layout: &Layout, dirs: &UserDirs) -> io::Result<InstalledConfig>
         }
     }
     write_bridge(layout, dirs, &config)?;
-    for (path, firefox) in manifests {
+    for (path, firefox) in manifests.clone() {
         private_directory(path.parent().unwrap())?;
         atomic_write(&path, &json_bytes(&manifest(&native, firefox))?, 0o600)?;
     }
+    #[cfg(windows)]
+    crate::windows::registry::publish(&manifests)?;
     Ok(config)
 }
 
@@ -101,12 +114,17 @@ fn check_bridge(dirs: &UserDirs) -> io::Result<()> {
     let bridge = dirs.bridge_dir();
     check_directory(&bridge)?;
     if let Ok(metadata) = fs::symlink_metadata(&bridge) {
+        #[cfg(windows)]
+        let _ = &metadata;
+        #[cfg(target_os = "linux")]
         if metadata.uid() != unsafe { libc::geteuid() } || metadata.permissions().mode() & 0o777 != 0o700 {
             return Err(permission_denied("The native bridge directory must be private and owned by this user"));
         }
+        #[cfg(windows)]
+        if !crate::windows::is_private(&bridge)? { return Err(permission_denied("The native bridge directory must be private and owned by this user")); }
     }
     let config_path = dirs.config_path();
-    let native = bridge.join("vidgrab-native-host");
+    let native = bridge.join(native_name());
     for path in [&config_path, &native] { check_destination(path)?; }
     Ok(())
 }
@@ -131,7 +149,7 @@ fn bridge_config(layout: &Layout, dirs: &UserDirs) -> io::Result<InstalledConfig
 
 fn write_bridge(layout: &Layout, dirs: &UserDirs, config: &InstalledConfig) -> io::Result<()> {
     let bridge = dirs.bridge_dir();
-    let native = bridge.join("vidgrab-native-host");
+    let native = bridge.join(native_name());
     private_directory(&bridge)?;
     atomic_write(&native, &fs::read(&layout.native)?, 0o700)?;
     atomic_write(&dirs.config_path(), &json_bytes(config)?, 0o600)
@@ -139,7 +157,7 @@ fn write_bridge(layout: &Layout, dirs: &UserDirs, config: &InstalledConfig) -> i
 
 fn owned_registrations(dirs: &UserDirs) -> io::Result<Vec<PathBuf>> {
     validate_dirs(dirs)?;
-    let native = dirs.bridge_dir().join("vidgrab-native-host");
+    let native = dirs.bridge_dir().join(native_name());
     let mut owned = Vec::new();
     for (path, firefox) in manifests(dirs) {
         check_destination(&path)?;
@@ -150,6 +168,8 @@ fn owned_registrations(dirs: &UserDirs) -> io::Result<Vec<PathBuf>> {
 
 pub fn unregister(dirs: &UserDirs) -> io::Result<usize> {
     let owned = owned_registrations(dirs)?;
+    #[cfg(windows)]
+    crate::windows::registry::remove_owned(&manifests(dirs))?;
     for path in &owned { fs::remove_file(path)?; }
     // User-owned runtime, media and the selected paths remain available for reconnecting.
     Ok(owned.len())
@@ -182,7 +202,7 @@ fn connection_enabled(path: &Path) -> io::Result<bool> {
 pub fn connection_status(layout: &Layout, dirs: &UserDirs) -> io::Result<ConnectionStatus> {
     check_bridge(dirs)?;
     let enabled = connection_enabled(&dirs.connection_path())?;
-    let native = dirs.bridge_dir().join("vidgrab-native-host");
+    let native = dirs.bridge_dir().join(native_name());
     let config = if dirs.config_path().exists() { Some(InstalledConfig::load(&dirs.config_path())?) } else { None };
     let bridge_ready = config.is_some_and(|config| config.app == layout.app)
         && executable_file(&native).is_ok();
@@ -192,6 +212,15 @@ pub fn connection_status(layout: &Layout, dirs: &UserDirs) -> io::Result<Connect
             else if owned_manifest(&path, &native, firefox)? { ManifestState::Registered }
             else { ManifestState::Conflict })
     }).collect::<io::Result<Vec<_>>>()?;
+    #[cfg(windows)]
+    let states = {
+        let registry = crate::windows::registry::states(&manifests(dirs))?;
+        states.into_iter().zip(registry).map(|(file, registry)| {
+            if file == ManifestState::Conflict || registry == ManifestState::Conflict { ManifestState::Conflict }
+            else if file == ManifestState::Registered && registry == ManifestState::Registered { ManifestState::Registered }
+            else { ManifestState::Missing }
+        }).collect::<Vec<_>>()
+    };
     let mut states = states.into_iter();
     Ok(ConnectionStatus { enabled, bridge_ready, chrome: states.next().unwrap(), firefox: states.next().unwrap() })
 }
@@ -213,6 +242,8 @@ pub fn disconnect(dirs: &UserDirs) -> io::Result<usize> {
     // Persist revocation before removing manifests. An interrupted removal must
     // not let a remaining host or the next launch enable browser access again.
     atomic_write(&dirs.connection_path(), &json_bytes(&ConnectionPreference { connection_version: 1, enabled: false })?, 0o600)?;
+    #[cfg(windows)]
+    crate::windows::registry::remove_owned(&manifests(dirs))?;
     for path in &owned { fs::remove_file(path)?; }
     Ok(owned.len())
 }
@@ -244,7 +275,13 @@ impl HostConfig {
     pub fn launch_arg(&self) -> &str { match self { Self::Staged(_) => "--config", Self::Packaged(_) => "--package-config" } }
     pub fn app(&self) -> &Path { match self { Self::Staged(config) => &config.app, Self::Packaged(config) => &config.app } }
     pub fn socket_path(&self) -> PathBuf {
-        match self { Self::Staged(config) => config.socket_path(), Self::Packaged(config) => config.data_dir.join("ipc/control.sock") }
+        match self {
+            Self::Staged(config) => config.socket_path(),
+            Self::Packaged(config) => {
+                #[cfg(target_os = "linux")] { config.data_dir.join("ipc/control.sock") }
+                #[cfg(windows)] { crate::windows::pipe_path(&config.data_dir) }
+            }
+        }
     }
     pub fn chrome_origin(&self) -> &str { match self { Self::Staged(config) => &config.chrome_origin, Self::Packaged(config) => &config.chrome_origin } }
     pub fn firefox_id(&self) -> &str { match self { Self::Staged(config) => &config.firefox_id, Self::Packaged(config) => &config.firefox_id } }
@@ -261,13 +298,16 @@ fn invalid_data(error: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> i
 fn permission_denied(message: &str) -> io::Error { io::Error::new(io::ErrorKind::PermissionDenied, message) }
 fn executable_file(path: &Path) -> io::Result<()> {
     let metadata = fs::metadata(path)?;
-    if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 { return Err(invalid_data("Missing executable package component")); }
+    if !metadata.is_file() { return Err(invalid_data("Missing executable package component")); }
+    #[cfg(target_os = "linux")]
+    if metadata.permissions().mode() & 0o111 == 0 { return Err(invalid_data("Missing executable package component")); }
     Ok(())
 }
 fn validate_dirs(dirs: &UserDirs) -> io::Result<()> {
     for path in [&dirs.home, &dirs.data_home, &dirs.config_home] { absolute(path)?; check_directory(path)?; }
     Ok(())
 }
+#[cfg(target_os = "linux")]
 fn check_directory(path: &Path) -> io::Result<()> {
     for directory in path.ancestors() {
         match fs::symlink_metadata(directory) {
@@ -279,19 +319,35 @@ fn check_directory(path: &Path) -> io::Result<()> {
     }
     Ok(())
 }
+#[cfg(windows)]
+fn check_directory(path: &Path) -> io::Result<()> { crate::windows::check_directory(path) }
 fn check_destination(path: &Path) -> io::Result<()> {
     check_directory(path.parent().ok_or_else(|| invalid_data("Missing registration directory"))?)?;
     match fs::symlink_metadata(path) {
-        Ok(metadata) if !metadata.is_file() || metadata.uid() != unsafe { libc::geteuid() } => Err(permission_denied("Registration files must be regular files owned by this user")),
-        Ok(_) => Ok(()),
+        Ok(metadata) => {
+            if !metadata.is_file() { return Err(permission_denied("Registration files must be regular files owned by this user")); }
+            #[cfg(target_os = "linux")]
+            if metadata.uid() != unsafe { libc::geteuid() } { return Err(permission_denied("Registration files must be regular files owned by this user")); }
+            #[cfg(windows)]
+            crate::windows::check_owned(path)?;
+            Ok(())
+        }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),
     }
 }
+#[cfg(target_os = "linux")]
 fn private_directory(path: &Path) -> io::Result<()> { DirBuilder::new().recursive(true).mode(0o700).create(path) }
+#[cfg(windows)]
+fn private_directory(path: &Path) -> io::Result<()> { crate::windows::private_directory(path) }
+#[cfg(target_os = "linux")]
 fn manifests(dirs: &UserDirs) -> [(PathBuf, bool); 2] {
     [(dirs.config_home.join("google-chrome/NativeMessagingHosts").join(format!("{HOST_NAME}.json")), false),
         (dirs.home.join(".mozilla/native-messaging-hosts").join(format!("{HOST_NAME}.json")), true)]
+}
+#[cfg(windows)]
+fn manifests(dirs: &UserDirs) -> [(PathBuf, bool); 2] {
+    [(dirs.bridge_dir().join("chrome.json"), false), (dirs.bridge_dir().join("firefox.json"), true)]
 }
 fn manifest(native: &Path, firefox: bool) -> Value {
     let mut value = json!({"name": HOST_NAME, "description": "VidGrab P02 desktop companion", "path": native, "type": "stdio"});
@@ -313,16 +369,27 @@ fn atomic_write(path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
     getrandom::fill(&mut nonce).map_err(io::Error::other)?;
     let temporary = path.with_extension(format!("{:016x}.tmp", u64::from_ne_bytes(nonce)));
     let result = (|| {
-        let mut file = OpenOptions::new().write(true).create_new(true).mode(mode).custom_flags(libc::O_NOFOLLOW).open(&temporary)?;
+        #[cfg(target_os = "linux")]
+        let mut options = OpenOptions::new();
+        #[cfg(target_os = "linux")]
+        options.write(true).create_new(true);
+        #[cfg(target_os = "linux")]
+        options.mode(mode).custom_flags(libc::O_NOFOLLOW);
+        #[cfg(target_os = "linux")]
+        let mut file = options.open(&temporary)?;
+        #[cfg(windows)]
+        let mut file = { let _ = mode; crate::windows::create_private_file(&temporary)? };
         file.write_all(bytes)?;
         file.sync_all()?;
-        fs::rename(&temporary, path)
+        drop(file);
+        #[cfg(target_os = "linux")] { fs::rename(&temporary, path) }
+        #[cfg(windows)] { crate::windows::replace(&temporary, path) }
     })();
     if result.is_err() { let _ = fs::remove_file(&temporary); }
     result
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
     use serde_json::{json, Value};
@@ -419,7 +486,7 @@ mod tests {
         let result = register(&layout, &dirs);
         assert!(result.is_ok(), "A clean per-user registration must succeed: {result:?}");
         let saved = result.unwrap();
-        let host = dirs.bridge_dir().join("vidgrab-native-host");
+        let host = dirs.bridge_dir().join(native_name());
         assert_eq!(fs::read(&host).unwrap(), fs::read(&layout.native).unwrap());
         assert_eq!(fs::metadata(dirs.bridge_dir()).unwrap().permissions().mode() & 0o777, 0o700);
         assert_eq!(fs::metadata(&host).unwrap().permissions().mode() & 0o777, 0o700);
@@ -450,7 +517,7 @@ mod tests {
         assert_eq!(repaired.app, second.app);
         assert_eq!(repaired.data_dir, original.data_dir);
         assert_eq!(repaired.download_dir, original.download_dir);
-        assert_eq!(fs::read(dirs.bridge_dir().join("vidgrab-native-host")).unwrap(), b"moved \xe0\xa6\xac\xe0\xa6\xbe\xe0\xa6\x82\xe0\xa6\xb2\xe0\xa6\xbe");
+        assert_eq!(fs::read(dirs.bridge_dir().join(native_name())).unwrap(), b"moved \xe0\xa6\xac\xe0\xa6\xbe\xe0\xa6\x82\xe0\xa6\xb2\xe0\xa6\xbe");
     }
 
     #[test]
@@ -592,7 +659,7 @@ mod tests {
         assert_eq!(saved.data_dir, original.data_dir);
         assert_eq!(saved.download_dir, original.download_dir);
         assert!(!chrome(&dirs).exists() && !firefox(&dirs).exists());
-        assert_eq!(fs::read(dirs.bridge_dir().join("vidgrab-native-host")).unwrap(), b"moved");
+        assert_eq!(fs::read(dirs.bridge_dir().join(native_name())).unwrap(), b"moved");
         let status = connection_status(&moved, &dirs).unwrap();
         assert!(!status.enabled && status.bridge_ready);
     }

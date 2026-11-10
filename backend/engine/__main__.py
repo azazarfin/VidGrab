@@ -31,7 +31,7 @@ def fixture_network_guard(event, arguments):
         host = arguments[0]
     elif event == "socket.connect":
         connection, address = arguments[:2]
-        if connection.family == socket.AF_UNIX:
+        if connection.family == getattr(socket, "AF_UNIX", None):
             return
         host = address[0]
     else:

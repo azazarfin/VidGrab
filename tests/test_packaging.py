@@ -4,6 +4,7 @@ import io
 import os
 from pathlib import Path
 import tarfile
+import zipfile
 
 from tests.support import OfflineTestCase
 
@@ -42,6 +43,23 @@ class ComponentPackagingTests(OfflineTestCase):
             preparer.prepare(self.root / "missing", tauri)
         self.assertFalse(tauri.exists())
 
+    def test_windows_preparation_preserves_support_files_and_target_executable_suffix(self):
+        preparer = self.preparer()
+        bundle = self.root / "windows-bundle"
+        tools = bundle / "engine" / "_internal" / "tools"
+        tools.mkdir(parents=True)
+        (tools / "manifest.json").write_text("{}")
+        (tools / "ffmpeg.exe").write_bytes(b"windows-ffmpeg")
+        (bundle / "engine" / "vidgrab-engine.exe").write_bytes(b"windows-engine")
+        (bundle / "vidgrab-native-host.exe").write_bytes(b"windows-bridge")
+        tauri = self.root / "tauri"
+        try:
+            preparer.prepare(bundle, tauri, target="x86_64-pc-windows-msvc")
+        except TypeError as error:
+            self.fail(f"Windows target preparation is missing: {error}")
+        self.assertEqual((tauri / "binaries" / "vidgrab-native-host-x86_64-pc-windows-msvc.exe").read_bytes(), b"windows-bridge")
+        self.assertEqual((tauri / "resources" / "engine" / "_internal" / "tools" / "ffmpeg.exe").read_bytes(), b"windows-ffmpeg")
+
     def test_desktop_preparation_refuses_overlapping_source_and_destination(self):
         preparer = self.preparer()
         bundle = self.root / "bundle"
@@ -78,6 +96,22 @@ class ComponentPackagingTests(OfflineTestCase):
         directory.mkdir()
         fetcher.extract_ffmpeg(archive, directory)
         self.assertEqual(sorted(path.name for path in directory.iterdir()), ["GPLv3.ffmpeg.txt", "ffmpeg", "ffprobe"])
+        self.assertFalse((self.root.parent / "escaped").exists())
+
+    def test_windows_zip_extracts_only_selected_tools_and_license(self):
+        fetcher = self.fetcher()
+        archive = self.root / "windows.zip"
+        with zipfile.ZipFile(archive, "w") as output:
+            for name, contents in (("build/bin/ffmpeg.exe", b"ffmpeg"), ("build/bin/ffprobe.exe", b"ffprobe"),
+                                   ("build/LICENSE", b"GPLv3"), ("../../escaped", b"ignored")):
+                output.writestr(name, contents)
+        directory = self.root / "tools"
+        directory.mkdir()
+        try:
+            fetcher.extract_ffmpeg(archive, directory, target="x86_64-pc-windows-msvc")
+        except TypeError as error:
+            self.fail(f"Windows archive support is missing: {error}")
+        self.assertEqual(sorted(path.name for path in directory.iterdir()), ["GPLv3.ffmpeg.txt", "ffmpeg.exe", "ffprobe.exe"])
         self.assertFalse((self.root.parent / "escaped").exists())
 
 

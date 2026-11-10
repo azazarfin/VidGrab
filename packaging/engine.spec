@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import sys
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 root = Path(SPECPATH).parent
@@ -9,7 +10,8 @@ for package in ("yt-dlp", "yt-dlp-ejs"):
     datas += copy_metadata(package)
 datas += collect_data_files("yt_dlp_ejs")
 datas += [(str(root / "packaging" / "THIRD_PARTY.md"), "notices")]
-binaries = [(str(tools / name), "tools") for name in ("ffmpeg", "ffprobe", "deno")]
+suffix = ".exe" if sys.platform == "win32" else ""
+binaries = [(str(tools / (name + suffix)), "tools") for name in ("ffmpeg", "ffprobe", "deno")]
 
 analysis = Analysis(
     [str(root / "packaging" / "engine_entry.py")],

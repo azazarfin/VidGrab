@@ -2,6 +2,7 @@
 
 import importlib.util
 import sqlite3
+import socket
 from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
@@ -12,6 +13,21 @@ from tests.support import OfflineTestCase
 
 
 class PackagedEngineTests(OfflineTestCase):
+    def test_fixture_network_guard_enforces_loopback_without_unix_socket_support(self):
+        from backend.engine.__main__ import fixture_network_guard
+
+        with socket.socket(socket.AF_INET) as connection:
+            with patch.object(socket, "AF_UNIX", create=True):
+                del socket.AF_UNIX
+                try:
+                    fixture_network_guard("socket.connect", (connection, ("127.0.0.1", 1234)))
+                    with self.assertRaises(PermissionError):
+                        fixture_network_guard("socket.connect", (connection, ("198.51.100.1", 443)))
+                except AttributeError as error:
+                    self.fail(f"The frozen engine assumes an unavailable socket family: {error}")
+                finally:
+                    socket.AF_UNIX = None
+
     def engine_module(self):
         self.assertIsNotNone(
             importlib.util.find_spec("backend.engine"),

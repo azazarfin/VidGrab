@@ -1,18 +1,28 @@
-//! Linux P02 ownership spike. Windows named pipes/Job Objects are a later gate.
-#[cfg(not(target_os = "linux"))]
-compile_error!("The P02 native lifecycle spike has only been implemented for Linux");
+//! P02 ownership spike with private Linux and Windows kernel boundaries.
+#[cfg(not(any(target_os = "linux", windows)))]
+compile_error!("The P02 native lifecycle spike supports Linux and Windows");
 
 mod engine;
+#[cfg(target_os = "linux")]
+mod linux_process;
+#[cfg(windows)]
+pub mod windows;
 pub mod installation;
 pub mod protocol;
 pub mod transport;
 
 use engine::Engine;
 use serde::Deserialize;
-use std::fs::{self, File, OpenOptions, TryLockError};
+use std::fs::{self, File, TryLockError};
+#[cfg(target_os = "linux")]
+use std::fs::OpenOptions;
 use std::io;
+#[cfg(target_os = "linux")]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
-use std::os::unix::net::UnixListener;
+#[cfg(target_os = "linux")]
+use std::os::unix::net::UnixListener as Listener;
+#[cfg(windows)]
+use windows::PipeListener as Listener;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use std::time::Duration;
@@ -37,7 +47,10 @@ impl Config {
         Ok(config)
     }
     pub fn ipc_dir(&self) -> PathBuf { self.data_dir.join("ipc") }
-    pub fn socket_path(&self) -> PathBuf { self.ipc_dir().join("control.sock") }
+    pub fn socket_path(&self) -> PathBuf {
+        #[cfg(target_os = "linux")] { self.ipc_dir().join("control.sock") }
+        #[cfg(windows)] { windows::pipe_path(&self.data_dir) }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -46,7 +59,7 @@ pub enum UiEvent { Activate, Stopped }
 pub struct Owner {
     _lock: File,
     config: Config,
-    listener: UnixListener,
+    listener: Listener,
     engine: Engine,
     stop: Arc<AtomicBool>,
 }
@@ -55,30 +68,37 @@ impl Owner {
     pub fn start(config: Config) -> io::Result<Option<Self>> {
         fs::create_dir_all(&config.data_dir)?;
         let ipc = config.ipc_dir();
-        match fs::create_dir(&ipc) {
-            Ok(()) => fs::set_permissions(&ipc, fs::Permissions::from_mode(0o700))?,
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                let metadata = fs::symlink_metadata(&ipc)?;
-                if !metadata.is_dir() || metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o777 != 0o700 {
-                    return Err(io::Error::new(io::ErrorKind::PermissionDenied, "IPC directory must be private and owned by this user"));
+        #[cfg(target_os = "linux")]
+        let lock = {
+            match fs::create_dir(&ipc) {
+                Ok(()) => fs::set_permissions(&ipc, fs::Permissions::from_mode(0o700))?,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    let metadata = fs::symlink_metadata(&ipc)?;
+                    if !metadata.is_dir() || metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o777 != 0o700 {
+                        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "IPC directory must be private and owned by this user"));
+                    }
                 }
+                Err(error) => return Err(error),
             }
-            Err(error) => return Err(error),
-        }
-        let lock = OpenOptions::new().create(true).truncate(false).read(true).write(true).mode(0o600).open(ipc.join("owner.lock"))?;
+            OpenOptions::new().create(true).truncate(false).read(true).write(true).mode(0o600).open(ipc.join("owner.lock"))?
+        };
+        #[cfg(windows)]
+        let lock = { windows::private_directory(&ipc)?; windows::open_lock(&ipc.join("owner.lock"))? };
         match lock.try_lock() {
             Ok(()) => (),
             Err(TryLockError::WouldBlock) => return Ok(None),
             Err(TryLockError::Error(error)) => return Err(error),
         }
         let socket = config.socket_path();
+        #[cfg(target_os = "linux")]
         if socket.exists() { fs::remove_file(&socket)?; }
-        let listener = UnixListener::bind(&socket)?;
-        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
-        listener.set_nonblocking(true)?;
-        // Orphaned engine descendants become reappable children of this owner.
-        if unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) } == -1 {
-            return Err(io::Error::last_os_error());
+        let listener = Listener::bind(&socket)?;
+        #[cfg(target_os = "linux")]
+        {
+            fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
+            listener.set_nonblocking(true)?;
+            // Orphaned descendants become reappable children of this Linux owner.
+            if unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) } == -1 { return Err(io::Error::last_os_error()); }
         }
         Ok(Some(Self { _lock: lock, config, listener, engine: Engine::new(), stop: Arc::new(AtomicBool::new(false)) }))
     }
@@ -131,6 +151,7 @@ impl Owner {
             }
         }
         self.engine = Engine::new(); // Drop and reap the owned group before releasing the lock.
+        #[cfg(target_os = "linux")]
         let _ = fs::remove_file(self.config.socket_path());
         drop(self.listener);
         drop(self._lock);

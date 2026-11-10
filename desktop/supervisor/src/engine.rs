@@ -3,8 +3,6 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::os::unix::process::CommandExt;
-use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -18,41 +16,10 @@ struct Ready {
     components: Value,
 }
 
-struct OwnedProcess {
-    child: Child,
-    group: i32,
-}
-
-impl OwnedProcess {
-    fn stop(&mut self) {
-        // The group is created for this child; it contains only owned descendants.
-        unsafe { libc::kill(-self.group, libc::SIGTERM); }
-        let deadline = Instant::now() + Duration::from_millis(1500);
-        while Instant::now() < deadline {
-            if self.child.try_wait().ok().flatten().is_some() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(25));
-        }
-        // A dead leader can leave FFmpeg/Deno descendants. Kill the group too.
-        unsafe { libc::kill(-self.group, libc::SIGKILL); }
-        let _ = self.child.wait();
-        let deadline = Instant::now() + Duration::from_millis(500);
-        while Instant::now() < deadline {
-            let result = unsafe { libc::waitpid(-self.group, std::ptr::null_mut(), libc::WNOHANG) };
-            if result < 0 {
-                break;
-            }
-            if result == 0 {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        }
-    }
-}
-
-impl Drop for OwnedProcess {
-    fn drop(&mut self) { self.stop(); }
-}
+#[cfg(target_os = "linux")]
+use crate::linux_process::OwnedProcess;
+#[cfg(windows)]
+use crate::windows::process::OwnedProcess;
 
 pub(crate) struct Engine {
     process: Option<OwnedProcess>,
@@ -79,28 +46,12 @@ impl Engine {
         let logs = config.data_dir.join("logs");
         std::fs::create_dir_all(&logs)?;
         let log = OpenOptions::new().create(true).append(true).open(logs.join("engine.log"))?;
-        let mut command = Command::new(&config.engine);
-        command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(log).process_group(0);
-        // Only async-signal-safe syscalls run in the child before exec.
-        unsafe {
-            command.pre_exec(|| {
-                let parent = libc::getppid();
-                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) == -1 {
-                    return Err(io::Error::last_os_error());
-                }
-                if libc::getppid() != parent || parent == 1 {
-                    return Err(io::Error::other("Supervisor exited during engine launch"));
-                }
-                Ok(())
-            });
-        }
-        let child = command.spawn()?;
-        let mut owned = OwnedProcess { group: child.id() as i32, child };
+        let mut owned = OwnedProcess::spawn(&config.engine, &[], log)?;
         let bootstrap = json!({"token": self.token, "data_dir": config.data_dir, "download_dir": config.download_dir});
-        let mut input = owned.child.stdin.take().unwrap();
+        let mut input = owned.take_input();
         writeln!(input, "{bootstrap}")?;
         drop(input);
-        let output = owned.child.stdout.take().unwrap();
+        let output = owned.take_output();
         let (sender, receiver) = mpsc::sync_channel(1);
         let reader = std::thread::spawn(move || {
             let mut line = Vec::new();
@@ -111,7 +62,7 @@ impl Engine {
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Engine readiness deadline exceeded"))??;
         let _ = reader.join();
         let ready: Ready = serde_json::from_slice(&line).map_err(io::Error::other)?;
-        if line.len() > 4096 || ready.spike_version != 1 || ready.pid != owned.child.id() || ready.port == 0 {
+        if line.len() > 4096 || ready.spike_version != 1 || ready.pid != owned.id() || ready.port == 0 {
             return Err(io::Error::other("Invalid engine readiness message"));
         }
         transport::engine_request(ready.port, &self.token, "GET", "/health", None)?;
@@ -135,7 +86,7 @@ impl Engine {
     }
 
     pub fn tick(&mut self, config: &Config) {
-        if self.process.as_mut().is_some_and(|process| !matches!(process.child.try_wait(), Ok(None))) {
+        if self.process.as_mut().is_some_and(|process| !matches!(process.has_exited(), Ok(false))) {
             self.schedule_restart();
         }
         if self.next_restart.is_some_and(|deadline| Instant::now() >= deadline) {
@@ -148,7 +99,7 @@ impl Engine {
 
     pub fn snapshot(&self) -> Value {
         json!({"state": self.state, "supervisor_pid": std::process::id(),
-            "engine_pid": self.process.as_ref().map(|process| process.child.id()),
+            "engine_pid": self.process.as_ref().map(|process| process.id()),
             "engine_generation": self.generation, "components": self.components})
     }
 

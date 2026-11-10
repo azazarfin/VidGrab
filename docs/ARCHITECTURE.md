@@ -204,3 +204,9 @@ Official sources checked during planning on 2026-11-03; pin and recheck concrete
 - [Chrome native messaging](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging): registration, framing, origin allowlist, message limits.
 - [Firefox native messaging](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Native_messaging): manifest/argument differences and browser-owned process lifetime.
 - [yt-dlp dependencies](https://github.com/yt-dlp/yt-dlp#dependencies): Python baseline, FFmpeg/ffprobe, EJS/runtime support and build-specific licenses.
+
+## P02 Windows native implementation checkpoint
+
+The native owner now builds on Windows x64. It uses a SID-restricted named pipe with remote-client rejection and kernel-verified same-account peers plus an exclusive owner file lock. Selected filesystem destinations reject reparse points. Engines start suspended, enter a non-inheritable kill-on-close Job Object, then resume; descendant teardown survives abrupt owner death. Detached app activation and engine creation use CreateProcessW/STARTUPINFOEXW with explicit handle whitelists to prevent inheriting browser pipes or the owner Job handle.
+
+Windows package descriptors retain the Linux package_version 1 contract and separate state/media. Private bridge manifests are published through both HKCU native-host registry views for Chrome and Firefox. Foreign values/links block publication; disconnect persists revocation before removing owned keys/files. Native stdio remains bounded framed JSON and lost mutations are never replayed automatically. Actual frozen native checks pass; Tauri desktop, browser and standard-user installer acceptance are the next P02 gates. Worker processes and /v1 remain later work.

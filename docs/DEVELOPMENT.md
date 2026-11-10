@@ -320,3 +320,15 @@ to the named VM; cropped OCR preserves original screen coordinates. Flutter
 filter typing uses bounded virtual HID holds, and the resulting sole VidGrab row
 must be visible before any mutation. These checks do not certify KDE, physical
 input, Windows or the migrated extension download UI.
+
+## Windows frozen/native spike
+
+Use the Windows MSVC toolchain and process-only tool environment from the disposable guest checkpoint. Builds, uv cache, managed Python, Cargo target and components remain on E:\VidGrabWork. The Windows component lock is packaging/windows.components.lock.json; select it explicitly with fetch_components.py --lock. stage_spike.py infers executable names and platform support from its target. prepare_desktop.py requires the target-suffixed .exe sidecar on Windows. All stage outputs must be fresh; do not replace a passing bundle casually.
+
+Run guarded backend checks from the source root and locked native checks with cargo test --locked --offline -p vidgrab-supervisor -p vidgrab-native-host -- --test-threads=1. Windows registration integration checks require exact HKCU production host keys initially absent and clean their owned registrations afterward. Native lifecycle is opt-in:
+
+```powershell
+.venv\Scripts\python.exe -B tests\check_windows_native.py --bundle E:\VidGrabWork\Build\bundle-win-2 --report E:\VidGrabWork\Logs\SELECTED-native.json
+```
+
+The diagnostic owner accepts --config FILE --request status (also activate, quit and quit_if_idle); it never starts a second owner for a request. Native framing reads are bounded on Windows; activation must keep its explicit handle whitelist. The old bridge in bundle-win-1 remains an opt-in negative fixture via --native-host and --test test_activation_leaves_no_native_stdio_handle_in_the_running_app. Do not use it as a working bundle. Current checks run elevated Azaz; actual desktop/browser/standard-user installer gates remain open.

@@ -2,11 +2,18 @@ use crate::{protocol, Config};
 use serde_json::Value;
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
+#[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
+#[cfg(target_os = "linux")]
 use std::os::unix::net::UnixStream;
+#[cfg(windows)]
+use crate::windows::Pipe as UnixStream;
+#[cfg(windows)]
+pub use crate::windows::same_user;
 use std::path::Path;
 use std::time::Duration;
 
+#[cfg(target_os = "linux")]
 pub fn same_user(stream: &UnixStream) -> io::Result<bool> {
     let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
     let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;

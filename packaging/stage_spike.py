@@ -1,4 +1,4 @@
-"""Build the Linux spike into a clean, explicitly selected staging directory."""
+"""Build the native spike into a clean, explicitly selected staging directory."""
 
 import argparse
 import base64
@@ -16,13 +16,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Build/stage the P02 Linux lifecycle spike")
+    parser = argparse.ArgumentParser(description="Build/stage the P02 native lifecycle spike")
     parser.add_argument("--components", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--data-dir", type=Path, required=True)
     parser.add_argument("--download-dir", type=Path, required=True)
     parser.add_argument("--desktop", type=Path, help="Optional already-built Tauri executable")
     arguments = parser.parse_args()
+    if sys.platform not in ("linux", "win32"):
+        parser.error("The spike supports native Linux and Windows builds")
+    suffix = ".exe" if sys.platform == "win32" else ""
+    target = "x86_64-pc-windows-msvc" if sys.platform == "win32" else "x86_64-unknown-linux-gnu"
     output = arguments.output.resolve()
     if output.exists():
         parser.error("Choose a fresh output directory; staging never deletes an existing tree")
@@ -34,6 +38,9 @@ def main():
     started = time.monotonic()
     subprocess.run(["cargo", "build", "--locked", "--offline", "--release", "-p", "vidgrab-supervisor", "-p", "vidgrab-native-host"], cwd=ROOT, check=True)
     output.mkdir(parents=True)
+    cargo_target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target"))
+    if not cargo_target.is_absolute():
+        cargo_target = ROOT / cargo_target
     with tempfile.TemporaryDirectory(prefix="vidgrab-freeze-") as scratch:
         subprocess.run([
             sys.executable, "-B", "-m", "PyInstaller", "--noconfirm",
@@ -42,16 +49,16 @@ def main():
         ], cwd=ROOT, env={**os.environ, "VIDGRAB_COMPONENT_DIR": str(arguments.components.resolve())}, check=True)
         shutil.copytree(Path(scratch) / "dist" / "vidgrab-engine", output / "engine")
     for name in ("vidgrab-supervisor", "vidgrab-native-host"):
-        shutil.copy2(ROOT / "target" / "release" / name, output / name)
-    app = output / "vidgrab-supervisor"
+        shutil.copy2(cargo_target / "release" / (name + suffix), output / (name + suffix))
+    app = output / ("vidgrab-supervisor" + suffix)
     if arguments.desktop:
-        app = output / "vidgrab-desktop"
+        app = output / ("vidgrab-desktop" + suffix)
         shutil.copy2(arguments.desktop, app)
     chrome = json.loads((ROOT / "extension" / "manifest.json").read_text())
     public = base64.b64decode(chrome["key"])
     identifier = "".join(chr(ord("a") + int(letter, 16)) for letter in hashlib.sha256(public).hexdigest()[:32])
     config = {
-        "app": str(app), "engine": str(output / "engine" / "vidgrab-engine"),
+        "app": str(app), "engine": str(output / "engine" / ("vidgrab-engine" + suffix)),
         "data_dir": str(arguments.data_dir.resolve()), "download_dir": str(arguments.download_dir.resolve()),
         "chrome_origin": f"chrome-extension://{identifier}/", "firefox_id": "vidgrab@azaz.local",
     }
@@ -60,12 +67,12 @@ def main():
     native = output / "native"
     native.mkdir()
     for browser, allowlist in (("chrome", {"allowed_origins": [config["chrome_origin"]]}), ("firefox", {"allowed_extensions": [config["firefox_id"]]})):
-        manifest = {"name": "com.vidgrab.companion", "description": "VidGrab desktop companion lifecycle spike", "path": str(output / "vidgrab-native-host"), "type": "stdio", **allowlist}
+        manifest = {"name": "com.vidgrab.companion", "description": "VidGrab desktop companion lifecycle spike", "path": str(output / ("vidgrab-native-host" + suffix)), "type": "stdio", **allowlist}
         (native / f"{browser}.json").write_text(json.dumps(manifest, indent=2) + "\n")
     check_started = time.monotonic()
-    result = subprocess.run([str(output / "engine" / "vidgrab-engine"), "--self-check"],
+    result = subprocess.run([str(output / "engine" / ("vidgrab-engine" + suffix)), "--self-check"],
         env={**os.environ, "PATH": "", "PYTHONPATH": "", "PYTHONHOME": ""}, capture_output=True, text=True, check=True)
-    receipt = {"target": "x86_64-unknown-linux-gnu", "python": sys.version.split()[0],
+    receipt = {"target": target, "python": sys.version.split()[0],
         "components": json.loads(result.stdout)["components"], "self_check_seconds": round(time.monotonic() - check_started, 3),
         "build_seconds": round(time.monotonic() - started, 3),
         "unpacked_bytes": sum(path.stat().st_size for path in output.rglob("*") if path.is_file())}

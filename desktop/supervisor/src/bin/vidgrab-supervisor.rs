@@ -7,8 +7,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Use --config with an explicit trusted runtime configuration".into());
     }
     let path = PathBuf::from(arguments.next().ok_or("Missing configuration path")?);
-    if arguments.next().is_some() { return Err("Unexpected argument".into()); }
+    let remaining: Vec<_> = arguments.collect();
     let config = Config::load(&path)?;
+    if remaining.len() == 2 && remaining[0] == "--request" {
+        let operation = remaining[1].to_str().ok_or("Invalid diagnostic operation")?;
+        if !["status", "activate", "quit", "quit_if_idle"].contains(&operation) {
+            return Err("Unsupported local diagnostic operation".into());
+        }
+        let request = protocol::Request { spike_version: 1, id: "diagnostic".into(), op: operation.into(), params: Default::default() };
+        request.validate(false).map_err(std::io::Error::other)?;
+        println!("{}", transport::call(&config, &request)?);
+        return Ok(());
+    }
+    if !remaining.is_empty() { return Err("Unexpected argument".into()); }
     match Owner::start(config.clone())? {
         Some(owner) => owner.run(|_| {}),
         None => {
