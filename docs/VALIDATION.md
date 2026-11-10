@@ -453,3 +453,44 @@ Tauri/current-user NSIS builds with bundled engine/sidecar and offline WebView2 
 A selected loopback WAV completes as MP3 after window Close. A second strict gate verifies disabled UI removal, NSIS rejection exit 2, unchanged selected installed hashes and the same active owner before completion. The normal NSIS launcher exits before its temporary child, so its parent exit is not the uninstaller outcome; the preserved failed harness receipt is distinct from the passing in-place _?= check. Native tray Open/Quit is visually present but full input/cleanup is unfinished. No visible console window appears in the settled UI audit; startup flashing has not yet been measured.
 
 RDP is certificate-pinned, uses a fresh standard account and shares no host clipboard/drives. OOBE initially blocked capture; real input finishes setup and subsequent UIA/screenshots pass. Silent installation does not prove a terminal-free installer journey. Actual Chrome/Firefox handoff, complete tray/GUI removal/reinstall, ownership/foreign/symlink/interruption, retained state/media/disconnection, Unicode paths, WebView2 missing/present and startup measurements remain pending. P02/ADR-001 stay open; P03 remains unstarted.
+
+## Windows Chrome activation and graphical reinstall — 2026-11-10
+
+The selected standard account in the disposable Windows 11 VM now passes real
+tray Open/Quit, a graphical same-version NSIS reinstall and actual Chrome
+native activation/browser-independent download. P02/ADR-001 remain open.
+
+- Actual launch diagnostics reproduce CreateProcess error 5 in an inherited
+  non-breakaway Job Object with limits 0, then the loaded-bridge replacement
+  failure. Four Job Object policy cases and the locked identical-bridge case
+  pass after their respective fixes; changed loaded bytes remain refused.
+  Explicit handle whitelists, native deadlines and no-replay semantics remain.
+- 22 Windows Rust cases and five frozen lifecycle cases (10.506 s) pass; all
+  26 Linux Rust cases pass. Backend/frontend behavior is unchanged, so previous
+  66 guarded backend and renderer evidence is reused.
+- Rebuilt NSIS: 315,999,079 bytes (301.36 MiB), SHA-256
+  `9d5d0e091c347bfb53174c14f71dc6953dba38c2c5514b5b3487d4579ae56e1b`.
+  Archive-extracted and installed desktop bytes match
+  `1d86b4d8b4346deab526221c74cb3f0dc45b70c22d046b000d061acaf97d61bd`;
+  Tauri restores the different raw executable after NSIS bundle-marker patching.
+- Pointer/MSAA/UIA journeys cover desktop setup entry, maintenance/location,
+  completion and Finish/Run without elevation. Natural WebView2 launch retains
+  explicit browser disconnection; an image-guided pointer click with a kernel
+  window-owner check restores both browser registrations. This is a reinstall,
+  not a fresh-install/Windows Settings removal claim.
+- Chrome 157.0.8103.51 activates owner 17968/engine 18392 in a 1.215 s sample.
+  Repeated activation retains the owner. A gated download remains active after
+  every observed Chrome process exits and then completes the third retained
+  history row, MP3 SHA-256
+  `00d7df3ea029c529bfafb37642b87ced2f9d10a4a9338a58b97c2658376a0683`.
+
+Receipts are under `/tmp/vidgrab-windows-p02-e_ektizc`; selected screenshots and
+the exact installer are ignored under
+`packaging/out/windows-desktop-validation`. HANDOFF identifies the commands,
+negative receipts and current controls. Windows Firefox/content-token checks,
+trusted installer destination/ownership guards, fresh GUI removal/reinstall,
+Unicode paths, absent/present WebView2 and final startup measurements remain
+unproven. In particular, the current preinstall hook invokes an existing
+destination executable before independent ownership validation. Arbitrary
+nested/restricted Job Object configurations are not certified. Windows
+acceptance is incomplete and P03 has not started.

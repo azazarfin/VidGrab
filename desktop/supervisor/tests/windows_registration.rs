@@ -157,3 +157,26 @@ fn packaged_connection_registers_both_browsers_and_persists_revocation() {
         .join("vidgrab-native-host.exe")
         .is_file());
 }
+
+#[test]
+fn package_activation_preserves_an_identical_loaded_bridge() {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+    let fixture = Fixture::new();
+    installation::prepare(&fixture.layout, &fixture.dirs).unwrap();
+    let bridge = fixture.dirs.bridge_dir().join("vidgrab-native-host.exe");
+    // A running Windows executable allows reads but prevents replacement.
+    let _loaded = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&bridge)
+        .unwrap();
+    installation::prepare(&fixture.layout, &fixture.dirs).unwrap();
+    assert_eq!(std::fs::read(&bridge).unwrap(), b"fixture");
+    std::fs::write(&fixture.layout.native, b"new version").unwrap();
+    assert!(
+        installation::prepare(&fixture.layout, &fixture.dirs).is_err(),
+        "Changed bridge bytes must still obey Windows sharing restrictions"
+    );
+    assert_eq!(std::fs::read(&bridge).unwrap(), b"fixture");
+}

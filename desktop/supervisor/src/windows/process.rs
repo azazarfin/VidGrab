@@ -103,8 +103,47 @@ fn quoted_argument(value: &std::ffi::OsStr) -> io::Result<Vec<u16>> {
     Ok(result)
 }
 
+fn activation_job_flags() -> io::Result<u32> {
+    let mut in_job = 0;
+    if unsafe { IsProcessInJob(GetCurrentProcess(), null_mut(), &mut in_job) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if in_job == 0 {
+        return Ok(0);
+    }
+    let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+    if unsafe {
+        QueryInformationJobObject(
+            null_mut(),
+            JobObjectExtendedLimitInformation,
+            std::ptr::from_mut(&mut limits).cast(),
+            std::mem::size_of_val(&limits) as u32,
+            null_mut(),
+        )
+    } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let flags = limits.BasicLimitInformation.LimitFlags;
+    if flags & JOB_OBJECT_LIMIT_BREAKAWAY_OK != 0 {
+        return Ok(CREATE_BREAKAWAY_FROM_JOB);
+    }
+    if flags & JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK != 0 {
+        return Ok(0);
+    }
+    // Task Scheduler can supply a job without breakaway permission or
+    // kill-on-close. Inheriting that job does not couple app exit to the host.
+    if flags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "The launcher's kill-on-close job does not permit companion breakaway",
+        ));
+    }
+    Ok(0)
+}
+
 pub fn activate(executable: &Path, launch_arg: &str, configuration: &Path) -> io::Result<()> {
     use windows_sys::Win32::Storage::FileSystem::*;
+    let job_flags = activation_job_flags()?;
     let nul = wide(std::ffi::OsStr::new("NUL"))?;
     let security = SECURITY_ATTRIBUTES {
         nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
@@ -149,7 +188,7 @@ pub fn activate(executable: &Path, launch_arg: &str, configuration: &Path) -> io
             null(),
             1,
             EXTENDED_STARTUPINFO_PRESENT
-                | CREATE_BREAKAWAY_FROM_JOB
+                | job_flags
                 | CREATE_NEW_PROCESS_GROUP
                 | DETACHED_PROCESS,
             null(),

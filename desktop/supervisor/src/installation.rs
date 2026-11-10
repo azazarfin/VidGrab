@@ -173,7 +173,15 @@ fn write_bridge(layout: &Layout, dirs: &UserDirs, config: &InstalledConfig) -> i
     let bridge = dirs.bridge_dir();
     let native = bridge.join(native_name());
     private_directory(&bridge)?;
-    atomic_write(&native, &fs::read(&layout.native)?, 0o700)?;
+    let bytes = fs::read(&layout.native)?;
+    // Browser activation keeps the Windows bridge executable loaded while
+    // the desktop registers itself. Reuse only identical, private bytes.
+    #[cfg(windows)]
+    let replace_native = !native.exists() || fs::read(&native)? != bytes
+        || !crate::windows::is_private(&native)?;
+    #[cfg(target_os = "linux")]
+    let replace_native = true;
+    if replace_native { atomic_write(&native, &bytes, 0o700)?; }
     atomic_write(&dirs.config_path(), &json_bytes(config)?, 0o600)
 }
 
