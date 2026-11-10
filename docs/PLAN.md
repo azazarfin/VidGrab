@@ -1,6 +1,6 @@
 # VidGrab desktop-companion plan
 
-Status: P01 is complete. The user resumed on 2026-11-04 and requested Linux work now, Windows validation later. The Ubuntu P02 preview gates and Linux ADR-001 review pass, including final-package startup measurements on 2026-11-10. Strict Firefox Snap passes, and Firefox Flatpak passes with guided portal opt-in. Windows validation remains deferred; P02 and the framework decision remain open.
+Status: P01 is complete. The user resumed on 2026-11-04 and requested Linux work now, Windows validation later. The Ubuntu P02 preview gates and Linux ADR-001 review pass, including final-package startup measurements on 2026-11-10. Strict Firefox Snap passes, and Firefox Flatpak passes with guided portal opt-in. The user is now preparing a Windows 11 VM connection; native Windows implementation/validation remain incomplete. P02 and the framework decision remain open.
 
 ## Approach
 
@@ -54,7 +54,7 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 - [x] Implement and validate terminal-free Linux browser registration/status/Connect/Repair/Disconnect in both actual Ubuntu previews. Explicit disconnection survives reopen/relocation, blocks copied/live hosts, preserves active downloads/history and refuses foreign manifests. Native Chrome/Firefox, strict Snap and manual Flatpak handoff pass again.
 - [x] Complete terminal-free Ubuntu preview installation/removal: Files/App Center `.deb` install/uninstall and managed AppImage/Applications install/remove/reinstall pass with preserved state/media and browser disconnection. Idle removal checks every unfinished job; actual-image file ownership/active-owner checks pass. See [the installation guide](LINUX_INSTALLATION.md) and the 2026-11-10 evidence in VALIDATION.
 - [x] Record final-package startup measurements separately from registration and driver setup and complete the Linux ADR-001 acceptance review. Three fresh-state runs per final package pass: `.deb` median 0.854 s (0.839–2.034 s), FUSE AppImage median 1.478 s (1.456–1.760 s). These include the WebDriver launch/session command and observation overhead; no cold-cache or release latency budget is claimed. The Linux review supports retaining the proposed stack for Windows validation. KDE, other distributions and physical-device behavior need separate evidence before support claims.
-- [ ] Implement and validate Windows x64 packaged paths, named pipes/Job Objects, WebView2/tray, Chrome/Firefox registration and installer lifecycle. Windows evidence is deferred at the user's request, not waived.
+- [ ] Implement and validate Windows x64 packaged paths, named pipes/Job Objects, WebView2/tray, Chrome/Firefox registration and installer lifecycle. Existing Windows 11 VM connection preparation has begun; SSH access, build storage and a disposable clean acceptance baseline are unresolved. No target implementation/build/test evidence is claimed; see HANDOFF.
 - [ ] Acceptance: both target OSes pass the package/lifecycle gate, measurements are recorded and ADR-001 is finalized. This Linux spike does not complete P02; P03 has not started.
 - Suggested commit: `feat(desktop): prove bundled engine and browser bridge lifecycle`.
 
