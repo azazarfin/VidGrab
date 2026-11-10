@@ -291,7 +291,78 @@ The harness required GNOME search/workspace observation fixes and App Center row
 
 The guest completed orderly poweroff in **9.203 s**, with QEMU exit observed through its pidfd and no QMP fallback. `release-ux-shutdown.json` and current `vm.json` record stopped state. `release-ux-evidence/` under `/tmp/vidgrab-native-ubuntu24-0xyzhvdi` contains 135 selected reports, inputs, logs and screenshots, plus a checksummed manifest; 103 screenshots are included. The earlier partial journey and incident/restoration are labelled separately. Private authentication/key files are excluded. Packages/build receipts remain under `/tmp/vidgrab-ubuntu-p02-f7mg65zi/target-removal-final/` and `appimage-removal-final/`; all artifacts remain ephemeral.
 
-Next: final-package startup measurements and the Linux ADR-001 acceptance review. Other desktop/distribution configurations, physical devices, release updates/interrupted installation and deferred Windows remain separate gates. P02/ADR-001 stay open; P03 has not started. The legacy source DB, dirty browser ZIPs and promotional image are preserved.
+The final-package startup measurements and Linux ADR-001 review below complete the next Linux subtask. Other desktop/distribution configurations, physical devices, release updates/interrupted installation and deferred Windows remain separate gates. P02/ADR-001 stay open; P03 has not started. The legacy source DB, dirty browser ZIPs and promotional image are preserved.
+
+## P02 final Ubuntu startup and Linux acceptance review — 2026-11-10
+
+The unchanged final 0.1.0 packages were measured in the same disposable Ubuntu
+24.04.5/GNOME 46 x86_64 guest, kernel 6.8.0-147-generic, with four virtual CPUs,
+4 GiB RAM and software-rendered native Wayland. The installed `.deb` executable
+and both artifact hashes match the installation/removal checkpoint above.
+Source commit `66a836c79decd89493c32d830ed222e022667806` was copied into a fresh
+read-only input tree; all 121 selected source files were hash-verified before
+each run. No production source or package bytes changed.
+
+| Final package | Artifact size | Registered launch → Connected samples | Median | Range |
+| --- | --- | --- | --- | --- |
+| `.deb` | 135,657,230 bytes / 129.37 MiB | 2.034, 0.839, 0.854 s | 0.854 s | 0.839–2.034 s |
+| Actual FUSE AppImage | 202,910,200 bytes / 193.51 MiB | 1.760, 1.478, 1.456 s | 1.478 s | 1.456–1.760 s |
+
+The `.deb` reports Installed-Size **322,487 KiB / 314.93 MiB**, excluding its OS
+GUI dependencies and user state/media. This metadata differs from compressed
+artifact size. The AppImage size includes its bundled GUI support libraries;
+its mounted/extracted footprint is not represented by the compressed size.
+
+Each sample uses a fresh application home/state and the unchanged
+`tests/check_wayland_desktop.py`. The timer begins immediately before
+`POST /session` launches the registered package and stops when the frontend's
+`.connection` text is Connected. Registration/descriptor preparation and
+WebKitWebDriver process startup/readiness happen before the timer; screenshots,
+fixture work, recovery and Quit happen afterward. WebDriver launch/session
+command overhead and the helper's 0.1-second observation cadence remain included.
+Registration can warm package files; no OS cache eviction was performed. These
+are conservative observed startup samples, not cold-cache/boot timings, a p95
+estimate or a numerical release latency budget.
+
+All six complete journeys also pass native Wayland/visible GNOME tray, hidden
+WAV → MP3 completion, tray Open, repeated activation with one owner, engine
+recovery and tray Quit. All three image mounts unmount normally. Matching
+browser registrations are explicitly removed after each selected owner exits;
+fresh descriptors/state/media remain. The first `.deb` attempt failed before
+app launch because the outer driver omitted the recipe's
+`PYTHONPATH=/usr/lib/python3/dist-packages`, hiding system `gi` from the test venv.
+It remains a separate failed receipt and is excluded from timing samples; the
+documented environment was restored without changing tests or dependencies.
+Twelve empty/completed screenshots were reviewed.
+
+| ADR-001 Linux gate | Review result and evidence |
+| --- | --- |
+| Selected baseline installation without separate language setup | Pass for the Ubuntu/GNOME preview: terminal-free `.deb` App Center and managed AppImage installation/removal/reinstall, retained media/state and explicit browser disconnection. Final package extraction/frozen self-check and 50/235-ELF glibc-2.39 audits establish bundled Python/media tools; OS GUI/FUSE libraries remain platform dependencies. |
+| Tray/fallback and app-owned lifetime | Pass: native Wayland and virtual pointer tray journeys, earlier no-tray visible-window behavior, native-host/browser-independent downloads, single ownership, bounded recovery and process-group cleanup. The six final runs repeat tray/recovery/Quit against final bytes. |
+| Browser-to-app activation and connection controls | Pass for native Chrome/Firefox, strict Firefox Snap and manually opted-in Firefox Flatpak with real Allow. Persistent Disconnect/Repair and missing-app behavior pass; stock Flatpak's disabled portal still requires the documented manual setup. Popup/options remain on the legacy API until P04. |
+| Measured size/startup and build feasibility | Pass: final artifact sizes and three startup samples per package are recorded above. Locked staging, full frozen-engine restoration after linuxdeploy and shipped-ELF/resource audits make the tested Linux packaging path repeatable. No comparative alternative-framework benchmark or release budget is claimed. |
+
+The Linux engineering review supports retaining the proposed Tauri/React,
+Rust owner/bridge and frozen Python stack for the Windows spike. It does not
+finalize ADR-001 or P02: Windows x64 IPC/Job Objects, WebView2/tray, native browser
+registration and installer lifecycle are deferred and unimplemented. Other
+Linux desktops/distributions, physical devices, release updates/interrupted
+installation, final browser identities and later P03/P04 behavior retain their
+own gates. P03 has not started.
+
+`startup-final-audit.json` verifies **34 media/47 databases**, including unchanged
+hashes for every earlier **28/41**, and **1,041 unrelated OS package states**.
+Selected app/browser/driver processes, image mounts, native manifests, managed
+files and both portal permissions are absent. Apt timers are restored; saved/live
+drop firewall, root-owned FUSE 4755 and fstab 0644 pass. Existing guest
+accessibility defaults remain. `startup-shutdown.json` records orderly poweroff
+in **8.705 s** with QEMU exit observed and no fallback; current `vm.json` is
+stopped. `startup-summary.json` and checksummed `startup-evidence/` under
+`/tmp/vidgrab-native-ubuntu24-0xyzhvdi` retain the accepted/failed receipts,
+selected inputs/logs/screenshots and audits; private authentication/key files
+are excluded. The legacy source DB and three dirty local assets retain their
+previous hashes. Next P02 target work is Windows when the user resumes that
+deferred gate; this checkpoint adds documentation only.
 
 ## Deterministic coverage to extend through P05
 

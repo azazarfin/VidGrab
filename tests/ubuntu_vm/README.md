@@ -326,3 +326,23 @@ including the labelled earlier partial journey and the five-package App Center
 incident/exact-version restoration. Do not copy the private authentication/key
 files. Keep Ubuntu's packaged accessibility environment defaults; removing a
 runtime override does not remove those `/etc/environment.d` defaults.
+
+## Final-package startup and Linux review
+
+The unchanged final packages pass three sequential fresh-state runs each on
+2026-11-10 using the Wayland commands above. Registered launch to Connected has
+median **0.854 s** for the `.deb` (0.839–2.034 s) and **1.478 s** for the actual
+FUSE AppImage (1.456–1.760 s). Registration and WebKitWebDriver process/readiness
+are outside the timer; its launch/session command and observation overhead are
+included. No OS cache eviction, cold-install, physical-device or release latency
+budget is claimed. All six tray/download/recovery/Quit journeys also pass.
+
+`startup-final-audit.json` verifies 34 media/47 databases, preserving all earlier
+28/41 hashes and 1,041 unrelated OS package states. Selected processes, image
+mounts, manifests, managed files and portal permissions are absent; timers,
+firewall and FUSE/fstab modes pass. `startup-shutdown.json` records orderly
+poweroff in 8.705 s with QEMU exit observed and no fallback; current `vm.json` is
+stopped. `startup-summary.json` and `startup-evidence/` retain samples, the earlier
+prelaunch missing-`gi` harness failure, selected logs/screenshots and source
+hashes. The selected Ubuntu Linux ADR-001 review passes; Windows and final
+cross-platform acceptance remain deferred/open, and P03 has not started.

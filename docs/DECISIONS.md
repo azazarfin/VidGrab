@@ -4,11 +4,13 @@ Record new decisions here with date, status, rationale, and the milestone that v
 
 ## ADR-001 — Desktop companion with a reusable Python engine
 
-- **Date:** 2026-11-03. **Status:** product direction confirmed; stack proposed, P02 gate.
+- **Date:** 2026-11-03. **Status:** product direction confirmed; Linux feasibility gates reviewed and passed on 2026-11-10. Stack remains proposed until the deferred Windows P02 gate passes.
 - **Decision:** build a standalone download/settings app that also serves the extension. Recommend Tauri 2 + TypeScript/React, a small Rust bridge, and a packaged Python engine.
 - **Why:** reuse yt-dlp/Python behavior and web UI skills while moving lifecycle/installation behind one app. Python workers provide enforceable isolation; shared contracts avoid a second business-logic implementation.
 - **Tradeoff:** Rust, Python, and a web frontend add build complexity; Tauri depends on OS webviews. Evaluate real installers before investing in UI. PySide6 is the fallback if Tauri packaging/integration is disproportionately complex; Electron would simplify the web runtime but add distribution weight. A full Rust downloader rewrite discards useful Python integration.
 - **Gate:** clean Linux/Windows installation, no external language runtime, functioning tray/fallback window and browser-to-app activation. Record measured size/startup results before accepting the stack.
+- **Linux review — 2026-11-10:** the selected Ubuntu 24.04/GNOME x86_64 preview passes installation/removal, bundled runtime/tools, tray/fallback, lifecycle and native Chrome/Firefox activation. Strict Snap and guided Flatpak portal setup have separate passing evidence. Final `.deb` is 129.37 MiB and AppImage 193.51 MiB; three fresh-state registered launches yield medians 0.854 s and 1.478 s, including WebDriver launch/session and observation overhead but excluding registration/driver preparation. See [the acceptance review](VALIDATION.md#p02-final-ubuntu-startup-and-linux-acceptance-review--2026-11-10) for ranges and limits.
+- **Engineering conclusion:** retain the proposed Tauri/React, Rust owner/bridge and frozen Python stack for the Windows spike. Linux integration/build complexity now has verified staging, immutable-engine restoration and ownership/cleanup checks; current evidence does not require the PySide6 fallback. This is a Linux feasibility conclusion, not final cross-platform stack acceptance. No cold-cache, physical-device, other-distribution or release update/recovery claim is added; Windows remains deferred and P03 unstarted.
 
 ## ADR-002 — Linux and Windows first
 
@@ -119,7 +121,7 @@ Record new decisions here with date, status, rationale, and the milestone that v
 
 ## ADR-015 — Explicit Ubuntu preview installation and removal
 
-- **Date:** 2026-11-10. **Status:** implemented and verified for the Linux P02 preview; final-package startup review, Windows and ADR-001 remain open.
+- **Date:** 2026-11-10. **Status:** implemented and verified for the Linux P02 preview; the final-package startup/Linux review also passes. Windows and final ADR-001 acceptance remain open.
 - **Policy:** Ubuntu owns `.deb` installation/authentication/removal through Files and App Center. VidGrab prepares idle shutdown, persists browser disconnection and opens App Center. AppStream XML and DEP-11 YAML map the installed `vid-grab` package to its VidGrab desktop entry.
 - **AppImage:** an explicit Install action creates a per-user managed copy, icon, checksum receipt and Applications shortcut. The native descriptor points to that stable copy. Installing keeps the current download session open; replacing a different/changed installation, foreign files and symlinks are refused. Removal checks ownership and image integrity and deletes only managed files after the owner has stopped.
 - **Retention:** preserve media, history, selected paths, native descriptor/bridge and explicit browser disconnection through removal/reinstall. The confirmation initially focuses Keep VidGrab; Escape cancels. Active work disables removal, and native-only `quit_if_idle` requires a positive idle observation covering all unfinished jobs, including jobs outside bounded history.
@@ -128,11 +130,11 @@ Record new decisions here with date, status, rationale, and the milestone that v
 
 ## Pending decisions by gate
 
-The user chose **Linux work now, Windows validation later** on 2026-11-04. The Linux spike uses Tauri 2/React, a frozen Python engine and a Rust POSIX owner/bridge. This is implementation evidence for ADR-001/003, not final stack acceptance. Windows native IPC/Job Objects and target packaging remain unimplemented; the workspace currently rejects non-Linux builds. Neither target's complete installer gate is waived, and P03 has not started.
+The user chose **Linux work now, Windows validation later** on 2026-11-04. The Linux spike uses Tauri 2/React, a frozen Python engine and a Rust POSIX owner/bridge. The selected Ubuntu preview's ADR-001 gates and startup/size review pass on 2026-11-10; final stack acceptance still requires Windows. Windows native IPC/Job Objects and target packaging remain unimplemented; the workspace currently rejects non-Linux builds. Windows evidence is deferred, not waived, and P03 has not started.
 
 | Gate | Decision/evidence needed | Working assumption |
 | --- | --- | --- |
-| P02 | Framework, baseline acceptance, tray behavior, sandbox native-host access | Tauri 2; Ubuntu 24.04 LTS selected for Linux rebuild; native Chrome/Firefox first |
+| P02 | Windows packaging, native IPC/Job Objects, WebView2/tray and browser/installer lifecycle; final framework acceptance | Retain Tauri 2 for the Windows spike; Ubuntu 24.04/GNOME preview review passes; other Linux configurations need separate evidence |
 | P03/P06 | Pause support by transfer/post-processing phase | Explain restart semantics for non-resumable phases |
 | P05/P06 | Current Bangla transliteration behavior | Preserve baseline until clarified; separate display metadata from filename policy |
 | P07 | Hosting/store IDs, signing ownership, project license and bundled notices | Direct installer/extension distribution; no cloud account required |
