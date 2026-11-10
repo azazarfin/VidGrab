@@ -1,6 +1,6 @@
 # VidGrab desktop-companion plan
 
-Status: P01 is complete. The user resumed on 2026-11-04 and requested Linux work now, Windows validation later. The Ubuntu P02 preview gates and Linux ADR-001 review pass, including final-package startup measurements on 2026-11-10. Strict Firefox Snap passes, and Firefox Flatpak passes with guided portal opt-in. Windows native IPC/process/registration and frozen lifecycle now pass; Windows desktop/browser/standard-user installer acceptance remain incomplete. P02 and the framework decision remain open.
+Status: P01 and P02 are complete for the selected Ubuntu 24.04/GNOME x86_64 and Windows 11 x64 preview baselines. Both platform reviews, packaged lifecycle/browser gates and measured size/startup results pass on 2026-11-10. Windows missing-WebView2 behavior uses reversible SDK discovery unavailability and an actual offline per-user install/render journey; physical runtime absence is not claimed. ADR-001 is accepted for this feasibility scope. P03 has not started.
 
 ## Approach
 
@@ -34,7 +34,7 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 - [x] Acceptance evidence: import/app creation and 35 deterministic tests perform no external requests or real downloads and preserve the legacy DB. A mocked settings check passes 12 viewport/tab combinations. Exact commands/results and limits are in [DEVELOPMENT.md](DEVELOPMENT.md) and [VALIDATION.md](VALIDATION.md).
 - Implementation commit: `7ba96d0` (`refactor(backend): isolate runtime state and deterministic setup`). The separate cleanup checkpoint is identified in [HANDOFF.md](../HANDOFF.md).
 
-### [ ] P02 — Prove packaged lifecycle and browser connection on both target OSes
+### [x] P02 — Prove packaged lifecycle and browser connection on both target OSes
 
 - [x] Add a minimal Linux `desktop/` Tauri/React shell, packaged fixture engine, `native-host/`, component locks, clean staging and resource-preparation commands.
 - [x] Bundle Python, yt-dlp, FFmpeg/ffprobe, Deno and matching EJS on Linux. Frozen imports, checksum/version checks and a loopback WAV → MP3 fixture work with an empty `PATH`.
@@ -60,8 +60,8 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 - [x] Exercise the rebuilt NSIS preview through standard-user graphical same-version reinstall and Finish/Run; retain disconnection and restore registrations through real Connect input.
 - [x] Complete actual Windows Firefox/content-token and browser-independent download/history checks; embed a trusted installer checker and pass eight real foreign/changed/missing/reparse destination refusals. The new receipt verifies the complete package before maintenance.
 - [x] Complete fresh Windows GUI install/remove/reinstall in a folder with spaces/Bangla, exact-package active refusal, preserved history/media/disconnection and Unicode state/media/no-tray/recovery/reopen. Ten actual installer refusals and all 89 installed/archive files pass.
-- [ ] Complete Windows absent/present WebView2 and final-package startup/size measurements, then review Windows ADR-001 acceptance. Windows 11 QEMU/KVM is explicitly disposable with no backups/snapshots; E is the verified D-backed 40 GiB build disk. Preserve Ubuntu and protected local assets; see HANDOFF.
-- [ ] Acceptance: both target OSes pass the package/lifecycle gate, measurements are recorded and ADR-001 is finalized. This Linux spike does not complete P02; P03 has not started.
+- [x] Complete Windows present/controlled-unavailable WebView2 behavior and final-package startup/size review. Actual SDK discovery fails with both machine keys hidden; the exact NSIS supplies a per-user runtime offline without elevation and renders through it before hash-verified restoration. Machine files remain; physical absence is a separate claim. Installer 301.96 MiB/installed files 308.88 MiB; three fresh explicit application runtimes with existing selected WebView/warm OS caches yield median 1.225 s (1.179–1.789 s). See HANDOFF for overhead, failed attempts and limits.
+- [x] Acceptance: both selected preview OS baselines pass packaged installation/lifecycle/browser gates, measurements are recorded and ADR-001 is accepted for P02. No release/physical-hardware/additional-OS or physically runtime-free Windows claim is added. Both guests shut down normally; protected state/media/assets remain. P03 has not started.
 - Suggested commit: `feat(desktop): prove bundled engine and browser bridge lifecycle`.
 
 ### [ ] P03 — Make downloads durable and cancellation enforceable
