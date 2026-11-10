@@ -1,0 +1,3 @@
+[target.x86_64-pc-windows-msvc]
+# Native bridges and installer checks also run before any app dependencies exist.
+rustflags = ["-C", "target-feature=+crt-static"]

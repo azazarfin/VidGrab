@@ -130,11 +130,11 @@ Record new decisions here with date, status, rationale, and the milestone that v
 
 ## Pending decisions by gate
 
-The user chose **Linux work now, Windows validation later** on 2026-11-04. The Linux spike uses Tauri 2/React, a frozen Python engine and a Rust POSIX owner/bridge. The selected Ubuntu preview's ADR-001 gates and startup/size review pass on 2026-11-10; final stack acceptance still requires Windows. Windows native IPC/Job Objects, frozen tools, Tauri/current-user NSIS, standard-user tray/graphical reinstall and actual Chrome handoff now pass their selected-VM checks. Firefox, trusted installer ownership/removal/reinstall, Unicode, WebView2 and final measurements remain incomplete. Windows evidence is deferred, not waived, and P03 has not started.
+The user chose **Linux work now, Windows validation later** on 2026-11-04. The Linux spike uses Tauri 2/React, a frozen Python engine and a Rust POSIX owner/bridge. The selected Ubuntu preview's ADR-001 gates and startup/size review pass on 2026-11-10; final stack acceptance still requires Windows. Windows native IPC/Job Objects, frozen tools, Tauri/current-user NSIS, standard-user tray/graphical reinstall and actual Chrome handoff now pass their selected-VM checks. Firefox, trusted installer ownership/privacy/refusals, GUI install/remove/reinstall, Unicode and no-tray/recovery/reopen now pass. Absent/present WebView2 and final startup/size remain incomplete. Windows evidence is deferred, not waived, and P03 has not started.
 
 | Gate | Decision/evidence needed | Working assumption |
 | --- | --- | --- |
-| P02 | Remaining Windows Firefox, installer ownership/removal/reinstall, Unicode and WebView2/startup gates; final framework acceptance | Retain Tauri 2 for the Windows spike; Ubuntu 24.04/GNOME preview review passes; other Linux configurations need separate evidence |
+| P02 | Remaining Windows absent/present WebView2 and startup/size gates; final framework acceptance | Retain Tauri 2 for the Windows spike; Ubuntu 24.04/GNOME preview review passes; other Linux configurations need separate evidence |
 | P03/P06 | Pause support by transfer/post-processing phase | Explain restart semantics for non-resumable phases |
 | P05/P06 | Current Bangla transliteration behavior | Preserve baseline until clarified; separate display metadata from filename policy |
 | P07 | Hosting/store IDs, signing ownership, project license and bundled notices | Direct installer/extension distribution; no cloud account required |

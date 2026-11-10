@@ -84,6 +84,21 @@ class WindowsNativeChecks(unittest.TestCase):
     native_override = None
     evidence = None
 
+    def test_native_helpers_do_not_require_a_visual_cpp_installation(self):
+        import pefile  # Locked Windows PyInstaller development dependency.
+        imports = {}
+        for name in ("vidgrab-supervisor.exe", "vidgrab-native-host.exe"):
+            image = pefile.PE(str(self.bundle / name), fast_load=True)
+            try:
+                image.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_IMPORT"]])
+                dependencies = sorted(entry.dll.decode("ascii").lower() for entry in image.DIRECTORY_ENTRY_IMPORT)
+                forbidden = [dll for dll in dependencies if dll.startswith(("vcruntime", "msvcp", "concrt"))]
+                self.assertEqual(forbidden, [], f"{name} must carry its C++ runtime through static linkage")
+                imports[name] = dependencies
+            finally:
+                image.close()
+        self.evidence.append({"check": self.id(), "imports": imports})
+
     def setUp(self):
         self.assertEqual(os.name, "nt", "Run on the Windows kernel")
         self.assertEqual(os.environ.get("COMPUTERNAME", "").upper(), "DESKTOP-OSOIBNA", "Only the selected disposable VM is authorized")

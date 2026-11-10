@@ -59,7 +59,8 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 - [x] Complete actual Windows tray Close/Open/Quit and Chrome activation/download after full browser exit; preserve the same owner/engine and completed history. Job-context and loaded-bridge regressions pass.
 - [x] Exercise the rebuilt NSIS preview through standard-user graphical same-version reinstall and Finish/Run; retain disconnection and restore registrations through real Connect input.
 - [x] Complete actual Windows Firefox/content-token and browser-independent download/history checks; embed a trusted installer checker and pass eight real foreign/changed/missing/reparse destination refusals. The new receipt verifies the complete package before maintenance.
-- [ ] Complete fresh Windows GUI install/remove/reinstall, exact-package active refusal, preserved history/media/disconnection, Unicode paths, no-tray fallback and startup/WebView2 gates. Windows 11 QEMU/KVM is explicitly disposable with no backups/snapshots; E is the verified D-backed 40 GiB build disk. Preserve Ubuntu and protected local assets; see HANDOFF.
+- [x] Complete fresh Windows GUI install/remove/reinstall in a folder with spaces/Bangla, exact-package active refusal, preserved history/media/disconnection and Unicode state/media/no-tray/recovery/reopen. Ten actual installer refusals and all 89 installed/archive files pass.
+- [ ] Complete Windows absent/present WebView2 and final-package startup/size measurements, then review Windows ADR-001 acceptance. Windows 11 QEMU/KVM is explicitly disposable with no backups/snapshots; E is the verified D-backed 40 GiB build disk. Preserve Ubuntu and protected local assets; see HANDOFF.
 - [ ] Acceptance: both target OSes pass the package/lifecycle gate, measurements are recorded and ADR-001 is finalized. This Linux spike does not complete P02; P03 has not started.
 - Suggested commit: `feat(desktop): prove bundled engine and browser bridge lifecycle`.
 
