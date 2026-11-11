@@ -17,8 +17,8 @@ from backend.runtime import OutputPathError, RuntimeConfig
 from backend.downloader import run_download
 from backend.cookie_manager import write_cookies_to_netscape_format
 from backend.sanitizer import sanitize_text
-from backend.engine.execution import ProcessDownloadExecutor, ThreadDownloadExecutor
-from backend.services.job_state import TERMINAL, accepts_progress
+from backend.engine.execution import ProcessDownloadExecutor, ThreadDownloadExecutor, join_owned_task
+from backend.services.job_state import FINISH_FROM, RUNNABLE, TERMINAL, accepts_progress
 
 logger = logging.getLogger("vidgrab.queue_manager")
 
@@ -105,20 +105,31 @@ class QueueManager:
         self.in_memory_progress: Dict[str, Dict[str, Any]] = {}
         self.worker_task: Optional[asyncio.Task] = None
         self.scheduler_task: Optional[asyncio.Task] = None
+        self.stop_task: Optional[asyncio.Task] = None
         self.wakeup_event = asyncio.Event()
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.task_cookies: Dict[str, List[Dict[str, Any]]] = {}
         self.cancel_locks: Dict[str, asyncio.Lock] = {}
+        self.state_locks: Dict[str, asyncio.Lock] = {}
         self.stopping = False
+
+    def _state_lock(self, task_id):
+        return self.state_locks.setdefault(task_id, asyncio.Lock())
 
     def start(self):
         self.stopping = False
+        self.stop_task = None
         self.loop = asyncio.get_running_loop()
         self.worker_task = asyncio.create_task(self._worker_loop())
         self.scheduler_task = asyncio.create_task(self._scheduler_loop())
         logger.info("Queue manager worker loop and scheduler loop started.")
 
     async def stop(self):
+        if self.stop_task is None:
+            self.stop_task = asyncio.create_task(self._stop())
+        await join_owned_task(self.stop_task)
+
+    async def _stop(self):
         self.stopping = True
         if self.worker_task:
             self.worker_task.cancel()
@@ -246,25 +257,28 @@ class QueueManager:
         return task_id
 
     async def cancel(self, task_id: str):
+        operation = asyncio.create_task(self._cancel(task_id))
+        await join_owned_task(operation)
+
+    async def _cancel(self, task_id: str):
         async with self.cancel_locks.setdefault(task_id, asyncio.Lock()):
-            async with aiosqlite.connect(self.runtime.db_path) as db:
-                async with db.execute("SELECT status FROM downloads WHERE id=?", (task_id,)) as cursor:
-                    row = await cursor.fetchone()
-                if row is None or row[0] in TERMINAL:
-                    return
-                await db.execute(
-                    "UPDATE downloads SET status='cancelling' WHERE id=? AND status NOT IN ('complete', 'failed', 'cancelled')",
-                    (task_id,),
-                )
-                await db.commit()
-            self.cancelled_tasks.add(task_id)
-            if task_id in self.in_memory_progress:
-                self.in_memory_progress[task_id]["status"] = "cancelling"
+            async with self._state_lock(task_id):
+                async with aiosqlite.connect(self.runtime.db_path) as db:
+                    cursor = await db.execute(
+                        "UPDATE downloads SET status='cancelling' WHERE id=? AND status NOT IN ('complete', 'failed', 'cancelled')",
+                        (task_id,),
+                    )
+                    await db.commit()
+                    if not cursor.rowcount:
+                        return
+                self.cancelled_tasks.add(task_id)
+                if task_id in self.in_memory_progress:
+                    self.in_memory_progress[task_id]["status"] = "cancelling"
             task = self.active_tasks.get(task_id)
             if task and not task.done():
                 task.cancel()
                 try:
-                    await asyncio.shield(task)
+                    await join_owned_task(task)
                 except asyncio.CancelledError:
                     if not task.done():
                         raise
@@ -279,16 +293,23 @@ class QueueManager:
         else:
             fields["completed_at"] = None
         assignments = ", ".join(f"{key}=?" for key in fields)
-        async with aiosqlite.connect(self.runtime.db_path) as db:
-            cursor = await db.execute(
-                f"UPDATE downloads SET {assignments} WHERE id=? AND status NOT IN ('complete', 'failed', 'cancelled')",
-                (*fields.values(), task_id),
-            )
-            changed = cursor.rowcount
-            await db.commit()
-        if changed and task_id in self.in_memory_progress:
-            self.in_memory_progress[task_id].update(fields)
-            await self.connections.broadcast({"event": f"task_{status}", "data": self.in_memory_progress[task_id]})
+        expected = tuple(FINISH_FROM[status])
+        placeholders = ", ".join("?" for _ in expected)
+        message = None
+        async with self._state_lock(task_id):
+            async with aiosqlite.connect(self.runtime.db_path) as db:
+                cursor = await db.execute(
+                    f"UPDATE downloads SET {assignments} WHERE id=? AND status IN ({placeholders})",
+                    (*fields.values(), task_id, *expected),
+                )
+                changed = cursor.rowcount
+                await db.commit()
+            if changed and task_id in self.in_memory_progress:
+                self.in_memory_progress[task_id].update(fields)
+                message = {"event": f"task_{status}", "data": dict(self.in_memory_progress[task_id])}
+        if message:
+            await self.connections.broadcast(message)
+        return bool(changed)
 
     def handle_progress(self, task_id: str, payload: Dict[str, Any]):
         """Callback from downloader. Updates in-memory state and broadcasts."""
@@ -323,31 +344,23 @@ class QueueManager:
                     ) as cursor:
                         rows = await cursor.fetchall()
 
-                    if rows:
-                        logger.info(f"Scheduler found {len(rows)} due scheduled download(s). Enqueueing...")
-                        for row in rows:
-                            task_id = row["id"]
-                            # Update status to queued and clear scheduled_at
-                            await db.execute(
-                                "UPDATE downloads SET status = ?, scheduled_at = NULL WHERE id = ?",
-                                ("queued", task_id)
+                for row in rows:
+                    task_id = row["id"]
+                    async with self._state_lock(task_id):
+                        async with aiosqlite.connect(self.runtime.db_path) as db:
+                            cursor = await db.execute(
+                                "UPDATE downloads SET status='queued', scheduled_at=NULL WHERE id=? AND status='scheduled'",
+                                (task_id,),
                             )
-
-                            # Update in-memory and broadcast
-                            if task_id not in self.in_memory_progress:
-                                self.in_memory_progress[task_id] = dict(row)
-
-                            self.in_memory_progress[task_id]["status"] = "queued"
-                            self.in_memory_progress[task_id]["scheduled_at"] = None
-
-                            await self.connections.broadcast({
-                                "event": "task_queued",
-                                "data": self.in_memory_progress[task_id]
-                            })
-
-                        await db.commit()
-                        # Wake up worker
-                        self.wakeup_event.set()
+                            await db.commit()
+                            if not cursor.rowcount:
+                                continue
+                        if task_id not in self.in_memory_progress:
+                            self.in_memory_progress[task_id] = dict(row)
+                        self.in_memory_progress[task_id].update(status="queued", scheduled_at=None)
+                        message = {"event": "task_queued", "data": dict(self.in_memory_progress[task_id])}
+                    self.wakeup_event.set()
+                    await self.connections.broadcast(message)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -408,24 +421,22 @@ class QueueManager:
                     except Exception:
                         pass
 
-                # Initialize in-memory progress if not present
-                if task_id not in self.in_memory_progress:
-                    self.in_memory_progress[task_id] = dict(row)
-
                 # Atomically claim the task to prevent race conditions
-                async with aiosqlite.connect(self.runtime.db_path) as db2:
-                    await db2.execute(
-                        "UPDATE downloads SET status = ? WHERE id = ? AND status = ?",
-                        ("downloading", task_id, "queued")
-                    )
-                    await db2.commit()
-                    if db2.total_changes == 0:
-                        continue  # Another worker iteration already claimed it
+                async with self._state_lock(task_id):
+                    async with aiosqlite.connect(self.runtime.db_path) as db2:
+                        cursor = await db2.execute(
+                            "UPDATE downloads SET status = ? WHERE id = ? AND status = ?",
+                            ("downloading", task_id, "queued")
+                        )
+                        await db2.commit()
+                        if not cursor.rowcount:
+                            continue
+                    if task_id not in self.in_memory_progress:
+                        self.in_memory_progress[task_id] = dict(row)
+                    self.in_memory_progress[task_id]["status"] = "downloading"
+                    message = {"event": "task_started", "data": dict(self.in_memory_progress[task_id])}
 
-                await self.connections.broadcast({
-                    "event": "task_started",
-                    "data": self.in_memory_progress[task_id]
-                })
+                await self.connections.broadcast(message)
 
                 # Start the download task
                 task = asyncio.create_task(self._run_task(task_id, url, format_id, config, options, dict(row).get("retry_count", 0)))
@@ -444,6 +455,12 @@ class QueueManager:
         fields = {}
         status = "failed"
         try:
+            # A cancellation may finish while the claim's broadcast is awaiting.
+            async with aiosqlite.connect(self.runtime.db_path) as db:
+                async with db.execute("SELECT status FROM downloads WHERE id=?", (task_id,)) as cursor:
+                    row = await cursor.fetchone()
+            if row is None or row[0] not in RUNNABLE or self.is_cancelled(task_id):
+                return
             directory, _ = self.runtime.validate_output(download_dir, filename_template)
             download_dir = str(directory)
             cookies = self.task_cookies.pop(task_id, None)
@@ -508,8 +525,8 @@ class QueueManager:
                     pass
                 except OSError:
                     logger.exception("Failed to remove the owned cookie file for task %s", task_id)
-        await self._finish(task_id, status, **fields)
-        if status == "queued" and not self.stopping:
+        changed = await self._finish(task_id, status, **fields)
+        if changed and status == "queued" and not self.stopping:
             self.wakeup_event.set()
 
 

@@ -66,7 +66,7 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 
 ### [ ] P03 — Make downloads durable and cancellation enforceable
 
-Current checkpoint: source worker ownership/queue cancellation changes and synthetic Linux checks exist, but shutdown emits an unhandled-thread-exception warning. Resolve cancellation/transition races, then validate actual/frozen Linux and Windows workers. See HANDOFF’s 2026-11-11 WIP section. No P03 item is marked complete.
+Current checkpoint: resumed source changes resolve repeated/concurrent cancellation, abandoned shield futures and the tested queue transition races; 82 guarded cases pass cleanly. Validate actual/frozen Linux and Windows workers next. See HANDOFF’s 2026-11-11 resumed checkpoint; durable attempts/artifacts/retries and the remaining P03 acceptance matrix are unfinished. No P03 item is marked complete.
 
 - Extract queue/state-machine and retry policy from `backend/queue_manager.py`. Run each active extraction/download in an owned worker process; isolate FFmpeg descendants and stop them before terminal state or cleanup.
 - Add resumable artifacts, per-item playlist jobs, idempotent enqueue, persisted retry deadlines, and crash recovery. Track final output paths from completed post-processing rather than guessed extensions.

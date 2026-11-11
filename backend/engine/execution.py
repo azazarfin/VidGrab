@@ -10,6 +10,23 @@ import tempfile
 from backend.engine.worker_owner import BOOTSTRAP_LIMIT, MESSAGE_LIMIT
 
 
+async def join_owned_task(task):
+    """Defer caller cancellation until an owned task has exited and been retrieved."""
+    cancelled = False
+    while not task.done():
+        try:
+            # wait() does not propagate cancellation to the task or abandon an
+            # exception-bearing shield future when its caller is interrupted.
+            await asyncio.wait({task})
+        except asyncio.CancelledError:
+            cancelled = True
+    if cancelled:
+        if not task.cancelled():
+            task.exception()
+        raise asyncio.CancelledError
+    return task.result()
+
+
 def entry_command(module, frozen_flag):
     if getattr(sys, "frozen", False):
         return [sys.executable, frozen_flag]
@@ -24,14 +41,7 @@ class ThreadDownloadExecutor:
 
     async def run(self, **options):
         execution = asyncio.create_task(asyncio.to_thread(self.runner, **options))
-        try:
-            return await asyncio.shield(execution)
-        except asyncio.CancelledError:
-            try:
-                await execution
-            except Exception:
-                pass
-            raise
+        return await join_owned_task(execution)
 
 
 class ProcessDownloadExecutor:
@@ -60,7 +70,7 @@ class ProcessDownloadExecutor:
                 close_fds=True, creationflags=0x08000000 if sys.platform == "win32" else 0,
             ))
             try:
-                process = await asyncio.shield(launch)
+                process = await join_owned_task(launch)
                 process.stdin.write(encoded)
                 await process.stdin.drain()
                 result = None
@@ -83,10 +93,10 @@ class ProcessDownloadExecutor:
                 return result
             finally:
                 if process is None:
-                    process = await launch
+                    process = launch.result()
                 process.stdin.close()
                 cleanup = asyncio.create_task(self._join(process, worker_pid))
-                await asyncio.shield(cleanup)
+                await join_owned_task(cleanup)
 
     async def _join(self, process, worker_pid):
         try:

@@ -2,6 +2,13 @@
 
 TERMINAL = frozenset({"complete", "failed", "cancelled"})
 ACTIVE = frozenset({"probing", "downloading", "postprocessing"})
+RUNNABLE = ACTIVE | {"queued"}
+FINISH_FROM = {
+    "complete": RUNNABLE,
+    "failed": RUNNABLE,
+    "queued": RUNNABLE,
+    "cancelled": frozenset({"cancelling"}),
+}
 
 
 def accepts_progress(status):

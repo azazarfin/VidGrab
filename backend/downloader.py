@@ -166,7 +166,7 @@ def run_download(
     user_agent: Optional[str] = None,
     components: Optional[Dict[str, str]] = None
 ) -> Dict[str, Any]:
-    """Synchronous function to execute the yt-dlp download. Run inside a thread."""
+    """Synchronous yt-dlp attempt, normally run inside an owned worker process."""
     
     # Recheck at execution time, including paths restored from a legacy queue.
     out_dir, outtmpl = runtime.validate_output(download_dir, filename_template)
