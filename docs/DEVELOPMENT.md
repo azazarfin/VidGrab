@@ -1,12 +1,12 @@
 # VidGrab development
 
-The P02 Linux spike adds a fixture-only desktop/engine/native bridge. Full desktop release acceptance, Windows and the migrated download UI remain pending. The ASGI development adapter is `backend.main:app`; it resolves user paths without initializing SQLite or starting workers during import.
+The P02 fixture desktop/engine/native bridge is accepted for the selected Ubuntu/GNOME and Windows 11 preview baselines. P03 worker/durability work is in progress; full release acceptance and the migrated download UI remain pending. The ASGI development adapter is `backend.main:app`; it resolves user paths without initializing SQLite or starting workers during import.
 
 ## Locked setup and deterministic checks
 
 Run from the repository root with Python 3.11+ and uv. `pyproject.toml` pins the selected direct dependencies; `uv.lock` locks their transitive dependencies and artifacts.
 
-The project baseline is >=3.11; `yt-dlp==2026.6.9` itself declares >=3.10. Verified interpreters are Fedora Python 3.14.8 and Ubuntu Python 3.12.3, not Windows or Python 3.11. Desktop packaging remains P02.
+The project baseline is >=3.11; `yt-dlp==2026.6.9` itself declares >=3.10. Verified interpreters are Fedora Python 3.14.8, Ubuntu Python 3.12.3 and Windows 11 Python 3.12.16. Python 3.11 remains unexecuted. The latest 89-case P03 source suite has executed on Fedora and Ubuntu userspace; the new Windows worker checks remain pending.
 
 ```sh
 uv sync --frozen
@@ -43,7 +43,7 @@ Media/output settings must also be outside data/log/temp storage. Settings initi
 VIDGRAB_DATA_DIR=/tmp/vidgrab-dev-state VIDGRAB_DOWNLOAD_DIR=/tmp/vidgrab-dev-media .venv/bin/python -B -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-Startup against an existing selected runtime resumes its queued/interrupted jobs. For diagnostics with execution disabled, instantiate `create_app(RuntimeConfig(...), start_queue=False)`. Each factory instance owns its settings store, queue, volatile cookies, probe cache, and WebSocket connections.
+Startup against an existing selected runtime resumes its queued/interrupted jobs. For diagnostics with execution disabled, instantiate `create_app(RuntimeConfig(...), start_queue=False)`. Each factory instance owns its settings store, queue, volatile cookies, probe cache, and WebSocket connections. Ordinary downloads select the P03 per-attempt process executor. Explicitly injected synchronous diagnostic/test runners use a thread adapter; both boundaries stay joined through repeated caller cancellation before cookie cleanup.
 
 `GET /health` reports local database readiness/schema compatibility; `GET /status` retains the extension's legacy fields without checking PyPI. `POST /update-ytdlp` returns 409 with release-update instructions. The legacy `auto_update_ytdlp` preference is retained for import/client compatibility but never triggers startup work.
 
@@ -60,6 +60,26 @@ The operation retains a SQLite snapshot in `backups/`, stages and migrates a cop
 The legacy source database, output media, and locally generated browser archives are not fixtures. No installer, persistent service, browser package build, or live download is part of the deterministic checks. Windows execution and full process/cancellation/retry guarantees remain later milestone gates.
 
 Atomic import publication uses a hard link on the target filesystem; validate support and Windows behavior during P02. Initialization/CLI never chooses or migrates `backend/vidgrab.db` automatically. Importing a real queue can cause jobs to resume when that new runtime is subsequently started normally.
+
+## P03 opt-in worker checks
+
+These commands run owned local processes and loopback fixtures in temporary runtimes. They never select installed application state or real-user native registrations. `check_worker_execution` requires an explicit directory containing checksum-verified `manifest.json`, FFmpeg/ffprobe and Deno; the fresh frozen engine's `_internal/tools` is also suitable. Run from the repository root:
+
+```sh
+.venv/bin/python -B -m tests.check_worker_lifecycle
+.venv/bin/python -B -m tests.check_worker_execution --tools /absolute/path/to/verified/tools
+```
+
+After rebuilding a fresh engine with the locked packaging environment and complete bundled tools, repeat both checks with its absolute executable. On Windows select the `.exe` and use `.venv\Scripts\python.exe`:
+
+```sh
+.venv/bin/python -B -m tests.check_worker_lifecycle --engine /absolute/path/to/fresh/vidgrab-engine
+.venv/bin/python -B -m tests.check_worker_execution --engine /absolute/path/to/fresh/vidgrab-engine --tools /absolute/path/to/fresh/_internal/tools
+```
+
+Both scripts accept `--report /absolute/path/to/report.json`. The owner suite includes platform-specific SIGTERM/abrupt-Job-Object tests; current Linux reports contain eleven entries with one explicit Windows-only skip. Media checks cover actual WAV→MP3/codec validation, a Unicode directory, extraction/download/postprocessing cancellation, cookie cleanup after worker exit, unrelated-file preservation and abrupt executor-parent death. `tests/worker_process_support.py` records PID/start identities without an extra process-library dependency. Abrupt-parent cases bypass the ASGI service and do not prove service restart or durable artifact recovery.
+
+The latest source/fresh frozen Fedora and Ubuntu-userspace checks pass ten Linux owner/protocol plus seven media cases, with 89 guarded default cases and eleven native lifecycle cases per engine. Ubuntu's complete 50-ELF staging fits glibc 2.39 but shares Fedora's kernel. New Windows Python worker/Job Object execution remains deferred while win11 is shut off. See [the current handoff](../HANDOFF.md#p03-linux-workerprotocol-checkpoint--2026-11-11) for prepared inputs/evidence. P03 durable attempts/artifacts/retry/request budgeting and `/v1` (P04) remain unfinished.
 
 ## Opt-in mocked settings browser check (Linux)
 

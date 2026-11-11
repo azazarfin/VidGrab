@@ -1,6 +1,7 @@
 """Owned async tasks must remain joined through repeated cancellation."""
 
 import asyncio
+import json
 import unittest
 from unittest.mock import patch
 
@@ -40,6 +41,58 @@ class ControlledProcess:
 
 
 class ProcessExecutionTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
+    async def test_owner_response_requires_a_complete_frame(self):
+        process = ControlledProcess()
+        process.release.set()
+        frames = iter([(json.dumps({"type": "started", "pid": 12345}) + "\n").encode(),
+                       json.dumps({"type": "result", "data": {"filepath": "fixture.mp3"}}).encode()])
+
+        async def readline():
+            return next(frames, b"")
+
+        async def wait():
+            return 0
+
+        async def launch(*args, **kwargs):
+            return process
+
+        process.readline = readline
+        process.wait = wait
+        with patch("asyncio.create_subprocess_exec", launch):
+            with self.assertRaises(ValueError):
+                await ProcessDownloadExecutor().run(runtime=self.runtime(), task_id="fixture",
+                                                    progress_callback=lambda *_: None)
+
+    async def test_oversized_bootstrap_is_refused_before_process_creation(self):
+        with self.assertRaises(ValueError):
+            await ProcessDownloadExecutor().run(runtime=self.runtime(), task_id="fixture",
+                user_agent="x" * 262144, progress_callback=lambda *_: None)
+
+    async def test_invalid_owner_start_identity_is_refused_before_returning_a_result(self):
+        for pid in (0, -1, True, "1", 2 ** 40):
+            with self.subTest(pid=pid):
+                process = ControlledProcess()
+                process.release.set()
+                messages = iter([{"type": "started", "pid": pid},
+                                 {"type": "result", "data": {"filepath": "fixture.mp3"}}])
+
+                async def readline():
+                    message = next(messages, None)
+                    return b"" if message is None else (json.dumps(message) + "\n").encode()
+
+                async def wait():
+                    return 0
+
+                async def launch(*args, **kwargs):
+                    return process
+
+                process.readline = readline
+                process.wait = wait
+                with patch("asyncio.create_subprocess_exec", launch):
+                    with self.assertRaises(ValueError):
+                        await ProcessDownloadExecutor().run(runtime=self.runtime(), task_id="fixture",
+                                                            progress_callback=lambda *_: None)
+
     async def test_repeated_cancel_does_not_detach_process_cleanup(self):
         process = ControlledProcess()
 

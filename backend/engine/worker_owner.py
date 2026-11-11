@@ -11,8 +11,31 @@ import tempfile
 import threading
 import time
 
+from backend.services.job_state import ACTIVE
+
 MESSAGE_LIMIT = 65536
 BOOTSTRAP_LIMIT = 262144
+
+
+def validate_worker_message(message):
+    if not isinstance(message, dict):
+        raise ValueError("Worker messages must be objects")
+    kind = message.get("type")
+    data = message.get("data")
+    if kind == "progress":
+        status = data.get("status") if isinstance(data, dict) else None
+        if not isinstance(status, str) or status not in ACTIVE:
+            raise ValueError("Invalid worker progress state")
+    elif kind == "result":
+        path = data.get("filepath") if isinstance(data, dict) else None
+        if not isinstance(path, str) or not path or "\0" in path:
+            raise ValueError("Worker result requires a literal file path")
+    elif kind == "error":
+        error = message.get("message")
+        if not isinstance(error, str) or len(error) > 4096:
+            raise ValueError("Invalid worker error message")
+    else:
+        raise ValueError("Invalid worker response")
 
 
 def read_message(stream, limit=MESSAGE_LIMIT):
@@ -108,7 +131,10 @@ def main(arguments=None):
     arguments = sys.argv[1:] if arguments is None else arguments
     if len(arguments) < 2 or arguments[0] != "--" or not os.path.isabs(arguments[1]):
         raise ValueError("Use -- followed by an absolute trusted worker command")
-    bootstrap = read_message(sys.stdin.buffer, BOOTSTRAP_LIMIT)
+    # Raw input avoids daemon-reader BufferedReader locks at interpreter exit,
+    # and avoids reading ahead past the bootstrap into a batched stop request.
+    control_input = getattr(sys.stdin.buffer, "raw", sys.stdin.buffer)
+    bootstrap = read_message(control_input, BOOTSTRAP_LIMIT)
     if bootstrap is None:
         return
     stopping = threading.Event()
@@ -120,7 +146,7 @@ def main(arguments=None):
 
     def control():
         # Any second message or EOF requests stop. The private pipe is never inherited.
-        sys.stdin.buffer.readline(BOOTSTRAP_LIMIT + 1)
+        control_input.read(1)
         stopping.set()
 
     def output():
@@ -134,6 +160,7 @@ def main(arguments=None):
             messages.put({"type": "error", "message": str(error)})
 
     terminal = None
+    tree_stopped = False
     try:
         with tempfile.TemporaryFile() as log:
             tree = ProcessTree(arguments[1:], log)
@@ -146,12 +173,22 @@ def main(arguments=None):
                 try:
                     message = messages.get(timeout=0.02)
                 except queue.Empty:
+                    if not tree_stopped and tree.process.poll() is not None:
+                        # A descendant can hold stdout open after its leader
+                        # exits with a partial frame. Reap the tree to obtain EOF.
+                        tree.stop()
+                        tree_stopped = True
                     continue
                 if message is None:
                     terminal = {"type": "error", "message": "Worker exited without a result"}
                     break
                 kind = message.get("type")
-                if kind == "progress" and isinstance(message.get("data"), dict):
+                try:
+                    validate_worker_message(message)
+                except ValueError as error:
+                    terminal = {"type": "error", "message": str(error)}
+                    break
+                if kind == "progress":
                     send_message(message)
                 elif kind in {"result", "error"}:
                     terminal = message
@@ -163,15 +200,13 @@ def main(arguments=None):
                         except subprocess.TimeoutExpired:
                             terminal = {"type": "error", "message": "Worker did not exit after its result"}
                     break
-                else:
-                    terminal = {"type": "error", "message": "Invalid worker response"}
-                    break
-            tree.stop()
+            if not tree_stopped:
+                tree.stop()
             tree = None
             if terminal and not stopping.is_set():
                 send_message(terminal)
     finally:
-        if tree:
+        if tree and not tree_stopped:
             tree.stop()
         for signum, handler in previous.items():
             signal.signal(signum, handler)

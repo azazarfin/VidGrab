@@ -7,7 +7,7 @@ import signal
 import sys
 import tempfile
 
-from backend.engine.worker_owner import BOOTSTRAP_LIMIT, MESSAGE_LIMIT
+from backend.engine.worker_owner import BOOTSTRAP_LIMIT, MESSAGE_LIMIT, validate_worker_message
 
 
 async def join_owned_task(task):
@@ -75,17 +75,26 @@ class ProcessDownloadExecutor:
                 await process.stdin.drain()
                 result = None
                 while line := await process.stdout.readline():
-                    if len(line) > MESSAGE_LIMIT:
+                    if len(line) > MESSAGE_LIMIT or not line.endswith(b"\n"):
                         raise ValueError("Worker response exceeds its framing limit")
                     message = json.loads(line)
+                    if not isinstance(message, dict) or result is not None:
+                        raise ValueError("Invalid worker response ordering")
                     if message.get("type") == "started":
-                        worker_pid = message["pid"]
-                    elif message.get("type") == "progress":
+                        pid = message.get("pid")
+                        if worker_pid is not None or type(pid) is not int or not 0 < pid <= 0xFFFFFFFF:
+                            raise ValueError("Invalid worker owner start identity")
+                        worker_pid = pid
+                        continue
+                    if worker_pid is None:
+                        raise ValueError("Worker response preceded its owner start identity")
+                    validate_worker_message(message)
+                    if message["type"] == "progress":
                         callback(options["task_id"], message["data"])
                     elif message.get("type") == "result":
                         result = message["data"]
                     elif message.get("type") == "error":
-                        raise RuntimeError(message.get("message", "Worker failed"))
+                        raise RuntimeError(message["message"] or "Worker failed")
                     else:
                         raise ValueError("Invalid worker response")
                 if await process.wait() != 0 or result is None:

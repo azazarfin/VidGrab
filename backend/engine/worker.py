@@ -9,13 +9,14 @@ from backend.engine.worker_owner import BOOTSTRAP_LIMIT, read_message, send_mess
 
 
 def main():
-    bootstrap = read_message(sys.stdin.buffer, BOOTSTRAP_LIMIT)
+    control_input = getattr(sys.stdin.buffer, "raw", sys.stdin.buffer)
+    bootstrap = read_message(control_input, BOOTSTRAP_LIMIT)
     if bootstrap is None:
         return
     stopped = threading.Event()
 
     def control():
-        sys.stdin.buffer.readline(BOOTSTRAP_LIMIT + 1)
+        control_input.read(1)
         stopped.set()
 
     threading.Thread(target=control, daemon=True).start()

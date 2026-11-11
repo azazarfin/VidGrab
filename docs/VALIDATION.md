@@ -534,8 +534,31 @@ The earlier **73.511 s** offline setup returned success and SDK version, then re
 Three corrected startup screenshots and the combined prerequisite/history screenshot were reviewed. Normal launch after the machine update also passes. `windows-final-preservation-audit.json`, `windows-owned-cleanup.json`, `windows-orderly-shutdown.json` and the selected evidence manifest are indexed in HANDOFF. Private controls are persisted on a private Linux filesystem; large artifacts/evidence remain in ignored D-backed packaging output. Authentication files are excluded from evidence and Git. The four protected local hashes and stopped Ubuntu guest remain unchanged; no production edit, package rebuild, push/export, VM backup/snapshot or E reformat occurred in this documentation checkpoint. Previous guarded Python/Rust/frozen/browser/renderer results remain applicable; they were not redundantly repeated for documentation-only changes.
 
 
-## P03 worker-boundary WIP — 2026-11-11
+## P03 worker-boundary WIP — 2026-11-11 (historical stopped checkpoint)
 
 Five lifecycle regressions and a worker EOF/import regression failed before the respective behavior/entrypoint changes. The latest guarded default run reports 72 cases OK in 2.342 s on Fedora/Python 3.14.8, but also reports an unhandled `RuntimeError: Fixture stopped` task exception during thread-adapter shutdown; this is not clean acceptance evidence. Three opt-in synthetic worker/descendant checks pass in 5.394 s (control EOF, owner SIGTERM and result-after-descendant-exit). Sixteen changed/new Python files parse and whitespace checks pass.
 
 Actual extraction/FFmpeg cancellation, abrupt engine death, frozen workers, Windows Job Objects and rebuilt packages have not been checked. Repeated cancellation and expected-state transition races remain unresolved. HANDOFF records the exact next action and preserved inputs. The user requested checkpoint and stop; P03 remains incomplete.
+
+
+## P03 Linux worker/protocol checks — 2026-11-11
+
+The resumed cancellation checkpoint `824f72c` resolved repeated joining and tested expected-state races with 82 clean guarded cases. This follow-up fixes raw-stdin daemon-reader shutdown aborts, exited-leader/truncated-pipe hangs and shared reply validation/framing. Tests first reproduced invalid result/error/progress shapes and an incomplete owner frame; the actual-media regression captured successful MP3 conversion followed by worker exit `-6`. Additional review regressions reproduced nontext progress states as `TypeError`/owner exit 1 before the text-state fix. Earlier failures and the historical 72-case warning remain retained.
+
+| Current evidence | Fedora / Python 3.14.8 | Ubuntu 24.04 userspace / Python 3.12.3 |
+| --- | --- | --- |
+| Guarded default suite | 89 pass, 3.249 s | 89 pass, 3.766 s |
+| Source owner/protocol | 10 pass, Windows-only case skipped | 10 pass, Windows-only case skipped |
+| Source real media/interruption | 7 pass, 6.158 s | 7 pass, 5.839 s |
+| Fresh frozen owner/protocol | 10 pass, 3.142 s, Windows-only case skipped | 10 pass, 3.174 s, Windows-only case skipped |
+| Fresh frozen real media/interruption | 7 pass, 6.685 s | 7 pass, 7.026 s |
+| Native lifecycle with fresh engine | 11 pass | 11 pass |
+| Complete Ubuntu staging ABI | Not Ubuntu evidence | 50 ELFs, required glibc ≤2.39 |
+
+Owner reports count eleven entries, including the explicitly skipped Windows abrupt-owner/kill-on-close Python Job Object case. The synthetic checks cover stubborn descendants, control EOF/SIGTERM, result-after-exit and malformed/oversized/truncated replies. Seven real cases use verified local tools and loopback WAV media: Unicode MP3/codec verification without a database, cancellation during extraction/download/real FFmpeg postprocessing, queue cookie removal after owned-tree exit with unrelated files preserved, and abrupt executor-parent death in extraction/postprocessing. PID/start identities guard process observations. The two abrupt-parent cases do not launch or recover the ASGI service.
+
+Fresh Fedora frozen self-check and worker/owner EOF dispatch pass with empty PATH; both targets' frozen protocol/media checks use bundled tool discovery with empty PATH. Native lifecycle reuses the unchanged compiled Rust boundaries and proves compatibility with each fresh engine. The Ubuntu run uses the pinned 24.04/Python 3.12 image, read-only hash-verified source, private PID/IPC/network state, default seccomp and no external network. It shares Fedora's host kernel and adds no native-Ubuntu-kernel/GNOME/browser/installer evidence. Accepted P02 desktop and installer bytes remain unchanged.
+
+Current ignored evidence is `packaging/out/p03-worker-validation/`: `source-default-89.log`, `source-protocol-10-green.json`, `source-media-final.json`, `fedora-final-result.json`, `frozen-protocol-final.json`, `frozen-media-final.json`, `native-lifecycle-final.log`, `ubuntu-container-result-2.json` and `ubuntu-worker-2/`. `source-input-2.json` hashes 182 copied inputs, omitting `docs/` and retaining pre-validation root notes; executable source remains unchanged; the matching archive and prepared BOM Windows runner remain unexecuted. Initial 88-case/frozen/Ubuntu-worker-1 runs and failed receipts are preserved, including the final Fedora runner's venv-symlink/dependency pre-test failure.
+
+P03 is not accepted. Execute the new Windows source/frozen worker/pipe/Job Object cases on the already authorized disposable baseline once win11 is started. Full service crash recovery, durable attempts/artifacts, multi-output/playlist jobs, idempotent submission, persisted retry deadlines/classification/Retry-After and shared request budgeting remain separate unfinished acceptance cases. `/v1` remains P04. The legacy DB/dirty ZIPs/banner and stopped guests remain preserved; no installer, public download, real-user registration, push/export, backup/snapshot or E: reformat ran.
