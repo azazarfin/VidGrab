@@ -153,6 +153,10 @@ Define allowed transitions in one state-machine service. Job records carry revis
 
 Suggested persistence groups: jobs/attempts, output artifacts, settings with revision, schema migrations, pairing records, and bounded event history. Raw cookies are excluded. The precise schema is a P01/P03 implementation deliverable, not frozen by this sketch.
 
+The current P03 WIP implements a private owner and worker per ordinary download attempt. The engine owns the control pipe; control EOF requests teardown. Linux owners adopt/reap the process group, and Windows owners hold a non-inheritable kill-on-close Job Object. Bounded newline JSON is validated before progress/results cross the boundary. Repeated caller cancellation stays joined until the owned task/tree exits; queue terminal writes compare expected states under per-job locks, and cookie cleanup follows exit. Explicitly injected synchronous diagnostic/test runners retain a joined thread adapter.
+
+Source/fresh frozen worker and native compatibility checks now pass on Linux and Windows; [the current checkpoint](../HANDOFF.md#p03-windows-workerprotocol-checkpoint--2026-11-14) scopes that evidence. Existing download rows and transient ownership do not implement the durable attempts/artifact/retry schema above. Full service crash recovery and P03 acceptance remain unfinished.
+
 ## 7. Settings and desktop UX
 
 The app owns download preferences and desired companion preferences. The extension owns browser-granted permissions, profile/tab state, and live credentials. A preference such as cookie forwarding can be requested from the app, but the browser must obtain permission; show requested versus effective capability.
