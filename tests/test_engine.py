@@ -144,8 +144,10 @@ else:
                 return self
             def __exit__(self, *args):
                 pass
+            def add_post_processor(self, *args, **kwargs):
+                pass
             def extract_info(self, *args, **kwargs):
-                return {"title": "fixture", "_filename": str(runtime.download_dir / "fixture.wav")}
+                return {"title": "fixture", "filepath": str(runtime.download_dir / "fixture.wav")}
 
         # The assertion makes a missing interface fail as a behavior check.
         import inspect

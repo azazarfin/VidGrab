@@ -6,6 +6,7 @@ worker modes; no installed runtime or extra process library is used.
 
 import argparse
 import asyncio
+import base64
 import io
 import json
 from pathlib import Path
@@ -18,6 +19,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 import wave
+from uuid import uuid4
 
 import aiosqlite
 
@@ -25,6 +27,8 @@ from backend.app import create_app
 from backend.engine.execution import ProcessDownloadExecutor
 from backend.engine.resources import check_components
 from backend.runtime import RuntimeConfig
+from backend.db.jobs import Attempt
+from backend.services.artifacts import journal_artifacts, prepare_workspace
 from tests.worker_process_support import owned_children
 
 COMPONENTS = None
@@ -32,7 +36,7 @@ ENGINE = None
 
 
 class WaveServer:
-    def __init__(self, *, phase=None):
+    def __init__(self, *, phase=None, html5=False):
         memory = io.BytesIO()
         with wave.open(memory, "wb") as output:
             output.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
@@ -41,9 +45,25 @@ class WaveServer:
         self.requested = threading.Event()
         self.release = threading.Event()
         fixture = self
+        resources = {
+            "/media.html": ("text/html", b'<html><title>Fixture media</title><video controls poster="/cover.png">'
+                            b'<source src="/fixture.wav" type="audio/wav">'
+                            b'<track src="/captions.srt" srclang="en" kind="subtitles"></video></html>'),
+            "/captions.srt": ("application/x-subrip", b"1\n00:00:00,000 --> 00:00:01,000\nFixture caption\n"),
+            "/cover.png": ("image/png", base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aU1sAAAAASUVORK5CYII=")),
+        }
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
+                if html5 and self.path in resources:
+                    content_type, data = resources[self.path]
+                    self.send_response(200)
+                    self.send_header("Content-Type", content_type)
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
                 if self.path != "/fixture.wav":
                     self.send_error(404)
                     return
@@ -186,6 +206,43 @@ class WorkerExecutionChecks(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(probe.stdout)["streams"][0]["codec_name"], "mp3")
         self.assertFalse(self.runtime.db_path.exists(), "A worker must never initialize the service database")
         self.assertTrue(any(item["status"] == "postprocessing" for item in self.progress))
+
+    async def test_staged_media_and_sidecars_record_publication_before_results(self):
+        identity = str(uuid4())
+        attempt = Attempt(identity, "fixture", 1, self.runtime.data_dir / "attempts" / identity)
+        prepare_workspace(self.runtime, attempt)
+        with WaveServer(html5=True) as server:
+            options = self.options(server.url.replace("fixture.wav", "media.html"))
+            options.update(attempt_dir=str(attempt.workspace), download_subtitles=True,
+                           subtitle_langs=["en"], subtitle_format="srt", extra_args={"writethumbnail": True})
+            result = await asyncio.wait_for(self.executor().run(**options), 15)
+        self.assertEqual({record["kind"] for record in result["artifacts"]}, {"media", "subtitle", "thumbnail"})
+        self.assertEqual(Path(result["filepath"]).suffix, ".mp3")
+        for record in result["artifacts"]:
+            self.assertEqual(Path(record["path"]).parent, self.runtime.download_dir)
+            self.assertTrue(Path(record["path"]).is_file())
+        journal = journal_artifacts(self.runtime, attempt)
+        self.assertEqual({record["path"] for record in journal}, {record["path"] for record in result["artifacts"]})
+        self.assertTrue(all(record["state"] == "complete" and record["size"] > 0 for record in journal))
+        self.assertFalse(self.runtime.db_path.exists(), "Attempt workers must not initialize SQLite")
+
+    async def test_preexisting_media_is_not_postprocessed_or_deleted_by_a_new_attempt(self):
+        identity = str(uuid4())
+        attempt = Attempt(identity, "fixture", 1, self.runtime.data_dir / "attempts" / identity)
+        prepare_workspace(self.runtime, attempt)
+        existing = self.runtime.download_dir / "owned-fixture.wav"
+        with wave.open(str(existing), "wb") as output:
+            output.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+            output.writeframes(b"\x00\x00" * 16000)
+        before = existing.read_bytes()
+        with WaveServer() as server:
+            options = self.options(server.url)
+            options["attempt_dir"] = str(attempt.workspace)
+            with self.assertRaises(RuntimeError):
+                await asyncio.wait_for(self.executor().run(**options), 15)
+        self.assertTrue(existing.exists(), "Preexisting media must never become the owned FFmpeg input")
+        self.assertEqual(existing.read_bytes(), before)
+        self.assertFalse(existing.with_suffix(".mp3").exists())
 
     async def test_cancel_during_extraction_joins_the_actual_worker(self):
         await self.cancel_execution("extraction")

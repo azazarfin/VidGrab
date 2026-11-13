@@ -36,6 +36,15 @@ class WorkerEntryTests(OfflineTestCase):
                 with self.assertRaises(ValueError):
                     self.validate({"type": "error", "message": message})
 
+    def test_artifact_records_require_valid_kinds_and_the_primary_media_path(self):
+        for artifacts in (None, [], "file", [{"path": "file.mp3", "kind": "unknown"}],
+                          [{"path": "bad\x00path", "kind": "media"}],
+                          [{"path": "other.mp3", "kind": "media"}],
+                          [{"path": "file.mp3", "kind": "media"}] * 2):
+            with self.subTest(artifacts=artifacts):
+                with self.assertRaises(ValueError):
+                    self.validate({"type": "result", "data": {"filepath": "file.mp3", "artifacts": artifacts}})
+
     def test_worker_eof_exits_without_loading_the_application(self):
         self.assertIsNotNone(importlib.util.find_spec("backend.engine.worker"),
                              "The engine needs a worker entrypoint separate from ASGI startup")

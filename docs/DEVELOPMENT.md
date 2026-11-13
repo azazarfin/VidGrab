@@ -6,7 +6,7 @@ The P02 fixture desktop/engine/native bridge is accepted for the selected Ubuntu
 
 Run from the repository root with Python 3.11+ and uv. `pyproject.toml` pins the selected direct dependencies; `uv.lock` locks their transitive dependencies and artifacts.
 
-The project baseline is >=3.11; `yt-dlp==2026.6.9` itself declares >=3.10. Verified interpreters are Fedora Python 3.14.8, Ubuntu Python 3.12.3 and Windows 11 Python 3.12.16. Python 3.11 remains unexecuted. The latest 89-case P03 source suite and source/fresh frozen worker checks have executed on Fedora, Ubuntu userspace and Windows 11.
+The project baseline is >=3.11; `yt-dlp==2026.6.9` itself declares >=3.10. Verified interpreters are Fedora Python 3.14.8, Ubuntu Python 3.12.3 and Windows 11 Python 3.12.16. Python 3.11 remains unexecuted. The latest guarded P03 suite has 132 cases; platform results and source/frozen checks are recorded in [VALIDATION.md](VALIDATION.md).
 
 ```sh
 uv sync --frozen
@@ -45,6 +45,10 @@ VIDGRAB_DATA_DIR=/tmp/vidgrab-dev-state VIDGRAB_DOWNLOAD_DIR=/tmp/vidgrab-dev-me
 
 Startup against an existing selected runtime resumes its queued/interrupted jobs. For diagnostics with execution disabled, instantiate `create_app(RuntimeConfig(...), start_queue=False)`. Each factory instance owns its settings store, queue, volatile cookies, probe cache, and WebSocket connections. Ordinary downloads select the P03 per-attempt process executor. Explicitly injected synchronous diagnostic/test runners use a thread adapter; both boundaries stay joined through repeated caller cancellation before cookie cleanup.
 
+Use one backend process per runtime. P03 recovery currently assumes the previous worker trees have exited; persistent owner identity/lease fencing remains the next implementation task. Select temporary runtimes for diagnostics. The legacy adapter does not acquire the desktop supervisor's single-owner lock.
+
+Schema 3 stores numbered attempts and literal artifact paths. Each claimed attempt exclusively creates `data_dir/attempts/<UUID>`; yt-dlp stages outputs there and journals planned/completed publication under `.vidgrab/artifacts.jsonl`. Final paths come from completed post-processing records, with existing destinations refused. Failed/interrupted workspaces and published outputs are retained; history deletion removes metadata only. A partial final journal line is tolerated, while invalid journals fail the executing attempt. Resume remains disabled; these retained files do not establish compatible resume or complete service recovery.
+
 `GET /health` reports local database readiness/schema compatibility; `GET /status` retains the extension's legacy fields without checking PyPI. `POST /update-ytdlp` returns 409 with release-update instructions. The legacy `auto_update_ytdlp` preference is retained for import/client compatibility but never triggers startup work.
 
 ## Selected legacy import
@@ -55,9 +59,9 @@ Stop the legacy service and choose its database explicitly. Import into a new da
 .venv/bin/python -B -m backend.db /absolute/path/to/legacy/vidgrab.db --data-dir /absolute/path/to/new-state
 ```
 
-The operation retains a SQLite snapshot in `backups/`, stages and migrates a copy, and publishes only a validated database. Existing destination state is refused. SQLite backup includes committed WAL data. Schema versions 0 (unversioned legacy) and 1 upgrade transactionally to 2; failures roll back, and newer versions are refused. Inspect/repair invalid legacy settings on a copy rather than silently resetting them.
+The operation retains a SQLite snapshot in `backups/`, stages and migrates a copy, and publishes only a validated database. Existing destination state is refused. SQLite backup includes committed WAL data. Schema versions 0 (unversioned legacy), 1 and 2 upgrade transactionally to 3; failures roll back, and newer versions are refused. Existing history is preserved without fabricated attempts. Inspect/repair invalid legacy settings on a copy rather than silently resetting them.
 
-The legacy source database, output media, and locally generated browser archives are not fixtures. No installer, persistent service, browser package build, or live download is part of the deterministic checks. Windows execution and full process/cancellation/retry guarantees remain later milestone gates.
+The legacy source database, output media, and locally generated browser archives are not fixtures. No installer, persistent service, browser package build, or live download is part of the deterministic checks. Selected Linux/Windows worker checks have their own opt-in evidence; full recovery/resume/retry guarantees remain later P03 gates.
 
 Atomic import publication uses a hard link on the target filesystem; validate support and Windows behavior during P02. Initialization/CLI never chooses or migrates `backend/vidgrab.db` automatically. Importing a real queue can cause jobs to resume when that new runtime is subsequently started normally.
 
@@ -77,9 +81,15 @@ After rebuilding a fresh engine with the locked packaging environment and comple
 .venv/bin/python -B -m tests.check_worker_execution --engine /absolute/path/to/fresh/vidgrab-engine --tools /absolute/path/to/fresh/_internal/tools
 ```
 
-Both scripts accept `--report /absolute/path/to/report.json`. The owner suite includes platform-specific SIGTERM/abrupt-Job-Object tests; reports contain eleven entries with one explicit platform skip. Linux executes SIGTERM and skips the Windows abrupt-owner case; Windows executes the abrupt-owner/kill-on-close case and skips POSIX SIGTERM. Media checks cover actual WAV→MP3/codec validation, a Unicode directory, extraction/download/postprocessing cancellation, cookie cleanup after worker exit, unrelated-file preservation and abrupt executor-parent death. `tests/worker_process_support.py` records PID/start identities without an extra process-library dependency. Abrupt-parent cases bypass the ASGI service and do not prove service restart or durable artifact recovery.
+Both scripts accept `--report /absolute/path/to/report.json`. The owner suite includes platform-specific SIGTERM/abrupt-Job-Object tests; reports contain eleven entries with one explicit platform skip. Linux executes SIGTERM and skips the Windows abrupt-owner case; Windows executes the abrupt-owner/kill-on-close case and skips POSIX SIGTERM. The nine media checks cover actual WAV→MP3/codec validation, a Unicode directory, extraction/download/postprocessing cancellation, cookie cleanup after worker exit, unrelated-file preservation, refusal of preexisting media and staged MP3/subtitle/thumbnail publication. `tests/worker_process_support.py` records PID/start identities without an extra process-library dependency. Abrupt-parent cases bypass the ASGI service and do not prove service restart or durable artifact recovery. Container runs need an init process to reap orphaned processes; preserve the recorded `--init`, private namespaces and default seccomp setup.
 
-The latest source/fresh frozen Fedora, Ubuntu-userspace and Windows checks pass ten active owner/protocol plus seven media cases, with 89 guarded default cases on each target. Linux has eleven native lifecycle cases per engine; the fresh Windows compatibility bundle passes six. Ubuntu's complete 50-ELF staging fits glibc 2.39 but shares Fedora's kernel. The user completed the Windows storage remount/start; current E: output is `E:\VidGrabWork\P03\worker-20261111-r2`, which must be preserved and cannot be reused as a fresh output. Windows checks run as elevated Azaz with process-only ExecutionPolicy Bypass and verified bundled tools; frozen/native checks use an empty PATH. See [the Windows results/current environment/audit limit](../HANDOFF.md#p03-windows-workerprotocol-checkpoint--2026-11-14) and [the earlier Linux inputs/evidence](../HANDOFF.md#p03-linux-workerprotocol-checkpoint--2026-11-11). P03 durable attempts/artifacts/retry/request budgeting and `/v1` (P04) remain unfinished.
+`tests/check_artifact_reparse.py` is an additional Windows-only opt-in check. It creates four junction fixtures under temporary paths with the external-network/process guards enabled and launches no child processes:
+
+```powershell
+.venv\Scripts\python.exe -B -m tests.check_artifact_reparse --report E:\temporary-validation\artifact-reparse.json
+```
+
+The latest source/fresh frozen Fedora, Ubuntu-userspace and Windows checks pass ten active owner/protocol plus nine media cases, with 132 guarded default cases on each target (five POSIX symlink skips on Windows). Linux compatibility bundles pass eleven native lifecycle cases; Windows passes six plus four separate junction cases. Ubuntu's complete 50-ELF staging fits glibc 2.39 but shares Fedora's kernel. Current Windows output is `E:\VidGrabWork\P03\attempts-20261114-zkahxkub-review`; preserve it and earlier outputs and always select a fresh root for new runs. Windows checks run as elevated Azaz with process-only ExecutionPolicy Bypass and verified bundled tools; frozen/native checks use an empty PATH. [HANDOFF](../HANDOFF.md#p03-durable-attempts-and-artifacts-checkpoint--2026-11-14) records corrected source/evidence and the still-unimplemented owner/lease gate. The earlier [private-metadata audit limit](../HANDOFF.md#p03-windows-workerprotocol-checkpoint--2026-11-14) remains historical. P03 complete recovery/resume/playlist/idempotency/retry/request budgeting and `/v1` (P04) remain unfinished.
 
 ## Opt-in mocked settings browser check (Linux)
 

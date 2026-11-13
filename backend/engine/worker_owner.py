@@ -12,6 +12,7 @@ import threading
 import time
 
 from backend.services.job_state import ACTIVE
+from backend.services.artifacts import result_artifacts
 
 MESSAGE_LIMIT = 65536
 BOOTSTRAP_LIMIT = 262144
@@ -27,9 +28,7 @@ def validate_worker_message(message):
         if not isinstance(status, str) or status not in ACTIVE:
             raise ValueError("Invalid worker progress state")
     elif kind == "result":
-        path = data.get("filepath") if isinstance(data, dict) else None
-        if not isinstance(path, str) or not path or "\0" in path:
-            raise ValueError("Worker result requires a literal file path")
+        result_artifacts(data)
     elif kind == "error":
         error = message.get("message")
         if not isinstance(error, str) or len(error) > 4096:

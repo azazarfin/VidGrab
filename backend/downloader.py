@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Any, Dict, Callable, Optional, List
 import yt_dlp
 from backend.sanitizer import sanitize_text
-from backend.runtime import RuntimeConfig
+from backend.runtime import OutputPathError, RuntimeConfig
+from backend.services.artifacts import is_link, result_artifacts, validate_workspace
+from backend.services.artifact_postprocessing import CaptureArtifactMovesPP, RecordFinalArtifactsPP
 
 logger = logging.getLogger("vidgrab.downloader")
 
@@ -117,12 +119,18 @@ def make_progress_hook(
 
 def make_postprocessor_hook(
     task_id: str, 
-    callback: Callable[[str, Dict[str, Any]], None]
+    callback: Callable[[str, Dict[str, Any]], None],
+    workspace: Optional[Path] = None
 ) -> Callable[[Dict[str, Any]], None]:
     """Generates a postprocessor hook to accurately report when post-processing starts."""
     
     def hook(d: Dict[str, Any]):
         status = d.get('status')
+        source = (d.get('info_dict') or {}).get('filepath')
+        if workspace is not None and status == 'started' and source and d.get('postprocessor') != 'RecordFinalArtifacts':
+            path = Path(source)
+            if not path.resolve().is_relative_to(workspace) or (path.exists() and is_link(path)):
+                raise OutputPathError("Post-processing input is outside this attempt's owned workspace")
         if status in ('started', 'processing'):
             payload = {
                 "status": "postprocessing",
@@ -164,13 +172,16 @@ def run_download(
     gpu_accelerated_conversion: bool = False,
     extra_args: Optional[Dict[str, Any]] = None,
     user_agent: Optional[str] = None,
-    components: Optional[Dict[str, str]] = None
+    components: Optional[Dict[str, str]] = None,
+    attempt_dir: Optional[str] = None
 ) -> Dict[str, Any]:
     """Synchronous yt-dlp attempt, normally run inside an owned worker process."""
     
     # Recheck at execution time, including paths restored from a legacy queue.
     out_dir, outtmpl = runtime.validate_output(download_dir, filename_template)
     out_dir.mkdir(parents=True, exist_ok=True)
+    workspace = validate_workspace(runtime, attempt_dir) if attempt_dir is not None else None
+    artifacts = []
     
     postprocessors = []
     
@@ -322,9 +333,20 @@ def run_download(
     else:
         ydl_opts['noplaylist'] = True
 
+    # Internal staging and callbacks win over legacy custom options.
+    ydl_opts['progress_hooks'] = [make_progress_hook(task_id, progress_callback, is_cancelled_cb)]
+    ydl_opts['postprocessor_hooks'] = [make_postprocessor_hook(task_id, progress_callback, workspace)]
+    if workspace is not None:
+        temporary_template = str(workspace / Path(outtmpl).name)
+        ydl_opts['outtmpl'] = {'default': outtmpl, **{kind: temporary_template for kind in
+                              ('temp', 'thumbnail', 'description', 'infojson')}}
+        ydl_opts['overwrites'] = False
+
     logger.info(f"Starting download for task {task_id} with format {format_id} to {outtmpl}")
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.add_post_processor(CaptureArtifactMovesPP(runtime, workspace), when='post_process')
+        ydl.add_post_processor(RecordFinalArtifactsPP(runtime, artifacts, workspace), when='after_move')
         info = ydl.extract_info(url, download=True)
         if info is None:
             raise Exception("Failed to extract video information or download file.")
@@ -332,21 +354,14 @@ def run_download(
         # Check if download had errors (e.g. 403 Forbidden under ignoreerrors)
         if getattr(ydl, '_download_retcode', 0) != 0:
             raise Exception(f"Download failed with exit code {ydl._download_retcode}. Check server logs.")
-        # yt-dlp returns the final file path in the info dict or we can derive it
-        # If it merged video and audio, requested_downloads contains the files
-        # Let's get the final file path
-        filepath = info.get('_filename') or ydl.prepare_filename(info)
-        
-        # If merged/postprocessed, the actual final filename might differ slightly 
-        # (e.g. extension changed). We check requested_downloads.
-        if info.get('requested_downloads'):
-            filepath = info['requested_downloads'][0].get('_filename') or filepath
-            
-        if audio_only:
-            filepath = str(Path(filepath).with_suffix(f".{audio_format}"))
-            
+        if not artifacts:
+            if workspace is not None:
+                raise RuntimeError("yt-dlp did not report completed post-processing outputs")
+            # Explicit diagnostic adapters may return an authoritative info record directly.
+            artifacts = result_artifacts({'filepath': info.get('filepath')})
         return {
-            "filepath": str(filepath),
+            "filepath": artifacts[0]['path'],
+            "artifacts": artifacts,
             "title": sanitize_text(info.get("title")),
             "thumbnail_url": info.get("thumbnail")
         }
