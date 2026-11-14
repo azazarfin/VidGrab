@@ -236,15 +236,20 @@ def requires_fresh_auth(error):
 
 
 def install_http_resume(ydl, runtime, attempt):
-    """Replace only this worker's direct HTTP downloader; other formats restart."""
+    """Install verified direct/static-fragment transfers only in this owned worker."""
+    from backend.services.fragment_resume import VerifiedDashFD, VerifiedHlsFD
+    from yt_dlp.downloader.dash import DashSegmentsFD
+    from yt_dlp.downloader.hls import HlsFD
     original = ydl.dl
     def download(self, name, info, subtitle=False, test=False):
+        downloader = get_suitable_downloader(info, self.params, to_stdout=name == "-")
         if (not subtitle and not test and not info.get("request_data")
-                and get_suitable_downloader(info, self.params, to_stdout=name == "-") is HttpFD):
+                and name != "-" and downloader in (HttpFD, HlsFD, DashSegmentsFD)):
             copied = self._copy_infodict(info)
             if copied.get("http_headers") is None:
                 copied["http_headers"] = self._calc_headers(copied)
-            fd = VerifiedHttpFD(self, self.params, runtime, attempt)
+            selected = {HttpFD: VerifiedHttpFD, HlsFD: VerifiedHlsFD, DashSegmentsFD: VerifiedDashFD}[downloader]
+            fd = selected(self, self.params, runtime, attempt)
             for hook in self._progress_hooks:
                 fd.add_progress_hook(hook)
             if os.path.lexists(name):
