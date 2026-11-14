@@ -8,7 +8,8 @@ from uuid import uuid4
 
 from backend.runtime import RuntimeConfig
 from backend.engine.execution import join_owned_task
-from backend.db.ownership import require_owner, require_recoverable, running_attempts, transaction
+from backend.db.ownership import require_owner, require_recoverable, recovery_attempts, transaction
+from backend import cookie_manager
 from backend.services.job_state import ACTIVE, FINISH_FROM, TERMINAL
 from backend.services.publication import cleanup_publication, reconcile_publication
 
@@ -43,6 +44,22 @@ class AttemptStore:
 
     def transaction(self):
         return transaction(self.runtime)
+
+    async def _cleanup_cookies(self, db, attempt, ownership):
+        cleanup = asyncio.create_task(asyncio.to_thread(cookie_manager.cleanup_cookie_file, self.runtime, attempt, ownership))
+        await join_owned_task(cleanup)
+        await db.execute("DELETE FROM attempt_cookie_files WHERE attempt_id=?", (attempt.id,))
+
+    async def cleanup_cookies(self, attempt):
+        async with self.transaction() as db:
+            await require_owner(db, self.owner)
+            for owned in await recovery_attempts(db):
+                if owned["id"] == attempt.id and owned["cookie_ownership"] is not None:
+                    require_recoverable(owned, self.owner.id)
+                    selected = Attempt(owned["id"], owned["download_id"], owned["number"],
+                                       Path(owned["workspace"]), owned["owner_id"])
+                    await self._cleanup_cookies(db, selected, owned["cookie_ownership"])
+                    break
 
     async def _cleanup_completed(self, attempt):
         cleanup = asyncio.create_task(asyncio.to_thread(cleanup_publication, self.runtime, attempt))
@@ -113,9 +130,15 @@ class AttemptStore:
         completed = []
         async with self.transaction() as db:
             await require_owner(db, self.owner)
-            attempts = await running_attempts(db)
-            for attempt in attempts:
+            candidates = await recovery_attempts(db)
+            for attempt in candidates:
                 require_recoverable(attempt, self.owner.id)
+            for attempt in candidates:
+                if attempt["cookie_ownership"] is not None:
+                    selected = Attempt(attempt["id"], attempt["download_id"], attempt["number"],
+                                       Path(attempt["workspace"]), attempt["owner_id"])
+                    await self._cleanup_cookies(db, selected, attempt["cookie_ownership"])
+            attempts = [attempt for attempt in candidates if attempt["status"] == "running"]
             for attempt in attempts:
                 owned = Attempt(attempt["id"], attempt["download_id"], attempt["number"], Path(attempt["workspace"]))
                 verification = asyncio.create_task(asyncio.to_thread(reconcile_publication, self.runtime, owned))

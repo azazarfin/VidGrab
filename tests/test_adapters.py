@@ -83,7 +83,7 @@ class AdapterTests(OfflineTestCase):
         def download(**options):
             self.assertIs(options["runtime"], runtime)
             cookie_file = options["cookies_file_path"]
-            self.assertEqual(Path(cookie_file).parent, runtime.temp_dir)
+            self.assertTrue(Path(cookie_file).is_relative_to(Path(options["attempt_dir"]) / ".vidgrab"))
             observed.append(cookie_file)
             media = runtime.download_dir / "fixture.mp4"
             media.write_bytes(b"fixture")

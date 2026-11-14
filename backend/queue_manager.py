@@ -15,7 +15,7 @@ import aiosqlite
 from backend.config import SettingsStore
 from backend.runtime import OutputPathError, RuntimeConfig
 from backend.downloader import run_download
-from backend.cookie_manager import write_cookies_to_netscape_format
+from backend.cookie_manager import create_cookie_file
 from backend.sanitizer import sanitize_text
 from backend.engine.execution import ProcessDownloadExecutor, ThreadDownloadExecutor, join_owned_task
 from backend.db.jobs import AttemptStore
@@ -477,6 +477,7 @@ class QueueManager:
         outcome = "failed"
         artifacts = []
         workspace_ready = False
+        cookie_error = None
         previous_retry_count = retry_count
         try:
             # A cancellation may finish while the claim's broadcast is awaiting.
@@ -491,7 +492,8 @@ class QueueManager:
             workspace_ready = True
             cookies = self.task_cookies.pop(task_id, None)
             if cookies:
-                cookies_file_path = write_cookies_to_netscape_format(cookies, self.runtime.temp_dir)
+                creation = asyncio.create_task(asyncio.to_thread(create_cookie_file, cookies, self.runtime, attempt))
+                cookies_file_path = await join_owned_task(creation)
             result = await self.download_executor.run(
                 runtime=self.runtime, task_id=task_id, url=url, format_id=format_id,
                 ownership={"attempt_id": attempt.id, "owner_id": attempt.owner_id},
@@ -545,13 +547,23 @@ class QueueManager:
             fields = {"error_message": error_message, "retry_count": retry_count}
         finally:
             # The executor has joined the worker tree before returning or raising cancellation.
-            if cookies_file_path:
-                try:
-                    os.unlink(cookies_file_path)
-                except FileNotFoundError:
-                    pass
-                except OSError:
-                    logger.exception("Failed to remove the owned cookie file for task %s", task_id)
+            cleanup = asyncio.create_task(self.attempts.cleanup_cookies(attempt))
+            try:
+                await join_owned_task(cleanup)
+            except asyncio.CancelledError:
+                # Cleanup has exited; a rolled-back record can be recovered again.
+                if not cleanup.cancelled():
+                    cookie_error = cleanup.exception()
+            except (OSError, ValueError) as error:
+                cookie_error = error
+            if cookie_error is not None:
+                if not isinstance(cookie_error, (OSError, ValueError)):
+                    raise cookie_error
+                logger.error("Retained unverifiable cookie ownership for task %s: %s", task_id, cookie_error)
+                status = "cancelled" if task_id in self.cancelled_tasks else "failed"
+                outcome = status
+                fields = {"error_message": "Cookie ownership could not be verified; files retained",
+                          "file_path": None, "retry_count": previous_retry_count}
             if workspace_ready:
                 try:
                     reconciliation = asyncio.create_task(asyncio.to_thread(reconcile_publication, self.runtime, attempt))
@@ -567,6 +579,8 @@ class QueueManager:
                     if task_id in self.cancelled_tasks:
                         status = outcome = "cancelled"
                         fields = {"error_message": None, "retry_count": previous_retry_count}
+                    elif cookie_error is not None:
+                        status = outcome = "failed"
                     elif recovery.error:
                         status = outcome = "failed"
                         fields = {"error_message": sanitize_text(recovery.error), "retry_count": previous_retry_count}
@@ -649,19 +663,20 @@ def create_download_router(queue_manager: QueueManager) -> APIRouter:
         async with aiosqlite.connect(queue_manager.runtime.db_path) as db:
             await db.execute("PRAGMA foreign_keys=ON")
             # Delete only completed, failed, or cancelled tasks from DB
-            await db.execute(
-                "DELETE FROM downloads WHERE status IN (?, ?, ?)",
+            cursor = await db.execute(
+                """DELETE FROM downloads WHERE status IN (?, ?, ?) AND NOT EXISTS (
+                    SELECT 1 FROM download_attempts a JOIN attempt_cookie_files c ON c.attempt_id=a.id
+                    WHERE a.download_id=downloads.id) RETURNING id""",
                 ("complete", "failed", "cancelled")
             )
+            removed = [row[0] for row in await cursor.fetchall()]
             await db.commit()
 
         # Remove from in-memory tracking if present
-        to_remove = [tid for tid, task in queue_manager.in_memory_progress.items()
-                     if task["status"] in ("complete", "failed", "cancelled")]
-        for tid in to_remove:
+        for tid in removed:
             queue_manager.in_memory_progress.pop(tid, None)
 
-        return {"message": "All download history cleared"}
+        return {"message": "Removable download history cleared"}
 
     @router.delete("/history/{task_id}", response_model=Dict[str, str], tags=["history"])
     async def delete_history_item(task_id: str):
@@ -673,6 +688,11 @@ def create_download_router(queue_manager: QueueManager) -> APIRouter:
                     raise HTTPException(status_code=404, detail="History item not found")
                 if row[0] not in ("complete", "failed", "cancelled"):
                     raise HTTPException(status_code=400, detail="Cannot delete an active download from history")
+
+                async with db.execute("""SELECT 1 FROM download_attempts a JOIN attempt_cookie_files c ON c.attempt_id=a.id
+                    WHERE a.download_id=? LIMIT 1""", (task_id,)) as cursor:
+                    if await cursor.fetchone():
+                        raise HTTPException(status_code=409, detail="Cookie ownership is retained; resolve recovery before deleting this history")
 
                 await db.execute("DELETE FROM downloads WHERE id = ?", (task_id,))
                 await db.commit()

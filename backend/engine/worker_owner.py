@@ -180,7 +180,7 @@ def main(arguments=None):
                     raise ValueError("Invalid durable worker ownership")
                 register_worker(RuntimeConfig(**bootstrap["runtime"]), ownership["attempt_id"], ownership["owner_id"],
                                 options["task_id"], options["attempt_dir"], ProcessIdentity.capture(),
-                                ProcessIdentity.capture(tree.process.pid))
+                                ProcessIdentity.capture(tree.process.pid), cookies_file_path=options.get("cookies_file_path"))
             send_message({"type": "started", "pid": tree.process.pid})
             tree.process.stdin.write((json.dumps(bootstrap, ensure_ascii=False) + "\n").encode("utf-8"))
             tree.process.stdin.flush()

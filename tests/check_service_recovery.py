@@ -37,6 +37,7 @@ from backend.engine.__main__ import Bootstrap, ReadyServer
 from backend.engine.network_guard import fixture_network_guard
 from backend.engine.process_identity import ProcessIdentity
 from backend.engine.resources import check_components
+from backend.db.migrations import SCHEMA_VERSION
 from backend.runtime import RuntimeConfig
 from backend.services.artifacts import prepare_workspace
 from backend.services.artifacts import read_journal
@@ -174,7 +175,7 @@ class Service:
                     raise AssertionError("The readiness process is outside the owned launcher tree")
             self.server_identity = identity.to_json()
             self.port = ready["port"]
-            if self.request("GET", "/health")["schema_version"] != 4:
+            if self.request("GET", "/health")["schema_version"] != SCHEMA_VERSION:
                 raise AssertionError("Service is not using the ownership schema")
         except BaseException:
             self.stop(hard=True)
@@ -203,7 +204,7 @@ class Service:
         self.process.stdout.close()
 
 
-class ServiceRecoveryChecks(unittest.TestCase):
+class ServiceRecoveryFixture(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="vidgrab-service-recovery-")
         self.addCleanup(temporary.cleanup)
@@ -250,8 +251,12 @@ class ServiceRecoveryChecks(unittest.TestCase):
         return first, job, attempt
 
     def wait_tree_exit(self, attempt):
-        wait_for(lambda: not alive_identity(attempt["worker_owner_identity"])
-                 and not tree_alive(attempt["worker_identity"]), "The original attempt still has live processes")
+        wait_for(lambda: (attempt["worker_owner_identity"] is None or not alive_identity(attempt["worker_owner_identity"]))
+                 and (attempt["worker_identity"] is None or not tree_alive(attempt["worker_identity"])),
+                 "The original attempt still has live processes")
+
+
+class ServiceRecoveryChecks(ServiceRecoveryFixture):
 
     def test_second_service_refuses_a_live_runtime_without_resetting_its_attempt(self):
         with WaveServer(phase="download") as fixture:

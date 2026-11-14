@@ -45,6 +45,7 @@ class WaveServer:
         media = memory.getvalue()
         self.requested = threading.Event()
         self.release = threading.Event()
+        self.cookie_headers = []
         fixture = self
         resources = {
             "/media.html": ("text/html", b'<html><title>Fixture media</title><video controls poster="/cover.png">'
@@ -68,6 +69,7 @@ class WaveServer:
                 if self.path != "/fixture.wav":
                     self.send_error(404)
                     return
+                fixture.cookie_headers.append(self.headers.get("Cookie", ""))
                 fixture.requested.set()
                 if phase == "extraction" and not fixture.release.wait(12):
                     return
@@ -286,7 +288,9 @@ class WorkerExecutionChecks(unittest.IsolatedAsyncioTestCase):
                     cookies=[{"domain": "127.0.0.1", "name": "fixture", "value": "temporary-test-cookie"}])
                 await self.until(lambda: app.state.queue.in_memory_progress[task_id].get("progress", 0) > 0,
                                  label="real queue download progress")
-                cookies = list(self.runtime.temp_dir.glob("*.txt"))
+                async with aiosqlite.connect(self.runtime.db_path) as database:
+                    async with database.execute("SELECT ownership FROM attempt_cookie_files") as cursor:
+                        cookies = [Path(json.loads(row[0])["path"]) for row in await cursor.fetchall()]
                 self.assertEqual(len(cookies), 1)
                 unrelated = self.runtime.temp_dir / "another-job.cookies"
                 unrelated.write_bytes(b"not this worker's cookie")

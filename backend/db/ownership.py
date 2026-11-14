@@ -39,7 +39,7 @@ def require_dead(value, label, *, tree=False):
 def require_recoverable(attempt, current_owner):
     if attempt["owner_id"] is None:
         raise RuntimeOwnershipError("Legacy running attempt has no verifiable owner identity; recovery refused")
-    if attempt["owner_id"] != current_owner:
+    if attempt["owner_id"] != current_owner and (attempt["status"] == "running" or attempt["owner_released_at"] is None):
         require_dead(attempt["runtime_identity"], "attempt owner")
     for column, label, tree in (("worker_owner_identity", "worker owner", False), ("worker_identity", "worker tree", True)):
         if attempt[column] is not None:
@@ -50,6 +50,15 @@ async def running_attempts(db):
     async with db.execute("""SELECT a.*, d.status AS job_status, o.identity AS runtime_identity
                              FROM download_attempts a JOIN downloads d ON d.id=a.download_id
                              LEFT JOIN runtime_owners o ON o.id=a.owner_id WHERE a.status='running'""") as cursor:
+        return await cursor.fetchall()
+
+
+async def recovery_attempts(db):
+    async with db.execute("""SELECT a.*, d.status AS job_status, o.identity AS runtime_identity,
+        o.released_at AS owner_released_at, c.ownership AS cookie_ownership
+        FROM download_attempts a JOIN downloads d ON d.id=a.download_id
+        LEFT JOIN runtime_owners o ON o.id=a.owner_id LEFT JOIN attempt_cookie_files c ON c.attempt_id=a.id
+        WHERE a.status='running' OR c.attempt_id IS NOT NULL""") as cursor:
         return await cursor.fetchall()
 
 
@@ -74,7 +83,7 @@ class OwnerStore:
             for prior in previous:
                 require_dead(prior["identity"], "runtime owner")
             # Check every attempt before retiring owners or changing any recovery state.
-            for attempt in await running_attempts(db):
+            for attempt in await recovery_attempts(db):
                 require_recoverable(attempt, owner.id)
             await db.execute("UPDATE runtime_owners SET released_at=? WHERE released_at IS NULL", (now,))
             await db.execute("""INSERT INTO runtime_owners
@@ -102,7 +111,7 @@ class OwnerStore:
             await db.execute("UPDATE runtime_owners SET released_at=? WHERE id=?", (now, owner.id))
 
 
-def register_worker(runtime, attempt_id, owner_id, job_id, workspace, worker_owner, worker):
+def register_worker(runtime, attempt_id, owner_id, job_id, workspace, worker_owner, worker, *, cookies_file_path=None):
     """Commit identities before the child receives any bootstrap or may touch outputs."""
     if Path(workspace) != runtime.data_dir / "attempts" / attempt_id:
         raise RuntimeOwnershipError("Worker workspace does not match its attempt identity")
@@ -119,5 +128,7 @@ def register_worker(runtime, attempt_id, owner_id, job_id, workspace, worker_own
                          (attempt_id, owner_id, job_id, workspace)).fetchone()
         if row is None or not ProcessIdentity.from_json(row["identity"]).is_running():
             raise RuntimeOwnershipError("Worker launch lost its active runtime/attempt owner")
+        from backend.db.cookies import verify_cookie_delivery
+        verify_cookie_delivery(db, runtime, attempt_id, owner_id, workspace, cookies_file_path)
         db.execute("UPDATE download_attempts SET worker_owner_identity=?, worker_identity=? WHERE id=?",
                    (worker_owner.to_json(), worker.to_json(), attempt_id))

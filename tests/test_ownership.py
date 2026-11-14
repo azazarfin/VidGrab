@@ -468,7 +468,7 @@ class OwnershipMigrationTests(OfflineTestCase):
         self.schema_three(runtime, running=True)
         asyncio.run(init_db(runtime))
         with closing(sqlite3.connect(runtime.db_path)) as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 4)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 5)
             self.assertEqual(db.execute("SELECT status, owner_id, lease_expires_at, worker_identity FROM download_attempts").fetchall(),
                              [("running", None, None, None)])
             self.assertEqual(db.execute("SELECT COUNT(*) FROM runtime_owners").fetchone()[0], 0)

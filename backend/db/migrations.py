@@ -16,7 +16,7 @@ import aiosqlite
 
 from backend.runtime import RuntimeCompatibilityError, RuntimeConfig
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 BASE_COLUMNS = {
     "id", "url", "title", "thumbnail_url", "status", "progress", "speed", "eta",
     "file_size", "file_path", "format_selected", "error_message", "created_at", "completed_at",
@@ -38,6 +38,7 @@ RELATED_COLUMNS = {
     "download_attempts": {"id", "download_id", "number", "status", "workspace", "started_at", "finished_at", "error_message"} | OWNERSHIP_COLUMNS.keys(),
     "download_artifacts": {"attempt_id", "path", "kind", "state", "size", "updated_at"},
     "runtime_owners": {"id", "identity", "acquired_at", "heartbeat_at", "lease_expires_at", "released_at"},
+    "attempt_cookie_files": {"attempt_id", "ownership", "ready"},
 }
 
 
@@ -119,6 +120,14 @@ async def _migration_four(db):
         await db.execute(f"ALTER TABLE download_attempts ADD COLUMN {column} {definition}")
 
 
+async def _migration_five(db):
+    await db.execute("""CREATE TABLE attempt_cookie_files (
+        attempt_id TEXT PRIMARY KEY NOT NULL REFERENCES download_attempts(id) ON DELETE RESTRICT,
+        ownership TEXT NOT NULL CHECK (length(CAST(ownership AS BLOB)) <= 8192),
+        ready INTEGER NOT NULL DEFAULT 0 CHECK (ready IN (0, 1))
+    )""")
+
+
 async def _validate_schema(db):
     async with db.execute("PRAGMA quick_check") as cursor:
         if await cursor.fetchall() != [("ok",)]:
@@ -192,7 +201,8 @@ async def migrate_database(runtime: RuntimeConfig, defaults: dict, validate_sett
             async with db.execute("PRAGMA user_version") as cursor:
                 version = (await cursor.fetchone())[0]
             _check_version(version)
-            for target, migration in ((1, _migration_one), (2, _migration_two), (3, _migration_three), (4, _migration_four)):
+            for target, migration in ((1, _migration_one), (2, _migration_two), (3, _migration_three),
+                                      (4, _migration_four), (5, _migration_five)):
                 if version < target:
                     await migration(db)
                     await db.execute(f"PRAGMA user_version = {target}")

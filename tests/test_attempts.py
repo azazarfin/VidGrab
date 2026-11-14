@@ -30,7 +30,7 @@ class AttemptMigrationTests(OfflineTestCase):
         self.schema_two(runtime)
         asyncio.run(init_db(runtime))
         with closing(sqlite3.connect(runtime.db_path)) as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 4)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 5)
             row = db.execute("SELECT status, file_path, retry_count, attempt_count, current_attempt_id FROM downloads").fetchone()
             self.assertEqual(row, ("complete", str(runtime.download_dir / "finished বাংলা.mp3"), 2, 0, None))
             self.assertEqual(db.execute("SELECT COUNT(*) FROM download_attempts").fetchone()[0], 0)
@@ -54,7 +54,7 @@ class AttemptMigrationTests(OfflineTestCase):
             db.execute("DROP TRIGGER interrupt_defaults")
         asyncio.run(init_db(runtime))
         with closing(sqlite3.connect(runtime.db_path)) as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 4)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 5)
 
     def test_current_schema_without_the_single_attempt_index_is_refused(self):
         runtime = self.runtime()
