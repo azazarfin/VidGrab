@@ -16,7 +16,7 @@ import aiosqlite
 
 from backend.runtime import RuntimeCompatibilityError, RuntimeConfig
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 BASE_COLUMNS = {
     "id", "url", "title", "thumbnail_url", "status", "progress", "speed", "eta",
     "file_size", "file_path", "format_selected", "error_message", "created_at", "completed_at",
@@ -28,9 +28,16 @@ ATTEMPT_COLUMNS = {
     "attempt_count": "INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0)",
     "current_attempt_id": "TEXT",
 }
+OWNERSHIP_COLUMNS = {
+    "owner_id": "TEXT REFERENCES runtime_owners(id)",
+    "lease_expires_at": "REAL",
+    "worker_owner_identity": "TEXT",
+    "worker_identity": "TEXT",
+}
 RELATED_COLUMNS = {
-    "download_attempts": {"id", "download_id", "number", "status", "workspace", "started_at", "finished_at", "error_message"},
+    "download_attempts": {"id", "download_id", "number", "status", "workspace", "started_at", "finished_at", "error_message"} | OWNERSHIP_COLUMNS.keys(),
     "download_artifacts": {"attempt_id", "path", "kind", "state", "size", "updated_at"},
+    "runtime_owners": {"id", "identity", "acquired_at", "heartbeat_at", "lease_expires_at", "released_at"},
 }
 
 
@@ -102,6 +109,16 @@ async def _migration_three(db):
     await db.execute("CREATE INDEX runnable_downloads ON downloads(status, created_at)")
 
 
+async def _migration_four(db):
+    await db.execute("""CREATE TABLE runtime_owners (
+        id TEXT PRIMARY KEY, identity TEXT NOT NULL, acquired_at REAL NOT NULL,
+        heartbeat_at REAL NOT NULL, lease_expires_at REAL NOT NULL, released_at REAL
+    )""")
+    await db.execute("CREATE UNIQUE INDEX one_active_runtime_owner ON runtime_owners((1)) WHERE released_at IS NULL")
+    for column, definition in OWNERSHIP_COLUMNS.items():
+        await db.execute(f"ALTER TABLE download_attempts ADD COLUMN {column} {definition}")
+
+
 async def _validate_schema(db):
     async with db.execute("PRAGMA quick_check") as cursor:
         if await cursor.fetchall() != [("ok",)]:
@@ -127,6 +144,21 @@ async def _validate_schema(db):
         indexes = await cursor.fetchall()
     if not any(row[1] == "one_running_attempt" and row[2] == 1 and row[4] == 1 for row in indexes):
         raise RuntimeCompatibilityError("Database is missing its single running attempt index")
+    async with db.execute("PRAGMA index_list(runtime_owners)") as cursor:
+        indexes = await cursor.fetchall()
+    if not any(row[1] == "one_active_runtime_owner" and row[2] == 1 and row[4] == 1 for row in indexes):
+        raise RuntimeCompatibilityError("Database is missing its single runtime owner index")
+    from backend.engine.process_identity import ProcessIdentity
+    async with db.execute("""SELECT 1 FROM download_attempts a JOIN runtime_owners o ON o.id=a.owner_id
+        WHERE a.lease_expires_at IS NULL OR typeof(a.lease_expires_at) NOT IN ('integer', 'real')
+        OR a.lease_expires_at<=0 OR (a.status='running' AND a.lease_expires_at<>o.lease_expires_at) LIMIT 1""") as cursor:
+        if await cursor.fetchone():
+            raise RuntimeCompatibilityError("Database contains inconsistent attempt ownership/lease information")
+    async with db.execute("""SELECT identity FROM runtime_owners
+        UNION ALL SELECT worker_owner_identity FROM download_attempts WHERE worker_owner_identity IS NOT NULL
+        UNION ALL SELECT worker_identity FROM download_attempts WHERE worker_identity IS NOT NULL""") as cursor:
+        for (identity,) in await cursor.fetchall():
+            ProcessIdentity.from_json(identity)
     async with db.execute("""SELECT 1 FROM downloads d LEFT JOIN download_attempts a ON a.id=d.current_attempt_id
                              WHERE d.current_attempt_id IS NOT NULL AND
                              (a.id IS NULL OR a.download_id<>d.id OR a.status<>'running')
@@ -160,7 +192,7 @@ async def migrate_database(runtime: RuntimeConfig, defaults: dict, validate_sett
             async with db.execute("PRAGMA user_version") as cursor:
                 version = (await cursor.fetchone())[0]
             _check_version(version)
-            for target, migration in ((1, _migration_one), (2, _migration_two), (3, _migration_three)):
+            for target, migration in ((1, _migration_one), (2, _migration_two), (3, _migration_three), (4, _migration_four)):
                 if version < target:
                     await migration(db)
                     await db.execute(f"PRAGMA user_version = {target}")

@@ -1,14 +1,12 @@
 """Transactional job claims and attempt-fenced lifecycle persistence."""
 
 import asyncio
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-import aiosqlite
-
 from backend.runtime import RuntimeConfig
+from backend.db.ownership import require_owner, require_recoverable, running_attempts, transaction
 from backend.services.job_state import ACTIVE, FINISH_FROM, TERMINAL
 from backend.services.artifacts import recovery_artifacts
 
@@ -31,27 +29,20 @@ class Attempt:
     job_id: str
     number: int
     workspace: Path
+    owner_id: str | None = None
 
 
 class AttemptStore:
-    def __init__(self, runtime: RuntimeConfig):
+    def __init__(self, runtime: RuntimeConfig, owner):
         self.runtime = runtime
+        self.owner = owner
 
-    @asynccontextmanager
-    async def transaction(self):
-        async with aiosqlite.connect(self.runtime.db_path) as db:
-            db.row_factory = aiosqlite.Row
-            await db.execute("PRAGMA foreign_keys=ON")
-            await db.execute("BEGIN IMMEDIATE")
-            try:
-                yield db
-                await db.commit()
-            except BaseException:
-                await db.rollback()
-                raise
+    def transaction(self):
+        return transaction(self.runtime)
 
     async def claim(self, job_id: str, now: str) -> Attempt | None:
         async with self.transaction() as db:
+            lease = await require_owner(db, self.owner)
             async with db.execute("SELECT attempt_count FROM downloads WHERE id=? AND status='queued' AND current_attempt_id IS NULL",
                                   (job_id,)) as cursor:
                 row = await cursor.fetchone()
@@ -59,14 +50,14 @@ class AttemptStore:
                 return None
             attempt_id = str(uuid4())
             attempt = Attempt(attempt_id, job_id, row["attempt_count"] + 1,
-                              self.runtime.data_dir / "attempts" / attempt_id)
+                              self.runtime.data_dir / "attempts" / attempt_id, self.owner.id)
             await db.execute("""UPDATE downloads SET status='downloading', attempt_count=?, current_attempt_id=?,
                                 progress=0, speed=0, eta=NULL, file_path=NULL, completed_at=NULL, error_message=NULL
                                 WHERE id=?""", (attempt.number, attempt.id, job_id))
             await db.execute("""INSERT INTO download_attempts
-                                (id, download_id, number, status, workspace, started_at)
-                                VALUES (?, ?, ?, 'running', ?, ?)""",
-                             (attempt.id, job_id, attempt.number, str(attempt.workspace), now))
+                                (id, download_id, number, status, workspace, started_at, owner_id, lease_expires_at)
+                                VALUES (?, ?, ?, 'running', ?, ?, ?, ?)""",
+                             (attempt.id, job_id, attempt.number, str(attempt.workspace), now, self.owner.id, lease))
         return attempt
 
     async def finish(self, job_id: str, status: str, now: str, *, attempt_id: str | None = None,
@@ -79,11 +70,17 @@ class AttemptStore:
         if outcome not in ATTEMPT_OUTCOMES or outcome not in permitted:
             raise ValueError("Invalid attempt outcome")
         async with self.transaction() as db:
+            await require_owner(db, self.owner)
             async with db.execute("SELECT status, current_attempt_id FROM downloads WHERE id=?", (job_id,)) as cursor:
                 row = await cursor.fetchone()
             if row is None or row["status"] not in expected or row["current_attempt_id"] != attempt_id:
                 return False
             if attempt_id is not None:
+                async with db.execute("SELECT * FROM download_attempts WHERE id=? AND owner_id=?", (attempt_id, self.owner.id)) as cursor:
+                    owned = await cursor.fetchone()
+                if owned is None:
+                    return False
+                require_recoverable(owned, self.owner.id)
                 cursor = await db.execute("""UPDATE download_attempts SET status=?, finished_at=?, error_message=?
                                              WHERE id=? AND download_id=? AND status='running'""",
                                           (outcome, now, fields.get("error_message"), attempt_id, job_id))
@@ -99,16 +96,17 @@ class AttemptStore:
         return True
 
     async def recover(self, now: str) -> list[dict]:
-        """Call only after the previous runtime's worker trees have exited."""
+        """Fence every owner/tree before reading artifacts or changing recovery state."""
         async with self.transaction() as db:
-            async with db.execute("""SELECT a.id, a.download_id, a.number, a.workspace, d.status FROM download_attempts a
-                                     JOIN downloads d ON d.id=a.download_id WHERE a.status='running'""") as cursor:
-                attempts = await cursor.fetchall()
+            await require_owner(db, self.owner)
+            attempts = await running_attempts(db)
+            for attempt in attempts:
+                require_recoverable(attempt, self.owner.id)
             for attempt in attempts:
                 owned = Attempt(attempt["id"], attempt["download_id"], attempt["number"], Path(attempt["workspace"]))
                 artifacts = await asyncio.to_thread(recovery_artifacts, self.runtime, owned)
                 await record_artifacts(db, owned.id, now, artifacts)
-                outcome = "cancelled" if attempt["status"] == "cancelling" else "interrupted"
+                outcome = "cancelled" if attempt["job_status"] == "cancelling" else "interrupted"
                 await db.execute("UPDATE download_attempts SET status=?, finished_at=? WHERE id=?",
                                  (outcome, now, attempt["id"]))
             states = (*sorted(ACTIVE), "cancelling")

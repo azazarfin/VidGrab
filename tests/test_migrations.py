@@ -40,7 +40,7 @@ class MigrationTests(OfflineTestCase):
         runtime = self.runtime()
         self.initialize(runtime)
         with closing(sqlite3.connect(runtime.db_path)) as db, db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 4)
             value = db.execute("SELECT value FROM config WHERE key = 'download_dir'").fetchone()[0]
             self.assertEqual(json.loads(value), str(runtime.download_dir))
             self.assertEqual(db.execute("SELECT COUNT(*) FROM downloads").fetchone()[0], 0)
@@ -52,7 +52,7 @@ class MigrationTests(OfflineTestCase):
                 legacy_database(runtime.db_path, version, {"max_concurrent": 5})
                 self.initialize(runtime)
                 with closing(sqlite3.connect(runtime.db_path)) as db, db:
-                    self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
+                    self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 4)
                     job = db.execute("SELECT id, status, retry_count FROM downloads").fetchone()
                     self.assertEqual(job, ("legacy-job", "queued", 0))
                     value = db.execute("SELECT value FROM config WHERE key = 'max_concurrent'").fetchone()[0]
@@ -83,7 +83,7 @@ class MigrationTests(OfflineTestCase):
             db.execute("DROP TRIGGER interrupt_defaults")
         self.initialize(runtime)
         with closing(sqlite3.connect(runtime.db_path)) as db, db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 4)
 
     def test_invalid_legacy_settings_fail_without_mutating_the_database(self):
         runtime = self.runtime()
@@ -114,7 +114,7 @@ class MigrationTests(OfflineTestCase):
         self.assertTrue(result.backup_path.is_file())
         self.assertEqual(hashlib.sha256(source.read_bytes()).digest(), before)
         with closing(sqlite3.connect(runtime.db_path)) as db, db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 4)
             self.assertEqual(db.execute("SELECT id FROM downloads").fetchone()[0], "legacy-job")
 
     def test_legacy_import_refuses_to_overwrite_existing_state(self):

@@ -163,6 +163,17 @@ def main(arguments=None):
     try:
         with tempfile.TemporaryFile() as log:
             tree = ProcessTree(arguments[1:], log)
+            options = bootstrap.get("options", {})
+            ownership = options.pop("ownership", None)
+            if ownership is not None:
+                from backend.db.ownership import register_worker
+                from backend.engine.process_identity import ProcessIdentity
+                from backend.runtime import RuntimeConfig
+                if not isinstance(ownership, dict) or ownership.keys() != {"attempt_id", "owner_id"}:
+                    raise ValueError("Invalid durable worker ownership")
+                register_worker(RuntimeConfig(**bootstrap["runtime"]), ownership["attempt_id"], ownership["owner_id"],
+                                options["task_id"], options["attempt_dir"], ProcessIdentity.capture(),
+                                ProcessIdentity.capture(tree.process.pid))
             send_message({"type": "started", "pid": tree.process.pid})
             tree.process.stdin.write((json.dumps(bootstrap, ensure_ascii=False) + "\n").encode("utf-8"))
             tree.process.stdin.flush()

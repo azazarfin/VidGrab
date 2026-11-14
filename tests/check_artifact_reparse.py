@@ -11,7 +11,8 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from backend.db.jobs import Attempt
-from backend.runtime import OutputPathError
+from backend.runtime import OutputPathError, RuntimeOwnershipError
+from backend.engine.runtime_owner import RuntimeOwner
 from backend.services import artifacts
 from tests.support import OfflineTestCase
 
@@ -86,6 +87,32 @@ class ArtifactReparseChecks(OfflineTestCase):
         self.assertTrue(artifacts.os.path.lexists(output))
         self.assertFalse(missing.exists())
 
+    def test_runtime_owner_directory_junction_is_refused_before_creating_foreign_files(self):
+        runtime = self.runtime()
+        foreign = self.root / "foreign-state"
+        foreign.mkdir()
+        sentinel = foreign / "preserved"
+        sentinel.write_bytes(b"foreign state bytes")
+        self.junction(foreign, runtime.data_dir)
+        owner = RuntimeOwner(runtime)
+        with self.assertRaises(RuntimeOwnershipError):
+            owner.lock()
+        self.assertIsNone(owner.fd)
+        self.assertEqual(list(foreign.iterdir()), [sentinel])
+
+    def test_runtime_owner_lock_junction_is_refused_before_opening_foreign_files(self):
+        runtime, _ = self.prepared()
+        foreign = self.root / "foreign-lock"
+        foreign.mkdir()
+        sentinel = foreign / "preserved"
+        sentinel.write_bytes(b"foreign lock bytes")
+        self.junction(foreign, runtime.data_dir / "engine-owner.lock")
+        owner = RuntimeOwner(runtime)
+        with self.assertRaises(RuntimeOwnershipError):
+            owner.lock()
+        self.assertIsNone(owner.fd)
+        self.assertEqual(sentinel.read_bytes(), b"foreign lock bytes")
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -95,7 +122,8 @@ def main():
     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(ArtifactReparseChecks))
     args.report.write_text(json.dumps({"ok": result.wasSuccessful(), "tests": result.testsRun,
         "skipped": [str(case) for case, _ in result.skipped], "seconds": round(time.monotonic() - started, 3),
-        "module_sha256": hashlib.sha256(Path(artifacts.__file__).read_bytes()).hexdigest()}, indent=2))
+        "module_sha256": hashlib.sha256(Path(artifacts.__file__).read_bytes()).hexdigest(),
+        "owner_module_sha256": hashlib.sha256(Path(sys.modules[RuntimeOwner.__module__].__file__).read_bytes()).hexdigest()}, indent=2))
     raise SystemExit(not result.wasSuccessful())
 
 

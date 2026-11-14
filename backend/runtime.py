@@ -18,6 +18,10 @@ class RuntimeCompatibilityError(RuntimeError):
     pass
 
 
+class RuntimeOwnershipError(RuntimeError):
+    pass
+
+
 class OutputPathError(ValueError):
     pass
 

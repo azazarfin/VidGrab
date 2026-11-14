@@ -40,6 +40,7 @@ class ThreadDownloadExecutor:
         self.runner = runner
 
     async def run(self, **options):
+        options.pop("ownership", None)
         execution = asyncio.create_task(asyncio.to_thread(self.runner, **options))
         return await join_owned_task(execution)
 

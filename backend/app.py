@@ -1,5 +1,6 @@
 """App factory. Startup owns mutations; factory/import owns no processes or files."""
 
+import asyncio
 import logging
 import shutil
 import time
@@ -16,6 +17,8 @@ from backend.downloader import run_download
 from backend.format_probe import ProbeService, create_probe_router
 from backend.queue_manager import ConnectionManager, QueueManager, create_download_router, open_folder
 from backend.runtime import RuntimeConfig
+from backend.engine.execution import join_owned_task
+from backend.engine.runtime_owner import RuntimeOwner
 
 logger = logging.getLogger("vidgrab.app")
 
@@ -29,21 +32,34 @@ def create_app(
     runtime.validate()
     settings = SettingsStore(runtime)
     connections = ConnectionManager()
-    queue = QueueManager(runtime, settings, connections, download_runner, clock, open_folder, download_executor)
+    owner = RuntimeOwner(runtime, clock)
+    queue = QueueManager(runtime, settings, connections, download_runner, clock, open_folder, download_executor, owner=owner)
     probes = ProbeService(runtime, runner=probe_runner, clock=clock)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        owner.lock()
         app.state.ready = False
-        await settings.initialize()
         try:
+            await settings.initialize()
+            await owner.start()
+            await queue.initialize()
             if start_queue:
                 queue.start()
             app.state.ready = True
             yield
         finally:
             app.state.ready = False
-            await queue.stop()
+            async def cleanup():
+                try:
+                    if owner.active:
+                        await queue.stop()
+                except BaseException:
+                    await owner.stop(release=False)
+                    raise
+                else:
+                    await owner.stop()
+            await join_owned_task(asyncio.create_task(cleanup()))
 
     app = FastAPI(
         title="VidGrab Backend API",
@@ -51,11 +67,18 @@ def create_app(
         version="1.0.0", lifespan=lifespan,
     )
     app.state.runtime = runtime
+    app.state.owner = owner
     app.state.settings = settings
     app.state.queue = queue
     app.state.connections = connections
     app.state.probes = probes
     app.state.ready = False
+
+    async def ownership_failed():
+        app.state.ready = False
+        await queue.stop()
+
+    owner.on_failure = ownership_failed
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?|chrome-extension://.*|moz-extension://.*",

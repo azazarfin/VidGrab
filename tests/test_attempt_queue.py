@@ -181,7 +181,7 @@ class AttemptQueueTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
         app = self.app()
         async with app.router.lifespan_context(app):
             job_id = await app.state.queue.enqueue("https://fixture.invalid/media", "best")
-            store = AttemptStore(app.state.runtime)
+            store = app.state.queue.attempts
             first = await store.claim(job_id, "2026-11-14T00:00:00+00:00")
             await store.finish(job_id, "queued", "2026-11-14T00:01:00+00:00", attempt_id=first.id)
             second = await store.claim(job_id, "2026-11-14T00:02:00+00:00")

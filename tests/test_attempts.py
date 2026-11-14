@@ -30,7 +30,7 @@ class AttemptMigrationTests(OfflineTestCase):
         self.schema_two(runtime)
         asyncio.run(init_db(runtime))
         with closing(sqlite3.connect(runtime.db_path)) as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 4)
             row = db.execute("SELECT status, file_path, retry_count, attempt_count, current_attempt_id FROM downloads").fetchone()
             self.assertEqual(row, ("complete", str(runtime.download_dir / "finished বাংলা.mp3"), 2, 0, None))
             self.assertEqual(db.execute("SELECT COUNT(*) FROM download_attempts").fetchone()[0], 0)
@@ -54,7 +54,7 @@ class AttemptMigrationTests(OfflineTestCase):
             db.execute("DROP TRIGGER interrupt_defaults")
         asyncio.run(init_db(runtime))
         with closing(sqlite3.connect(runtime.db_path)) as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 4)
 
     def test_current_schema_without_the_single_attempt_index_is_refused(self):
         runtime = self.runtime()
@@ -81,13 +81,15 @@ class AttemptMigrationTests(OfflineTestCase):
 class AttemptStoreTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.selected_runtime = self.runtime()
-        await init_db(self.selected_runtime)
+        self.application = self.app(self.selected_runtime)
+        context = self.application.router.lifespan_context(self.application)
+        await context.__aenter__()
+        self.addAsyncCleanup(context.__aexit__, None, None, None)
 
     def store(self):
         self.assertIsNotNone(importlib.util.find_spec("backend.db.jobs"),
                              "Durable attempts need a transactional repository")
-        from backend.db.jobs import AttemptStore
-        return AttemptStore(self.selected_runtime)
+        return self.application.state.queue.attempts
 
     def query(self, sql, values=()):
         with closing(sqlite3.connect(self.selected_runtime.db_path)) as db:
@@ -237,6 +239,7 @@ class AttemptStoreTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.query("SELECT status FROM downloads"), [("downloading",)])
         self.assertEqual(self.query("SELECT status FROM download_attempts"), [("running",)])
 
+
     async def test_recovery_write_failure_rolls_back_both_records(self):
         job_id = self.enqueue()
         store = self.store()
@@ -247,6 +250,7 @@ class AttemptStoreTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
             await store.recover(LATER)
         self.assertEqual(self.query("SELECT status, current_attempt_id FROM downloads"), [("downloading", attempt.id)])
         self.assertEqual(self.query("SELECT status FROM download_attempts"), [("running",)])
+        self.execute("DROP TRIGGER reject_recovery")
 
     async def test_recovery_restores_published_artifacts_without_inventing_job_completion(self):
         from backend.services import artifacts

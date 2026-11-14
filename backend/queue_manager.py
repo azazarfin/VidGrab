@@ -94,7 +94,7 @@ class ConnectionManager:
 # Queue Manager State
 class QueueManager:
     def __init__(self, runtime: RuntimeConfig, settings: SettingsStore, connections: ConnectionManager,
-                 download_runner=run_download, clock=time.time, open_folder=None, download_executor=None):
+                 download_runner=run_download, clock=time.time, open_folder=None, download_executor=None, *, owner):
         self.runtime = runtime
         self.settings = settings
         self.connections = connections
@@ -103,9 +103,10 @@ class QueueManager:
             ProcessDownloadExecutor() if download_runner is run_download else ThreadDownloadExecutor(download_runner)
         )
         self.clock = clock
+        self.owner = owner
         self.open_folder = open_folder
         self.active_tasks: Dict[str, asyncio.Task] = {}
-        self.attempts = AttemptStore(runtime)
+        self.attempts = AttemptStore(runtime, owner)
         self.active_attempts = {}
         self.cancelled_tasks: set = set()
         self.in_memory_progress: Dict[str, Dict[str, Any]] = {}
@@ -143,6 +144,11 @@ class QueueManager:
         for row in await self.attempts.recover(self._now()):
             self.in_memory_progress[row["id"]] = row
         self.active_attempts.clear()
+
+    async def initialize(self):
+        self.stopping = False
+        self.stop_task = None
+        await self._recover()
 
     def start(self):
         self.stopping = False
@@ -190,7 +196,7 @@ class QueueManager:
         logger.info("Queue manager loops and active execution stopped.")
 
     def is_cancelled(self, task_id: str) -> bool:
-        return self.stopping or task_id in self.cancelled_tasks
+        return self.stopping or not self.owner.healthy or task_id in self.cancelled_tasks
 
     async def enqueue(
         self,
@@ -344,7 +350,7 @@ class QueueManager:
         attempt = self.active_attempts.get(task_id)
         if attempt_id is not None and (attempt is None or attempt.id != attempt_id):
             return
-        if task_id not in self.in_memory_progress or self.stopping or not accepts_progress(self.in_memory_progress[task_id]["status"]):
+        if task_id not in self.in_memory_progress or self.stopping or not self.owner.healthy or not accepts_progress(self.in_memory_progress[task_id]["status"]):
             return
 
         self.in_memory_progress[task_id].update(payload)
@@ -398,9 +404,6 @@ class QueueManager:
                 logger.error(f"Error in scheduler loop: {e}")
 
     async def _worker_loop(self):
-        # Reset any stuck tasks from previous crash
-        await self._recover()
-
         while True:
             try:
                 config = await self.settings.get_all()
@@ -489,6 +492,7 @@ class QueueManager:
                 cookies_file_path = write_cookies_to_netscape_format(cookies, self.runtime.temp_dir)
             result = await self.download_executor.run(
                 runtime=self.runtime, task_id=task_id, url=url, format_id=format_id,
+                ownership={"attempt_id": attempt.id, "owner_id": attempt.owner_id},
                 download_dir=download_dir, filename_template=filename_template,
                 progress_callback=lambda tid, payload: self.handle_progress(tid, payload, attempt_id=attempt.id),
                 attempt_dir=str(attempt.workspace),
