@@ -130,9 +130,12 @@ class Service:
         self.port = None
         self.log = root / f"service-{sequence}.log"
 
+    def command(self):
+        return ([str(ENGINE)] if ENGINE else [sys.executable, "-B", "-m", "tests.check_service_recovery",
+                                             "--serve", "--tools", str(TOOLS)])
+
     def start(self, *, refused=False):
-        command = ([str(ENGINE)] if ENGINE else [sys.executable, "-B", "-m", "tests.check_service_recovery",
-                                                "--serve", "--tools", str(TOOLS)])
+        command = self.command()
         with self.log.open("xb") as log:
             self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log,
                                             close_fds=True,
