@@ -126,7 +126,38 @@ def validate_journal_record(runtime, workspace, record):
         raise ValueError("Invalid artifact journal kind/state")
     if type(size) is not int or size < 0:
         raise ValueError("Artifact journal size must be a nonnegative integer")
-    return {"source": source, "path": path, "kind": kind, "state": state, "size": size}
+    validated = {"source": source, "path": path, "kind": kind, "state": state, "size": size}
+    if "version" in record:
+        if type(record["version"]) is not int or record["version"] != 2:
+            raise ValueError("Unsupported artifact journal version")
+        witness = record.get("witness")
+        if not isinstance(witness, str) or not witness or "\0" in witness:
+            raise ValueError("Publication witness must be a literal path")
+        witness_path = Path(witness)
+        if witness_path != source_path:
+            prefix = f".vidgrab-{workspace.name}-"
+            if witness_path.parent != Path(path).parent or not witness_path.name.startswith(prefix) or not witness_path.name.endswith(".part"):
+                raise OutputPathError("Publication witness is outside its selected destination")
+            nonce = witness_path.name[len(prefix):-5]
+            if str(UUID(nonce)) != nonce:
+                raise ValueError("Invalid publication witness identity")
+        parent = record.get("parent")
+        if not isinstance(parent, str) or "\0" in parent or not Path(parent).is_absolute():
+            raise ValueError("Publication parent must be an absolute literal path")
+        digest = record.get("sha256")
+        if not isinstance(digest, str) or len(digest) != 64 or any(value not in "0123456789abcdef" for value in digest):
+            raise ValueError("Invalid publication digest")
+        phase = record.get("phase")
+        if phase not in ("copying", "ready", "published") or (state == "complete") != (phase == "published"):
+            raise ValueError("Invalid publication phase/state")
+        validated.update(version=2, witness=witness, parent=parent, sha256=digest, phase=phase)
+        for key in ("identity", "source_identity", "parent_identity"):
+            identity = record.get(key)
+            if not isinstance(identity, dict) or set(identity) != {"device", "inode"} or any(
+                    type(identity[value]) is not int or identity[value] < 0 for value in identity) or identity["inode"] == 0:
+                raise ValueError("Invalid publication file identity")
+            validated[key] = dict(identity)
+    return validated
 
 
 def journal_path(workspace, *, create=False):
@@ -144,6 +175,29 @@ def journal_path(workspace, *, create=False):
 def append_journal(runtime, directory, records):
     workspace = validate_workspace(runtime, str(directory))
     records = [validate_journal_record(runtime, workspace, record) for record in records]
+    _append_frames(workspace, records)
+
+
+def validate_journal_result(runtime, result):
+    records = result_artifacts(result)
+    for record in records:
+        validate_output_path(runtime, record["path"])
+    validated = {"filepath": result["filepath"], "artifacts": records}
+    for key in ("title", "thumbnail_url"):
+        value = result.get(key)
+        if value is not None and (not isinstance(value, str) or "\0" in value or len(value) > 16384):
+            raise ValueError("Invalid publication result metadata")
+        validated[key] = value
+    return validated
+
+
+def append_journal_result(runtime, directory, result):
+    workspace = validate_workspace(runtime, str(directory))
+    result = validate_journal_result(runtime, result)
+    _append_frames(workspace, [{"event": "result", "version": 2, "result": result}])
+
+
+def _append_frames(workspace, records):
     encoded = b"".join((json.dumps(record, ensure_ascii=False) + "\n").encode("utf-8") for record in records)
     path = journal_path(workspace, create=True)
     flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
@@ -158,8 +212,8 @@ def append_journal(runtime, directory, records):
         os.fsync(file.fileno())
 
 
-def journal_artifacts(runtime, attempt):
-    workspace = validate_workspace(runtime, str(attempt.workspace))
+def read_journal(runtime, directory):
+    workspace = validate_workspace(runtime, str(directory))
     try:
         path = journal_path(workspace)
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
@@ -169,25 +223,40 @@ def journal_artifacts(runtime, attempt):
                 raise ValueError("Invalid or oversized artifact journal")
             encoded = file.read(JOURNAL_LIMIT + 1)
     except FileNotFoundError:
-        return []
+        return [], None
     if len(encoded) > JOURNAL_LIMIT:
         raise ValueError("Artifact journal exceeds its size limit")
     records = {}
+    result = None
     for line in encoded.splitlines(keepends=True):
+        if result is not None:
+            raise ValueError("Artifact journal contains records after its terminal result")
         if not line.endswith(b"\n"):
             break  # An interrupted final append does not invalidate earlier fsynced frames.
-        record = validate_journal_record(runtime, workspace, json.loads(line))
-        records[record["path"]] = {key: record[key] for key in ("path", "kind", "state", "size")}
-    return list(records.values())
+        frame = json.loads(line)
+        if isinstance(frame, dict) and frame.get("event") == "result":
+            if type(frame.get("version")) is not int or frame["version"] != 2:
+                raise ValueError("Unsupported publication result version")
+            result = validate_journal_result(runtime, frame.get("result"))
+            continue
+        record = validate_journal_record(runtime, workspace, frame)
+        previous = records.get(record["path"])
+        if previous and previous.get("version") == 2:
+            stable = ("source", "path", "kind", "size", "version", "witness", "parent", "identity", "source_identity", "parent_identity", "sha256")
+            if any(previous[key] != record.get(key) for key in stable) or previous["state"] == "complete" and record["state"] != "complete":
+                raise ValueError("Publication records changed their durable ownership")
+        records[record["path"]] = record
+    return list(records.values()), result
+
+
+def journal_artifacts(runtime, attempt):
+    records, _ = read_journal(runtime, attempt.workspace)
+    return [{key: record[key] for key in ("path", "kind", "state", "size")} for record in records]
 
 
 def recovery_artifacts(runtime, attempt):
-    if attempt.workspace != runtime.data_dir / "attempts" / attempt.id:
-        raise OutputPathError("Persisted workspace does not match the attempt identity")
-    try:
-        attempt.workspace.lstat()
-    except FileNotFoundError:
-        return []  # A claimed worker may never have opened its resources.
-    records = {record["path"]: record for record in journal_artifacts(runtime, attempt)}
-    records.update({record["path"]: record for record in retained_artifacts(runtime, attempt)})
-    return list(records.values())
+    from backend.services.publication import reconcile_publication
+    recovery = reconcile_publication(runtime, attempt)
+    if recovery.error:
+        raise OutputPathError(recovery.error)
+    return recovery.artifacts

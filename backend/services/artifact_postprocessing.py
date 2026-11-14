@@ -5,7 +5,8 @@ from pathlib import Path
 from yt_dlp.postprocessor.common import PostProcessor
 
 from backend.runtime import OutputPathError
-from backend.services.artifacts import append_journal, completed_artifacts, is_link, validate_output_path
+from backend.services.artifacts import completed_artifacts, validate_output_path
+from backend.services.publication import plan_publications, publish_artifact, verify_published
 
 
 class CaptureArtifactMovesPP(PostProcessor):
@@ -28,17 +29,16 @@ class CaptureArtifactMovesPP(PostProcessor):
                 file_moves[old] = new
             if old != source:
                 moves.append({"source": old, "path": new or str(final_dir / Path(old).name), "kind": kinds.get(old, "auxiliary")})
-        for move in moves:
-            destination = validate_output_path(self.runtime, move["path"])
-            if self.workspace is not None:
-                staged = Path(move["source"])
-                if not staged.resolve().is_relative_to(self.workspace) or is_link(staged):
-                    raise OutputPathError("Output did not originate in this attempt's owned workspace")
-                if destination.exists():
-                    raise OutputPathError("Output already exists; choose a different filename before retrying")
         if self.workspace is not None:
-            append_journal(self.runtime, self.workspace,
-                           [{**move, "state": "partial", "size": Path(move["source"]).stat().st_size} for move in moves])
+            planned = plan_publications(self.runtime, self.workspace, moves)
+            moves = [publish_artifact(self.runtime, self.workspace, move) for move in planned]
+            # The built-in mover now sees only the final media path. Its ordinary
+            # shutil.move path could replace a destination created concurrently.
+            info["filepath"] = moves[0]["path"]
+            info["__files_to_move"] = {}
+        else:
+            for move in moves:
+                validate_output_path(self.runtime, move["path"])
         info["__vidgrab_artifact_moves"] = moves
         return [], info
 
@@ -53,17 +53,14 @@ class RecordFinalArtifactsPP(PostProcessor):
     def run(self, info):
         moves = info.pop("__vidgrab_artifact_moves", [])
         records = [{"path": info["filepath"], "kind": "media"}]
-        sources = {info["filepath"]: moves[0]["source"]} if moves else {}
         for move in moves:
-            if move["source"] != move["path"] and Path(move["source"]).exists():
+            if self.workspace is not None:
+                verify_published(self.runtime, move)
+            elif move["source"] != move["path"] and Path(move["source"]).exists():
                 raise OutputPathError("Owned output was not published to its final path")
             if move["kind"] != "media" and move["path"] != info["filepath"]:
                 records.append({"path": move["path"], "kind": move["kind"]})
-                sources[move["path"]] = move["source"]
         # This is the last after_move processor: extensions and sidecars are authoritative.
-        completed = completed_artifacts(self.runtime, {"filepath": info["filepath"], "artifacts": records})
-        if self.workspace is not None:
-            append_journal(self.runtime, self.workspace,
-                           [{**record, "source": sources[record["path"]]} for record in completed])
+        completed_artifacts(self.runtime, {"filepath": info["filepath"], "artifacts": records})
         self.records.extend(records)
         return [], info

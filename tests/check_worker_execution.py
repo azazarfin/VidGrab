@@ -28,11 +28,12 @@ from backend.engine.execution import ProcessDownloadExecutor
 from backend.engine.resources import check_components
 from backend.runtime import RuntimeConfig
 from backend.db.jobs import Attempt
-from backend.services.artifacts import journal_artifacts, prepare_workspace
+from backend.services.artifacts import journal_artifacts, prepare_workspace, read_journal
 from tests.worker_process_support import owned_children
 
 COMPONENTS = None
 ENGINE = None
+CROSS_VOLUME_ROOT = None
 
 
 class WaveServer:
@@ -80,7 +81,7 @@ class WaveServer:
                         self.wfile.flush()
                         if phase == "download" and offset == 0 and not fixture.release.wait(12):
                             return
-                except (BrokenPipeError, ConnectionResetError):
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                     pass
 
             def log_message(self, *_):
@@ -226,6 +227,29 @@ class WorkerExecutionChecks(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(record["state"] == "complete" and record["size"] > 0 for record in journal))
         self.assertFalse(self.runtime.db_path.exists(), "Attempt workers must not initialize SQLite")
 
+    async def test_cross_volume_media_publication_retains_a_destination_volume_witness(self):
+        if CROSS_VOLUME_ROOT is None:
+            self.skipTest("Select an explicit temporary root on a different volume")
+        with tempfile.TemporaryDirectory(prefix="vidgrab-cross-volume-", dir=CROSS_VOLUME_ROOT) as media_root:
+            self.runtime = RuntimeConfig(self.root / "cross-state", Path(media_root) / "media বাংলা")
+            self.runtime.prepare()
+            self.assertNotEqual(self.runtime.data_dir.stat().st_dev, self.runtime.download_dir.stat().st_dev,
+                                "The selected fixture directories must be on different volumes")
+            identity = str(uuid4())
+            attempt = Attempt(identity, "fixture", 1, self.runtime.data_dir / "attempts" / identity)
+            prepare_workspace(self.runtime, attempt)
+            with WaveServer() as server:
+                result = await asyncio.wait_for(self.executor().run(**self.options(server.url), attempt_dir=str(attempt.workspace)), 15)
+            records, durable = read_journal(self.runtime, attempt.workspace)
+            self.assertEqual(durable["filepath"], result["filepath"])
+            self.assertEqual(len(records), 1)
+            record = records[0]
+            self.assertNotEqual(record["witness"], record["source"])
+            self.assertNotEqual(record["identity"]["device"], record["source_identity"]["device"])
+            self.assertTrue(Path(record["witness"]).samefile(Path(result["filepath"])))
+            self.assertTrue(Path(record["source"]).is_file())
+            self.assertFalse(self.runtime.db_path.exists())
+
     async def test_preexisting_media_is_not_postprocessed_or_deleted_by_a_new_attempt(self):
         identity = str(uuid4())
         attempt = Attempt(identity, "fixture", 1, self.runtime.data_dir / "attempts" / identity)
@@ -324,14 +348,16 @@ asyncio.run(execution.ProcessDownloadExecutor(components=bootstrap['components']
 
 
 def main():
-    global COMPONENTS, ENGINE
+    global COMPONENTS, ENGINE, CROSS_VOLUME_ROOT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tools", type=Path, required=True)
     parser.add_argument("--engine", type=Path)
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--cross-volume-root", type=Path)
     arguments = parser.parse_args()
     COMPONENTS, versions = check_components(arguments.tools.resolve())
     ENGINE = arguments.engine.resolve() if arguments.engine else None
+    CROSS_VOLUME_ROOT = arguments.cross_volume_root.resolve(strict=True) if arguments.cross_volume_root else None
     if ENGINE and not ENGINE.is_file():
         parser.error("--engine must select an existing fresh frozen executable")
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(WorkerExecutionChecks)
@@ -340,7 +366,9 @@ def main():
     if arguments.report:
         arguments.report.write_text(json.dumps(dict(ok=result.wasSuccessful(), tests=result.testsRun,
             seconds=round(time.monotonic() - started, 3), engine=str(ENGINE) if ENGINE else "source",
-            versions=versions, failures=[str(test) + ": " + trace for test, trace in result.failures + result.errors]), indent=2), encoding="utf-8")
+            versions=versions, cross_volume_root=str(CROSS_VOLUME_ROOT) if CROSS_VOLUME_ROOT else None,
+            skipped=[(test.id(), reason) for test, reason in result.skipped],
+            failures=[str(test) + ": " + trace for test, trace in result.failures + result.errors]), indent=2), encoding="utf-8")
     raise SystemExit(0 if result.wasSuccessful() else 1)
 
 

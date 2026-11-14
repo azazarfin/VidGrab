@@ -8,6 +8,7 @@ from backend.sanitizer import sanitize_text
 from backend.runtime import OutputPathError, RuntimeConfig
 from backend.services.artifacts import is_link, result_artifacts, validate_workspace
 from backend.services.artifact_postprocessing import CaptureArtifactMovesPP, RecordFinalArtifactsPP
+from backend.services.publication import record_result
 
 logger = logging.getLogger("vidgrab.downloader")
 
@@ -129,7 +130,11 @@ def make_postprocessor_hook(
         source = (d.get('info_dict') or {}).get('filepath')
         if workspace is not None and status == 'started' and source and d.get('postprocessor') != 'RecordFinalArtifacts':
             path = Path(source)
-            if not path.resolve().is_relative_to(workspace) or (path.exists() and is_link(path)):
+            publications = (d.get('info_dict') or {}).get('__vidgrab_artifact_moves') or []
+            published_move = (d.get('postprocessor') == 'MoveFiles' and publications
+                              and publications[0].get('path') == source
+                              and all(record.get('version') == 2 and record.get('state') == 'complete' for record in publications))
+            if not published_move and (not path.resolve().is_relative_to(workspace) or (path.exists() and is_link(path))):
                 raise OutputPathError("Post-processing input is outside this attempt's owned workspace")
         if status in ('started', 'processing'):
             payload = {
@@ -359,9 +364,12 @@ def run_download(
                 raise RuntimeError("yt-dlp did not report completed post-processing outputs")
             # Explicit diagnostic adapters may return an authoritative info record directly.
             artifacts = result_artifacts({'filepath': info.get('filepath')})
-        return {
+        result = {
             "filepath": artifacts[0]['path'],
             "artifacts": artifacts,
             "title": sanitize_text(info.get("title")),
             "thumbnail_url": info.get("thumbnail")
         }
+        if workspace is not None:
+            record_result(runtime, workspace, result)
+        return result

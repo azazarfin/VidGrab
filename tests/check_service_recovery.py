@@ -1,8 +1,9 @@
 """Opt-in actual ASGI ownership, startup-barrier and gated-download restart checks.
 
 Only explicitly verified tools, private temporary runtimes and loopback WAVs
-are used. Linux orphan-group cases are synthetic OS processes. Publication
-after a crash and verified resume are separate P03 gates.
+are used. Linux orphan-group and before/after-link publication cases use
+owned synthetic processes. A real media result is held before SQLite's
+terminal write. Verified resume and power-loss durability remain separate.
 """
 
 import argparse
@@ -25,6 +26,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 import httpx
 import uvicorn
@@ -37,6 +39,8 @@ from backend.engine.process_identity import ProcessIdentity
 from backend.engine.resources import check_components
 from backend.runtime import RuntimeConfig
 from backend.services.artifacts import prepare_workspace
+from backend.services.artifacts import read_journal
+from backend.services.publication import plan_publications, publish_artifact
 from tests.check_worker_execution import WaveServer
 from tests.worker_process_support import linux_identity, windows_identity, snapshot, windows_kernel
 
@@ -286,6 +290,151 @@ class ServiceRecoveryChecks(unittest.TestCase):
             self.assertIn("বাংলা", row["file_path"])
             self.assertTrue(self.rows("SELECT * FROM download_artifacts WHERE attempt_id=? AND state='partial'", (attempt["id"],)))
 
+    def publication_checkpoint(self, phase):
+        """Kill an owned diagnostic publisher at a known abandoned-job boundary."""
+        with WaveServer(phase="download") as fixture:
+            first, job, attempt = self.active(fixture)
+            first.stop(hard=True)
+            self.wait_tree_exit(attempt)
+            owner_command = ([str(ENGINE), "--worker-owner"] if ENGINE else
+                             [sys.executable, "-B", "-m", "backend.engine.worker_owner"])
+            command = [*owner_command, "--", sys.executable, "-B", "-m", "tests.check_service_recovery",
+                       "--tools", str(TOOLS), "--publication-worker"]
+            bootstrap = {"runtime": {key: str(getattr(self.runtime, key)) for key in
+                                       ("data_dir", "download_dir", "logs_dir", "temp_dir")},
+                         "options": {"attempt_dir": attempt["workspace"], "phase": phase}}
+            publisher = None
+            identities = None
+            try:
+                with (self.root / f"publication-{phase}.log").open("xb") as log:
+                    publisher = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                        stderr=log, close_fds=True, creationflags=0x08000000 if sys.platform == "win32" else 0)
+                launcher = ProcessIdentity.capture(publisher.pid)
+                publisher.stdin.write((json.dumps(bootstrap) + "\n").encode())
+                publisher.stdin.flush()
+                frames = queue.Queue()
+
+                def read_checkpoint():
+                    frames.put(publisher.stdout.readline(65537))
+                    frames.put(publisher.stdout.readline(65537))
+
+                reader = threading.Thread(target=read_checkpoint, daemon=True)
+                reader.start()
+                started = json.loads(frames.get(timeout=10))
+                checkpoint = json.loads(frames.get(timeout=10))
+                reader.join(timeout=1)
+                self.assertEqual(started["type"], "started")
+                self.assertEqual(checkpoint["type"], "progress")
+                self.assertEqual(checkpoint["data"]["phase"], phase)
+                # Windows venv redirectors introduce launcher/interpreter pairs.
+                # The worker's kernel parent identifies the actual owner holding
+                # the Job Object; never kill an unverified launcher alone.
+                processes = {process.pid: process for process in snapshot()}
+                owner_pid = processes[started["pid"]].parent
+                current, seen = processes.get(owner_pid), set()
+                while current and current.pid != launcher.pid and current.pid not in seen:
+                    seen.add(current.pid)
+                    current = processes.get(current.parent)
+                self.assertIsNotNone(current)
+                self.assertEqual((current.pid, current.started), (launcher.pid, launcher.started))
+                identities = {"worker_owner_identity": ProcessIdentity.capture(owner_pid).to_json(),
+                              "worker_identity": ProcessIdentity.capture(started["pid"]).to_json()}
+                with closing(sqlite3.connect(self.runtime.db_path)) as db, db:
+                    db.execute("UPDATE download_attempts SET worker_owner_identity=?, worker_identity=? WHERE id=?",
+                               (identities["worker_owner_identity"], identities["worker_identity"], attempt["id"]))
+                attempt.update(identities)
+                if sys.platform == "win32":
+                    terminate_windows_identity(identities["worker_owner_identity"])
+                else:
+                    self.assertTrue(alive_identity(identities["worker_owner_identity"]))
+                    os.kill(owner_pid, signal.SIGKILL)
+                publisher.wait(timeout=7)
+                self.wait_tree_exit(attempt)
+                records, result = read_journal(self.runtime, Path(attempt["workspace"]))
+                self.assertIsNone(result)
+                source = Path(records[0]["source"])
+                before = source.read_bytes()
+                second = self.service()
+                if phase == "before-link":
+                    fixture.release.set()
+                    wait_for(lambda: any(row["id"] == job and row["status"] == "complete"
+                                         for row in second.request("GET", "/spike/status")["jobs"]),
+                             "The unpublished attempt was not safely retried", timeout=12)
+                    self.assertEqual(self.rows("SELECT number, status FROM download_attempts ORDER BY number"),
+                                     [{"number": 1, "status": "interrupted"}, {"number": 2, "status": "complete"}])
+                else:
+                    self.assertEqual(self.rows("SELECT status, attempt_count, retry_count, file_path FROM downloads"),
+                                     [{"status": "failed", "attempt_count": 1, "retry_count": 0, "file_path": None}])
+                    self.assertEqual(Path(records[0]["path"]).read_bytes(), before)
+                    self.assertEqual(self.rows("SELECT state FROM download_artifacts WHERE kind='media'"), [{"state": "complete"}])
+                    second.stop(hard=True)
+                    self.service()
+                    self.assertEqual(self.rows("SELECT status, attempt_count FROM downloads"), [{"status": "failed", "attempt_count": 1}])
+                self.assertEqual(source.read_bytes(), before)
+                RECEIPTS.append({"case": self.id(), "boundary": phase, "synthetic_publication": True,
+                                 "source": str(source), "output": records[0]["path"], "identities": identities,
+                                 "attempts": self.rows("SELECT id, number, status FROM download_attempts ORDER BY number")})
+            finally:
+                if publisher:
+                    if identities and alive_identity(identities["worker_owner_identity"]):
+                        if sys.platform == "win32":
+                            terminate_windows_identity(identities["worker_owner_identity"])
+                        else:
+                            os.kill(json.loads(identities["worker_owner_identity"])["pid"], signal.SIGTERM)
+                    if publisher.poll() is None:
+                        publisher.stdin.close()
+                        try:
+                            publisher.wait(timeout=7)
+                        except subprocess.TimeoutExpired:
+                            publisher.kill()
+                            publisher.wait(timeout=3)
+                    if not publisher.stdin.closed:
+                        publisher.stdin.close()
+                    publisher.stdout.close()
+
+    def test_owned_publisher_crash_before_link_safely_retries_the_abandoned_job(self):
+        self.publication_checkpoint("before-link")
+
+    def test_owned_publisher_crash_after_link_preserves_the_output_and_stops_retry(self):
+        self.publication_checkpoint("after-link")
+
+    def test_real_media_result_before_sqlite_terminal_write_recovers_without_redownload(self):
+        import hashlib
+        with WaveServer(phase="download") as fixture:
+            first, job, attempt = self.active(fixture)
+            workspace = Path(attempt["workspace"])
+            with closing(sqlite3.connect(self.runtime.db_path)) as gate:
+                gate.execute("BEGIN IMMEDIATE")
+                fixture.release.set()
+
+                def durable_result():
+                    _, result = read_journal(self.runtime, workspace)
+                    return result
+
+                result = wait_for(durable_result, "Real worker result was not durably journaled", timeout=4)
+                self.wait_tree_exit(attempt)
+                self.assertEqual(self.rows("SELECT status, current_attempt_id FROM downloads"),
+                                 [{"status": "downloading", "current_attempt_id": attempt["id"]}])
+                output = Path(result["filepath"])
+                digest = hashlib.sha256(output.read_bytes()).hexdigest()
+                probe = subprocess.run([str(TOOLS / ("ffprobe.exe" if sys.platform == "win32" else "ffprobe")),
+                                        "-v", "error", "-show_entries", "stream=codec_name", "-of", "json", str(output)],
+                                       capture_output=True, text=True, timeout=5, check=True)
+                self.assertEqual(json.loads(probe.stdout)["streams"][0]["codec_name"], "mp3")
+                first.stop(hard=True)
+                gate.rollback()
+            second = self.service()
+            self.assertEqual(self.rows("SELECT status, attempt_count, retry_count, file_path, error_message FROM downloads"),
+                             [{"status": "complete", "attempt_count": 1, "retry_count": 0, "file_path": str(output), "error_message": None}])
+            self.assertEqual(self.rows("SELECT id, status FROM download_attempts"), [{"id": attempt["id"], "status": "complete"}])
+            self.assertEqual(hashlib.sha256(output.read_bytes()).hexdigest(), digest)
+            second.stop(hard=True)
+            self.service()
+            self.assertEqual(self.rows("SELECT status, attempt_count FROM downloads"), [{"status": "complete", "attempt_count": 1}])
+            self.assertEqual(hashlib.sha256(output.read_bytes()).hexdigest(), digest)
+            RECEIPTS.append({"case": self.id(), "boundary": "result-before-terminal-write", "synthetic_publication": False,
+                             "sha256": digest, "output": str(output), "attempt_id": attempt["id"], "worker_tree_exited": True})
+
     @unittest.skipUnless(sys.platform == "linux", "Uses POSIX stop/continue to hold the actual prior worker owner")
     def test_live_orphan_owner_blocks_recovery_after_engine_death(self):
         with WaveServer(phase="download") as fixture:
@@ -401,6 +550,32 @@ def serve(tools):
         asyncio.run(server.serve(sockets=[listener]))
 
 
+def publication_worker():
+    bootstrap = json.loads(sys.stdin.buffer.readline(16385))
+    runtime = RuntimeConfig(**bootstrap["runtime"])
+    workspace = Path(bootstrap["options"]["attempt_dir"])
+    source = workspace / "fixture.mp3"
+    source.write_bytes(b"owned synthetic publication fixture")
+    record = plan_publications(runtime, workspace,
+                               [{"source": str(source), "path": str(runtime.download_dir / source.name), "kind": "media"}])[0]
+    phase = bootstrap["options"]["phase"]
+
+    def checkpoint(*_args, **_options):
+        print(json.dumps({"type": "progress", "data": {"status": "postprocessing", "progress": 100, "phase": phase}}), flush=True)
+        getattr(sys.stdin.buffer, "raw", sys.stdin.buffer).read(1)
+        raise SystemExit(0)  # EOF/crash never produces a completed append or result.
+
+    if phase == "after-link":
+        # Hold the diagnostic publisher after its actual link but before the
+        # completed journal append. Production/frozen recovery code is unchanged.
+        with patch("backend.services.publication.append_journal", side_effect=checkpoint):
+            publish_artifact(runtime, workspace, record)
+    elif phase != "before-link":
+        raise ValueError("Unknown publication fixture boundary")
+    else:
+        checkpoint()
+
+
 def main():
     global ENGINE, TOOLS
     parser = argparse.ArgumentParser(description=__doc__)
@@ -408,10 +583,14 @@ def main():
     parser.add_argument("--engine", type=Path)
     parser.add_argument("--report", type=Path)
     parser.add_argument("--serve", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--publication-worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     TOOLS = args.tools.resolve(strict=True)
     ENGINE = args.engine.resolve(strict=True) if args.engine else None
     sys.addaudithook(fixture_network_guard)
+    if args.publication_worker:
+        publication_worker()
+        return
     if args.serve:
         serve(TOOLS)
         return

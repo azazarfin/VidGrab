@@ -19,7 +19,8 @@ from backend.cookie_manager import write_cookies_to_netscape_format
 from backend.sanitizer import sanitize_text
 from backend.engine.execution import ProcessDownloadExecutor, ThreadDownloadExecutor, join_owned_task
 from backend.db.jobs import AttemptStore
-from backend.services.artifacts import completed_artifacts, prepare_workspace, recovery_artifacts
+from backend.services.artifacts import completed_artifacts, prepare_workspace
+from backend.services.publication import reconcile_publication
 from backend.services.job_state import RUNNABLE, TERMINAL, accepts_progress
 
 logger = logging.getLogger("vidgrab.queue_manager")
@@ -476,6 +477,7 @@ class QueueManager:
         outcome = "failed"
         artifacts = []
         workspace_ready = False
+        previous_retry_count = retry_count
         try:
             # A cancellation may finish while the claim's broadcast is awaiting.
             async with aiosqlite.connect(self.runtime.db_path) as db:
@@ -539,7 +541,7 @@ class QueueManager:
             else:
                 status = "queued"
                 retry_count += 1
-                logger.warning("Task %s failed, retrying (%s/%s): %s", task_id, retry_count, config.get("max_retries", 3), error_message)
+                logger.warning("Task %s execution failed (%s/%s): %s", task_id, retry_count, config.get("max_retries", 3), error_message)
             fields = {"error_message": error_message, "retry_count": retry_count}
         finally:
             # The executor has joined the worker tree before returning or raising cancellation.
@@ -552,14 +554,37 @@ class QueueManager:
                     logger.exception("Failed to remove the owned cookie file for task %s", task_id)
             if workspace_ready:
                 try:
-                    recovered = {record["path"]: record for record in recovery_artifacts(self.runtime, attempt)}
-                    recovered.update({record["path"]: record for record in artifacts})
+                    reconciliation = asyncio.create_task(asyncio.to_thread(reconcile_publication, self.runtime, attempt))
+                    try:
+                        recovery = await join_owned_task(reconciliation)
+                    except asyncio.CancelledError:
+                        # Repeated cancellation cannot detach filesystem verification.
+                        recovery = reconciliation.result()
+                    recovered = {record["path"]: record for record in recovery.artifacts}
+                    if not recovery.error:
+                        recovered.update({record["path"]: record for record in artifacts})
                     artifacts = list(recovered.values())
+                    if task_id in self.cancelled_tasks:
+                        status = outcome = "cancelled"
+                        fields = {"error_message": None, "retry_count": previous_retry_count}
+                    elif recovery.error:
+                        status = outcome = "failed"
+                        fields = {"error_message": sanitize_text(recovery.error), "retry_count": previous_retry_count}
+                    elif recovery.result is not None:
+                        status = outcome = "complete"
+                        artifacts = [record for record in artifacts if record["path"] not in recovery.witness_paths]
+                        fields = {"file_path": recovery.result["filepath"], "progress": 100.0,
+                                  "error_message": None, "retry_count": previous_retry_count}
+                        current = self.in_memory_progress.get(task_id, {})
+                        for key in ("title", "thumbnail_url"):
+                            if not current.get(key) and recovery.result.get(key):
+                                fields[key] = sanitize_text(recovery.result[key]) if key == "title" else recovery.result[key]
                 except (OSError, ValueError) as error:
                     logger.exception("Failed to record retained artifacts for task %s", task_id)
-                    if status == "complete":
+                    if status != "cancelled":
                         status = outcome = "failed"
-                        fields = {"error_message": sanitize_text(str(error))}
+                        artifacts = []
+                        fields = {"error_message": sanitize_text(str(error)), "retry_count": previous_retry_count}
         transition = asyncio.create_task(self._finish(task_id, status, attempt_id=attempt.id,
                                                      artifacts=artifacts, outcome=outcome, **fields))
         changed = await join_owned_task(transition)

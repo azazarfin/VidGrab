@@ -68,7 +68,7 @@ class ProcessDownloadExecutor:
             launch = asyncio.create_task(asyncio.create_subprocess_exec(
                 *owner, "--", *worker, stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE, stderr=log, limit=MESSAGE_LIMIT,
-                close_fds=True, creationflags=0x08000000 if sys.platform == "win32" else 0,
+                close_fds=True, creationflags=0x00000008 if sys.platform == "win32" else 0,
             ))
             try:
                 process = await join_owned_task(launch)

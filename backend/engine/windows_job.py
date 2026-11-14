@@ -30,6 +30,12 @@ class Accounting(ctypes.Structure):
                (name, wintypes.DWORD) for name in ("faults", "total", "active", "terminated")]
 
 
+class ThreadEntry(ctypes.Structure):
+    _fields_ = [("size", wintypes.DWORD), ("usage", wintypes.DWORD),
+               ("thread_id", wintypes.DWORD), ("process_id", wintypes.DWORD),
+               ("priority", wintypes.LONG), ("delta", wintypes.LONG), ("flags", wintypes.DWORD)]
+
+
 class WindowsJob:
     def __init__(self):
         self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -40,6 +46,12 @@ class WindowsJob:
             "TerminateJobObject": ([wintypes.HANDLE, wintypes.UINT], wintypes.BOOL),
             "QueryInformationJobObject": ([wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p], wintypes.BOOL),
             "CloseHandle": ([wintypes.HANDLE], wintypes.BOOL),
+            "CreateToolhelp32Snapshot": ([wintypes.DWORD, wintypes.DWORD], wintypes.HANDLE),
+            "Thread32First": ([wintypes.HANDLE, ctypes.POINTER(ThreadEntry)], wintypes.BOOL),
+            "Thread32Next": ([wintypes.HANDLE, ctypes.POINTER(ThreadEntry)], wintypes.BOOL),
+            "OpenThread": ([wintypes.DWORD, wintypes.BOOL, wintypes.DWORD], wintypes.HANDLE),
+            "GetProcessIdOfThread": ([wintypes.HANDLE], wintypes.DWORD),
+            "ResumeThread": ([wintypes.HANDLE], wintypes.DWORD),
         }
         for name, (arguments, result) in signatures.items():
             function = getattr(self.kernel, name)
@@ -62,6 +74,42 @@ class WindowsJob:
     def assign(self, process):
         # The worker waits for bootstrap before importing or invoking media tools.
         self.check(self.kernel.AssignProcessToJobObject(self.handle, int(process._handle)))
+
+    def resume(self, process):
+        # subprocess.Popen closes CreateProcessW's initial thread handle. Use
+        # supported Win32 APIs to reopen the still-suspended primary thread.
+        # The retained Popen process handle prevents reuse of its process ID.
+        snapshot = self.kernel.CreateToolhelp32Snapshot(4, 0)  # TH32CS_SNAPTHREAD
+        if snapshot == ctypes.c_void_p(-1).value:
+            raise ctypes.WinError(ctypes.get_last_error())
+        threads = []
+        entry = ThreadEntry()
+        entry.size = ctypes.sizeof(entry)
+        try:
+            more = self.kernel.Thread32First(snapshot, ctypes.byref(entry))
+            while more:
+                if entry.process_id == process.pid:
+                    threads.append(entry.thread_id)
+                more = self.kernel.Thread32Next(snapshot, ctypes.byref(entry))
+            if ctypes.get_last_error() != 18:  # ERROR_NO_MORE_FILES
+                raise ctypes.WinError(ctypes.get_last_error())
+        finally:
+            self.kernel.CloseHandle(snapshot)
+        if len(threads) != 1:
+            raise RuntimeError("Suspended worker has no unique primary thread")
+        thread = self.kernel.OpenThread(0x0802, False, threads[0])  # query limited + suspend/resume
+        if not thread:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            if self.kernel.GetProcessIdOfThread(thread) != process.pid:
+                raise RuntimeError("Worker thread identity no longer matches its process")
+            count = self.kernel.ResumeThread(thread)
+            if count == 0xFFFFFFFF:
+                raise ctypes.WinError(ctypes.get_last_error())
+            if count != 1:
+                raise RuntimeError("Worker primary thread has an unexpected suspend count")
+        finally:
+            self.kernel.CloseHandle(thread)
 
     def stop(self):
         self.check(self.kernel.TerminateJobObject(self.handle, 1))

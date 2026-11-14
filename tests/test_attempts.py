@@ -252,7 +252,7 @@ class AttemptStoreTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.query("SELECT status FROM download_attempts"), [("running",)])
         self.execute("DROP TRIGGER reject_recovery")
 
-    async def test_recovery_restores_published_artifacts_without_inventing_job_completion(self):
+    async def test_recovery_refuses_legacy_published_artifact_ownership(self):
         from backend.services import artifacts
         self.assertTrue(callable(getattr(artifacts, "append_journal", None)),
                         "Recovery needs publication records beyond the worker result")
@@ -266,6 +266,7 @@ class AttemptStoreTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
             {"source": str(attempt.workspace / "published.mp3"), "path": str(output),
              "kind": "media", "state": "complete", "size": 5}])
         await store.recover(LATER)
-        self.assertEqual(self.query("SELECT status, file_path FROM downloads"), [("queued", None)])
-        self.assertEqual(self.query("SELECT status FROM download_attempts"), [("interrupted",)])
-        self.assertEqual(self.query("SELECT path, state, size FROM download_artifacts"), [(str(output), "complete", 5)])
+        self.assertEqual(self.query("SELECT status, file_path FROM downloads"), [("failed", None)])
+        self.assertEqual(self.query("SELECT status FROM download_attempts"), [("failed",)])
+        self.assertEqual(self.query("SELECT path, state, size FROM download_artifacts"), [])
+        self.assertEqual(output.read_bytes(), b"media")

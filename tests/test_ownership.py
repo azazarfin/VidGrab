@@ -317,7 +317,7 @@ class RuntimeOwnershipTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
                          (prior, NOW - 1, attempt.id))
             before = self.rows(runtime, "SELECT status, current_attempt_id FROM downloads")
             try:
-                with patch("backend.db.jobs.recovery_artifacts", side_effect=AssertionError("live artifact read")):
+                with patch("backend.db.jobs.reconcile_publication", side_effect=AssertionError("live artifact read")):
                     with self.assertRaisesRegex(error_type, "live|active|owner"):
                         await app.state.queue.attempts.recover(STAMP)
                 self.assertEqual(self.rows(runtime, "SELECT status, current_attempt_id FROM downloads"), before)

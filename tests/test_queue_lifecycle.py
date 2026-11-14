@@ -23,6 +23,41 @@ class QueueLifecycleTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
         self.loop.set_exception_handler(self.previous_handler)
         self.assertEqual(self.loop_errors, [], "Execution exceptions must be retrieved during teardown")
 
+    async def test_repeated_cancellation_keeps_publication_verification_joined_until_terminal_write(self):
+        from backend.services.publication import reconcile_publication
+        started = asyncio.Event()
+        release = threading.Event()
+        loop = asyncio.get_running_loop()
+
+        def download(**options):
+            output = Path(options["download_dir"]) / "finished.mp3"
+            output.write_bytes(b"media")
+            return {"filepath": str(output)}
+
+        def gated(runtime, attempt):
+            loop.call_soon_threadsafe(started.set)
+            release.wait(3)
+            return reconcile_publication(runtime, attempt)
+
+        app = self.app(download_runner=download)
+        async with app.router.lifespan_context(app):
+            job_id = await app.state.queue.enqueue("https://fixture.invalid/media", "best")
+            with patch("backend.queue_manager.reconcile_publication", side_effect=gated):
+                task = asyncio.create_task(app.state.queue._run_task(job_id, "https://fixture.invalid/media", "best",
+                                                                    await app.state.settings.get_all(), {}))
+                try:
+                    await asyncio.wait_for(started.wait(), 2)
+                    task.cancel()
+                    await asyncio.sleep(0)
+                    task.cancel()
+                    await asyncio.sleep(0)
+                    self.assertFalse(task.done(), "Caller cancellation must wait for the owned verification thread")
+                    self.assertEqual((await self.row(app.state.runtime, job_id))["status"], "downloading")
+                finally:
+                    release.set()
+                    await task
+            self.assertEqual((await self.row(app.state.runtime, job_id))["status"], "complete")
+
     async def row(self, runtime, task_id):
         async with aiosqlite.connect(runtime.db_path) as database:
             database.row_factory = aiosqlite.Row

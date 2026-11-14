@@ -14,6 +14,7 @@ from backend.db.jobs import Attempt
 from backend.runtime import OutputPathError, RuntimeOwnershipError
 from backend.engine.runtime_owner import RuntimeOwner
 from backend.services import artifacts
+from backend.services import publication
 from tests.support import OfflineTestCase
 
 
@@ -113,6 +114,64 @@ class ArtifactReparseChecks(OfflineTestCase):
         self.assertIsNone(owner.fd)
         self.assertEqual(sentinel.read_bytes(), b"foreign lock bytes")
 
+    def test_publication_parent_junction_change_preserves_foreign_destination(self):
+        runtime, attempt = self.prepared()
+        artifacts.prepare_workspace(runtime, attempt)
+        source = attempt.workspace / "finished.mp3"
+        source.write_bytes(b"owned")
+        output = runtime.download_dir / source.name
+        record = publication.plan_publications(runtime, attempt.workspace,
+                                              [{"source": str(source), "path": str(output), "kind": "media"}])[0]
+        moved = self.root / "previous-media"
+        runtime.download_dir.rename(moved)
+        foreign = self.root / "foreign-media"
+        foreign.mkdir()
+        sentinel = foreign / source.name
+        sentinel.write_bytes(b"foreign")
+        self.junction(foreign, runtime.download_dir)
+        with self.assertRaises(OutputPathError):
+            publication.publish_artifact(runtime, attempt.workspace, record)
+        self.assertEqual(sentinel.read_bytes(), b"foreign")
+        self.assertEqual(source.read_bytes(), b"owned")
+
+    def test_source_parent_junction_refuses_foreign_publication_input(self):
+        runtime, attempt = self.prepared()
+        artifacts.prepare_workspace(runtime, attempt)
+        foreign = self.root / "foreign-source"
+        foreign.mkdir()
+        sentinel = foreign / "finished.mp3"
+        sentinel.write_bytes(b"foreign")
+        linked = attempt.workspace / "linked-source"
+        self.junction(foreign, linked)
+        output = runtime.download_dir / sentinel.name
+        with self.assertRaises(OutputPathError):
+            publication.plan_publications(runtime, attempt.workspace,
+                                          [{"source": str(linked / sentinel.name), "path": str(output), "kind": "media"}])
+        self.assertFalse(output.exists())
+        self.assertEqual(sentinel.read_bytes(), b"foreign")
+
+    def test_published_destination_junction_is_not_adopted_by_recovery(self):
+        runtime, attempt = self.prepared()
+        artifacts.prepare_workspace(runtime, attempt)
+        source = attempt.workspace / "finished.mp3"
+        source.write_bytes(b"owned")
+        output = runtime.download_dir / source.name
+        record = publication.plan_publications(runtime, attempt.workspace,
+                                              [{"source": str(source), "path": str(output), "kind": "media"}])[0]
+        publication.publish_artifact(runtime, attempt.workspace, record)
+        publication.record_result(runtime, attempt.workspace, {"filepath": str(output)})
+        output.unlink()
+        foreign = self.root / "foreign-output"
+        foreign.mkdir()
+        sentinel = foreign / "preserved"
+        sentinel.write_bytes(b"foreign")
+        self.junction(foreign, output)
+        recovery = publication.reconcile_publication(runtime, attempt)
+        self.assertIsNotNone(recovery.error)
+        self.assertFalse(any(record["kind"] == "media" for record in recovery.artifacts))
+        self.assertEqual(sentinel.read_bytes(), b"foreign")
+        self.assertEqual(source.read_bytes(), b"owned")
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -123,7 +182,8 @@ def main():
     args.report.write_text(json.dumps({"ok": result.wasSuccessful(), "tests": result.testsRun,
         "skipped": [str(case) for case, _ in result.skipped], "seconds": round(time.monotonic() - started, 3),
         "module_sha256": hashlib.sha256(Path(artifacts.__file__).read_bytes()).hexdigest(),
-        "owner_module_sha256": hashlib.sha256(Path(sys.modules[RuntimeOwner.__module__].__file__).read_bytes()).hexdigest()}, indent=2))
+        "owner_module_sha256": hashlib.sha256(Path(sys.modules[RuntimeOwner.__module__].__file__).read_bytes()).hexdigest(),
+        "publication_module_sha256": hashlib.sha256(Path(publication.__file__).read_bytes()).hexdigest()}, indent=2))
     raise SystemExit(not result.wasSuccessful())
 
 

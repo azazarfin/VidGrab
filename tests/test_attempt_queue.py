@@ -142,13 +142,11 @@ class AttemptQueueTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
             job_id = await app.state.queue.enqueue("https://fixture.invalid/media", "best")
             config = await app.state.settings.get_all()
             config["max_retries"] = 0
-            with self.assertLogs("vidgrab.queue_manager", level="ERROR"):
-                await app.state.queue._run_task(job_id, "https://fixture.invalid/media", "best", config, {})
+            await app.state.queue._run_task(job_id, "https://fixture.invalid/media", "best", config, {})
             self.assertEqual(self.rows(app.state.runtime, "SELECT status, current_attempt_id FROM downloads"),
                              [("failed", None)])
             self.assertEqual(self.rows(app.state.runtime, "SELECT status FROM download_attempts"), [("failed",)])
-            self.assertEqual(self.rows(app.state.runtime, "SELECT path, state FROM download_artifacts"),
-                             [(str(observed["output"]), "complete")])
+            self.assertEqual(self.rows(app.state.runtime, "SELECT path, state FROM download_artifacts"), [])
             self.assertEqual(observed["output"].read_bytes(), b"media")
             self.assertEqual(observed["journal"].read_bytes(), b'{"malformed":}\n')
 
@@ -191,6 +189,53 @@ class AttemptQueueTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
             app.state.queue.in_memory_progress[job_id].update(status="downloading", progress=0)
             app.state.queue.handle_progress(job_id, {"status": "postprocessing", "progress": 100}, attempt_id=first.id)
             self.assertEqual(app.state.queue.in_memory_progress[job_id]["progress"], 0)
+
+    async def test_lost_worker_success_reply_completes_from_the_durable_result(self):
+        from backend.services.publication import plan_publications, publish_artifact, record_result
+
+        def download(**options):
+            workspace = Path(options["attempt_dir"])
+            source = workspace / "fixture.mp3"
+            source.write_bytes(b"media")
+            output = Path(options["download_dir"]) / source.name
+            moves = plan_publications(options["runtime"], workspace,
+                                      [{"source": str(source), "path": str(output), "kind": "media"}])
+            publish_artifact(options["runtime"], workspace, moves[0])
+            record_result(options["runtime"], workspace, {"filepath": str(output)})
+            raise RuntimeError("The worker success reply was lost")
+
+        app = self.app(download_runner=download)
+        async with app.router.lifespan_context(app):
+            job_id = await app.state.queue.enqueue("https://fixture.invalid/media", "best")
+            config = await app.state.settings.get_all()
+            with self.assertLogs("vidgrab.queue_manager", level="WARNING"):
+                await app.state.queue._run_task(job_id, "https://fixture.invalid/media", "best", config, {})
+            self.assertEqual(self.rows(app.state.runtime, "SELECT status, retry_count, file_path FROM downloads"),
+                             [("complete", 0, str(app.state.runtime.download_dir / "fixture.mp3"))])
+            self.assertEqual(self.rows(app.state.runtime, "SELECT status FROM download_attempts"), [("complete",)])
+
+    async def test_lost_reply_after_publication_stops_automatic_retry(self):
+        from backend.services.publication import plan_publications, publish_artifact
+
+        def download(**options):
+            workspace = Path(options["attempt_dir"])
+            source = workspace / "fixture.mp3"
+            source.write_bytes(b"media")
+            output = Path(options["download_dir"]) / source.name
+            moves = plan_publications(options["runtime"], workspace,
+                                      [{"source": str(source), "path": str(output), "kind": "media"}])
+            publish_artifact(options["runtime"], workspace, moves[0])
+            raise RuntimeError("The worker exited after publication")
+
+        app = self.app(download_runner=download)
+        async with app.router.lifespan_context(app):
+            job_id = await app.state.queue.enqueue("https://fixture.invalid/media", "best")
+            with self.assertLogs("vidgrab.queue_manager", level="WARNING"):
+                await app.state.queue._run_task(job_id, "https://fixture.invalid/media", "best",
+                                                await app.state.settings.get_all(), {})
+            self.assertEqual(self.rows(app.state.runtime, "SELECT status, retry_count FROM downloads"), [("failed", 0)])
+            self.assertEqual(self.rows(app.state.runtime, "SELECT kind, state FROM download_artifacts WHERE kind='media'"),
+                             [("media", "complete")])
 
 
 class AttemptHistoryTests(OfflineTestCase):

@@ -157,7 +157,46 @@ class DownloaderPathTests(OfflineTestCase):
             "thumbnails": [{"filepath": str(thumbnail)}], "__files_to_move": {str(thumbnail): str(thumbnail)}}],
             runtime=runtime, attempt_dir=str(workspace))
         self.assertIn({"path": str(runtime.download_dir / "fixture.png"), "kind": "thumbnail"}, result["artifacts"])
-        self.assertFalse(thumbnail.exists())
+        # Its hard-link witness remains until the owning SQLite completion commits.
+        self.assertTrue(thumbnail.exists())
+
+    def test_worker_result_is_journaled_with_verifiable_publication_ownership(self):
+        from backend.services.artifacts import read_journal
+        runtime = self.runtime()
+        runtime.prepare()
+        workspace = runtime.data_dir / "attempts" / str(uuid4())
+        workspace.mkdir(parents=True)
+        staged = workspace / "fixture.mp4"
+        staged.write_bytes(b"owned media")
+        result = self.run_attempt([{"filepath": str(staged), "__finaldir": str(runtime.download_dir), "title": "fixture"}],
+                                  runtime=runtime, attempt_dir=str(workspace))
+        records, durable = read_journal(runtime, workspace)
+        self.assertIsNotNone(durable, "The result must survive loss of the worker reply or SQLite terminal write")
+        self.assertEqual(durable["filepath"], result["filepath"])
+        self.assertEqual(records[0].get("version"), 2)
+        self.assertTrue(staged.samefile(Path(result["filepath"])), "A retained inode must prove ownership across a crash")
+
+    def test_destination_race_cannot_replace_a_foreign_file(self):
+        import os
+        runtime = self.runtime()
+        runtime.prepare()
+        workspace = runtime.data_dir / "attempts" / str(uuid4())
+        workspace.mkdir(parents=True)
+        staged = workspace / "fixture.mp4"
+        staged.write_bytes(b"owned media")
+        final = runtime.download_dir / staged.name
+        original_link = os.link
+
+        def collision(source, destination, **options):
+            final.write_bytes(b"a concurrent foreign download")
+            return original_link(source, destination, **options)
+
+        with patch("backend.services.publication.os.link", side_effect=collision):
+            with self.assertRaisesRegex(ValueError, "publish|exist|retained"):
+                self.run_attempt([{"filepath": str(staged), "__finaldir": str(runtime.download_dir)}],
+                                 runtime=runtime, attempt_dir=str(workspace))
+        self.assertEqual(final.read_bytes(), b"a concurrent foreign download")
+        self.assertEqual(staged.read_bytes(), b"owned media")
 
     def test_postprocessing_refuses_an_input_outside_the_owned_workspace(self):
         from backend.downloader import make_postprocessor_hook

@@ -1,14 +1,18 @@
 """Transactional job claims and attempt-fenced lifecycle persistence."""
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
 from backend.runtime import RuntimeConfig
+from backend.engine.execution import join_owned_task
 from backend.db.ownership import require_owner, require_recoverable, running_attempts, transaction
 from backend.services.job_state import ACTIVE, FINISH_FROM, TERMINAL
-from backend.services.artifacts import recovery_artifacts
+from backend.services.publication import cleanup_publication, reconcile_publication
+
+logger = logging.getLogger("vidgrab.attempts")
 
 JOB_FIELDS = frozenset({"progress", "speed", "eta", "file_size", "file_path", "title", "thumbnail_url",
                         "error_message", "retry_count"})
@@ -39,6 +43,13 @@ class AttemptStore:
 
     def transaction(self):
         return transaction(self.runtime)
+
+    async def _cleanup_completed(self, attempt):
+        cleanup = asyncio.create_task(asyncio.to_thread(cleanup_publication, self.runtime, attempt))
+        try:
+            await join_owned_task(cleanup)
+        except (OSError, ValueError) as error:
+            logger.warning("Retained publication witnesses for completed attempt %s: %s", attempt.id, error)
 
     async def claim(self, job_id: str, now: str) -> Attempt | None:
         async with self.transaction() as db:
@@ -93,10 +104,13 @@ class AttemptStore:
                           completed_at=now if status in TERMINAL else None)
             assignments = ", ".join(f"{key}=?" for key in fields)
             await db.execute(f"UPDATE downloads SET {assignments} WHERE id=?", (*fields.values(), job_id))
+        if status == "complete" and attempt_id is not None:
+            await self._cleanup_completed(Attempt(attempt_id, job_id, owned["number"], Path(owned["workspace"])))
         return True
 
     async def recover(self, now: str) -> list[dict]:
         """Fence every owner/tree before reading artifacts or changing recovery state."""
+        completed = []
         async with self.transaction() as db:
             await require_owner(db, self.owner)
             attempts = await running_attempts(db)
@@ -104,15 +118,36 @@ class AttemptStore:
                 require_recoverable(attempt, self.owner.id)
             for attempt in attempts:
                 owned = Attempt(attempt["id"], attempt["download_id"], attempt["number"], Path(attempt["workspace"]))
-                artifacts = await asyncio.to_thread(recovery_artifacts, self.runtime, owned)
-                await record_artifacts(db, owned.id, now, artifacts)
-                outcome = "cancelled" if attempt["job_status"] == "cancelling" else "interrupted"
-                await db.execute("UPDATE download_attempts SET status=?, finished_at=? WHERE id=?",
-                                 (outcome, now, attempt["id"]))
+                verification = asyncio.create_task(asyncio.to_thread(reconcile_publication, self.runtime, owned))
+                recovery = await join_owned_task(verification)
+                if attempt["job_status"] == "cancelling":
+                    status, outcome = "cancelled", "cancelled"
+                    fields = {"error_message": None}
+                elif recovery.error:
+                    status, outcome = "failed", "failed"
+                    fields = {"error_message": recovery.error, "file_path": None}
+                elif recovery.result is not None:
+                    status, outcome = "complete", "complete"
+                    completed.append(owned)
+                    recovery.artifacts = [record for record in recovery.artifacts if record["path"] not in recovery.witness_paths]
+                    fields = {"file_path": recovery.result["filepath"], "progress": 100.0, "error_message": None}
+                    for key in ("title", "thumbnail_url"):
+                        if recovery.result.get(key) is not None:
+                            fields[key] = recovery.result[key]
+                else:
+                    status, outcome = "queued", "interrupted"
+                    fields = {"file_path": None, "error_message": None}
+                await record_artifacts(db, owned.id, now, recovery.artifacts)
+                await db.execute("UPDATE download_attempts SET status=?, finished_at=?, error_message=? WHERE id=?",
+                                 (outcome, now, fields.get("error_message"), attempt["id"]))
+                fields.update(status=status, current_attempt_id=None, speed=0, eta=None,
+                              completed_at=now if status in TERMINAL else None)
+                assignments = ", ".join(f"{key}=?" for key in fields)
+                await db.execute(f"UPDATE downloads SET {assignments} WHERE id=?", (*fields.values(), owned.job_id))
             states = (*sorted(ACTIVE), "cancelling")
             placeholders = ", ".join("?" for _ in states)
             async with db.execute(f"SELECT id FROM downloads WHERE status IN ({placeholders})", states) as cursor:
-                recovered_ids = [row["id"] for row in await cursor.fetchall()]
+                recovered_ids = [row["download_id"] for row in attempts] + [row["id"] for row in await cursor.fetchall()]
             await db.execute(f"""UPDATE downloads SET
                                  status=CASE WHEN status='cancelling' THEN 'cancelled' ELSE 'queued' END,
                                  completed_at=CASE WHEN status='cancelling' THEN ? ELSE NULL END,
@@ -122,4 +157,7 @@ class AttemptStore:
                 return []
             placeholders = ", ".join("?" for _ in recovered_ids)
             async with db.execute(f"SELECT * FROM downloads WHERE id IN ({placeholders})", recovered_ids) as cursor:
-                return [dict(row) for row in await cursor.fetchall()]
+                recovered = [dict(row) for row in await cursor.fetchall()]
+        for attempt in completed:
+            await self._cleanup_completed(attempt)
+        return recovered

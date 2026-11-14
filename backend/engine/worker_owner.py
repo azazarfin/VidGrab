@@ -74,16 +74,23 @@ class ProcessTree:
             self.process = subprocess.Popen(
                 command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log,
                 close_fds=True, start_new_session=sys.platform == "linux",
-                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                # A Windows venv redirector can create its interpreter before
+                # stdin bootstrap. Suspend the first thread until assignment.
+                creationflags=0x0000000C if sys.platform == "win32" else 0,  # detached + suspended
             )
             if self.job:
                 self.job.assign(self.process)
+                self.job.resume(self.process)
         except BaseException:
             if self.process:
                 self.process.kill()
                 self.process.wait()
             if self.job:
+                self.job.stop()
                 self.job.close()
+            if self.process:
+                self.process.stdin.close()
+                self.process.stdout.close()
             raise
 
     def stop(self):
