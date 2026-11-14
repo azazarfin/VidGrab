@@ -1,12 +1,12 @@
 # VidGrab development
 
-The P02 fixture desktop/engine/native bridge is accepted for the selected Ubuntu/GNOME and Windows 11 preview baselines. P03 worker/durability work is in progress; full release acceptance and the migrated download UI remain pending. The ASGI development adapter is `backend.main:app`; it resolves user paths without initializing SQLite or starting workers during import.
+The P02 fixture desktop/engine/native bridge is accepted for the selected Ubuntu/GNOME and Windows 11 preview baselines. P03 backend durability is accepted for the selected controlled fixtures; P04 is next. Full release acceptance and the migrated download UI remain pending. The ASGI development adapter is `backend.main:app`; it resolves user paths without initializing SQLite or starting workers during import.
 
 ## Locked setup and deterministic checks
 
 Run from the repository root with Python 3.11+ and uv. `pyproject.toml` pins the selected direct dependencies; `uv.lock` locks their transitive dependencies and artifacts.
 
-The project baseline is >=3.11; `yt-dlp==2026.6.9` itself declares >=3.10. Verified interpreters are Fedora Python 3.14.8, Ubuntu Python 3.12.3 and Windows 11 Python 3.12.16. Python 3.11 remains unexecuted. The latest guarded P03 suite has 355 cases; Windows skips nine POSIX fixtures. Platform results and source/frozen checks are recorded in [VALIDATION.md](VALIDATION.md).
+The project baseline is >=3.11; `yt-dlp==2026.6.9` itself declares >=3.10. Verified interpreters are Fedora Python 3.14.8, Ubuntu Python 3.12.3 and Windows 11 Python 3.12.16. Python 3.11 remains unexecuted. Discovery now has 361 guarded cases; Windows skips nine POSIX fixtures. Acceptance combines the previously verified 355 cases with six added cases; all thirteen affected output/retry cases pass separately on each platform. The full suite was not repeated for these test/documentation changes. Platform results and source/frozen checks are recorded in [VALIDATION.md](VALIDATION.md).
 
 ```sh
 uv sync --frozen

@@ -4,6 +4,11 @@ import asyncio
 import sqlite3
 import unittest
 from contextlib import closing
+from email.utils import formatdate
+from io import BytesIO
+
+from yt_dlp.networking import Response
+from yt_dlp.networking.exceptions import HTTPError
 
 from tests.support import OfflineTestCase
 
@@ -35,6 +40,28 @@ class RetryQueueTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await app.state.queue.attempts.claim(job, app.state.queue._now()))
         await app.state.queue._recover()
         self.assertEqual(self.query(app, "SELECT status, retry_at FROM downloads WHERE id=?", (job,)), [(state, deadline)])
+
+    async def http_deadline(self, status, header, deadline):
+        response = Response(BytesIO(), "https://fixture.invalid/media", {"Retry-After": header}, status=status)
+        self.addCleanup(response.close)
+        with self.assertLogs("vidgrab.queue_manager", level="WARNING"):
+            app, job = await self.run_failure(HTTPError(response))
+        sql = "SELECT status,retry_at,retry_count,error_code FROM downloads WHERE id=?"
+        code = "UPSTREAM_RATE_LIMITED" if status == 429 else "UPSTREAM_TRANSIENT"
+        expected = [("retry_wait", deadline, 1, code)]
+        self.assertEqual(self.query(app, sql, (job,)), expected)
+        await app.state.queue._recover()
+        self.assertEqual(self.query(app, sql, (job,)), expected)
+        self.assertEqual(await app.state.queue.attempts.promote_due_retries(deadline - 1), [])
+        self.assertEqual(self.query(app, sql, (job,)), expected)
+        rows = await app.state.queue.attempts.promote_due_retries(deadline)
+        self.assertEqual([row["id"] for row in rows], [job])
+
+    async def test_numeric_429_retry_after_is_a_durable_due_time(self):
+        await self.http_deadline(429, "120", 1120)
+
+    async def test_http_date_503_retry_after_is_a_durable_due_time(self):
+        await self.http_deadline(503, formatdate(1500, usegmt=True), 1500)
 
     async def test_unknown_failure_is_permanent_without_an_automatic_retry(self):
         app, job = await self.run_failure(RuntimeError("unclassified fixture"))

@@ -1,6 +1,6 @@
 # VidGrab desktop-companion plan
 
-Status: P01 and P02 are complete for the selected Ubuntu 24.04/GNOME x86_64 and Windows 11 x64 preview baselines. Both platform reviews, packaged lifecycle/browser gates and measured size/startup results pass on 2026-11-10. Windows missing-WebView2 behavior uses reversible SDK discovery unavailability and an actual offline per-user install/render journey; physical runtime absence is not claimed. ADR-001 is accepted for this feasibility scope. P03 worker-boundary work started on 2026-11-11 and remains WIP; no P03 acceptance criterion is complete.
+Status: P01 and P02 are complete for the selected Ubuntu 24.04/GNOME x86_64 and Windows 11 x64 preview baselines. Both platform reviews, packaged lifecycle/browser gates and measured size/startup results pass on 2026-11-10. Windows missing-WebView2 behavior uses reversible SDK discovery unavailability and an actual offline per-user install/render journey; physical runtime absence is not claimed. ADR-001 is accepted for this feasibility scope. P03 started on 2026-11-11 and its scoped backend acceptance passes on 2026-11-15. P04 is next; generated `/v1`, browser authentication UI, wider compatibility and final release remain separate gates.
 
 ## Approach
 
@@ -64,15 +64,14 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 - [x] Acceptance: both selected preview OS baselines pass packaged installation/lifecycle/browser gates, measurements are recorded and ADR-001 is accepted for P02. No release/physical-hardware/additional-OS or physically runtime-free Windows claim is added. Both guests shut down normally; protected state/media/assets remain. P03 continues under the milestone below.
 - Suggested commit: `feat(desktop): prove bundled engine and browser bridge lifecycle`.
 
-### [ ] P03 — Make downloads durable and cancellation enforceable
+### [x] P03 — Make downloads durable and cancellation enforceable
 
-Current checkpoint: schema 8 adds persisted retry deadlines/classification and shared request/probe/response authority to playlists, verified prefixes, fresh-auth waits and publication/recovery. All 355 guarded cases per platform (nine Windows POSIX skips), selected source/fresh-frozen boundary checks and native compatibility pass; the two deadline/cancellation fixtures pass in all six platform/mode combinations. See [the checkpoint](../HANDOFF.md#p03-retry-and-request-budget-checkpoint--2026-11-14) and [ADR-023](DECISIONS.md#adr-023--persisted-retries-and-shared-request-authority). **Next: review the scoped P03 acceptance matrix** before moving to P04. Browser refresh UI remains P04/P05; P03 is unaccepted.
+**Accepted on 2026-11-15 for the selected controlled backend fixtures.** Schema 8 covers owned attempts, verified publication/direct/static-fragment prefixes, fresh-auth waits, playlist children/idempotent enqueue and persisted retry/request authority. The [acceptance matrix](VALIDATION.md#p03-scoped-acceptance-review--2026-11-15) maps every P03 case to hash-verified Linux/Windows evidence and six added deterministic checks. Coverage comprises the prior 355 guarded cases plus six additions (361 total, nine Windows POSIX skips); the thirteen affected output/retry cases pass on each platform. Runtime/frozen inputs are unchanged. [ADR-024](DECISIONS.md#adr-024--scoped-p03-backend-acceptance) records the decision and limits.
 
-- Extract queue/state-machine and retry policy from `backend/queue_manager.py`. Run each active extraction/download in an owned worker process; isolate FFmpeg descendants and stop them before terminal state or cleanup.
-- Add resumable artifacts, per-item playlist jobs, idempotent enqueue, persisted retry deadlines, and crash recovery. Track final output paths from completed post-processing rather than guessed extensions.
-- Add one request budget across probing, downloads, fragments, and retries; honor `Retry-After`, use jittered backoff, and distinguish transient errors from authentication/permanent failures.
-- Acceptance: the deterministic interruption, cancellation, duplicate submission, throttling, and multi-output cases in VALIDATION pass on Linux and Windows.
-- Suggested commit: `feat(engine): add durable jobs and bounded recovery`.
+- [x] Extract queue/state-machine and retry policy from `backend/queue_manager.py`. Ordinary attempts use owned worker processes; descendants exit before terminal state or cookie cleanup. Explicit diagnostic adapters retain joined threads.
+- [x] Add verified resumable artifacts, bounded per-item playlist jobs, keyed idempotent enqueue, persisted retry deadlines and fenced crash recovery. Concrete post-processing records determine final output paths.
+- [x] Share request authority across probing, downloads, fragments and retries; honor numeric/date `Retry-After`, jittered backoff and finite budgets; authentication/permanent failures do not retry automatically.
+- [x] Acceptance: deterministic interruption, cancellation, keyed duplicate submission, throttling and multi-output/disk-full cases pass on Linux and Windows within the recorded scope. Expired-format reprobe remains explicitly P05; browser authentication UI, arbitrary parent races, power loss and final release require separate gates.
 
 ### [ ] P04 — Version the app/extension contract and synchronize settings
 
