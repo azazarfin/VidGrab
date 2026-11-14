@@ -39,6 +39,12 @@ def validate_worker_message(message):
             raise ValueError("Invalid worker error message")
         if "code" in message and message["code"] not in ("AUTH_REQUIRED", "OWNERSHIP_REJECTED", "PLAYLIST_REJECTED"):
             raise ValueError("Invalid typed worker error")
+        if "request_failure" in message:
+            from backend.services.retry_policy import RequestFailure
+            detail = message["request_failure"]
+            if not isinstance(detail, dict) or set(detail) != {"code", "retry_at", "consumes_retry"}:
+                raise ValueError("Invalid request failure envelope")
+            RequestFailure(**detail)
     else:
         raise ValueError("Invalid worker response")
 

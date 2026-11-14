@@ -95,6 +95,9 @@ class ProcessDownloadExecutor:
                     elif message.get("type") == "result":
                         result = message["data"]
                     elif message.get("type") == "error":
+                        if "request_failure" in message:
+                            from backend.services.retry_policy import RequestFailure
+                            raise RequestFailure(**message["request_failure"])
                         if message.get("code") == "AUTH_REQUIRED":
                             from backend.services.resume import FreshAuthRequired
                             raise FreshAuthRequired()

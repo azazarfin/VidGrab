@@ -54,6 +54,17 @@ def main():
                 reply["code"] = "OWNERSHIP_REJECTED"
             elif isinstance(error, PlaylistError):
                 reply["code"] = "PLAYLIST_REJECTED"
+            else:
+                import time
+                from backend.services.retry_policy import REQUEST_CODES, RequestFailure, decide, nested_errors
+                classified = next((value for value in nested_errors(error) if isinstance(value, RequestFailure)), None)
+                decision = decide(error, 0, 1, time.time())
+                if classified is None and decision.code in REQUEST_CODES:
+                    classified = RequestFailure(decision.code, retry_at=decision.retry_at)
+                if classified is not None:
+                    reply["message"] = classified.code
+                    reply["request_failure"] = {"code": classified.code, "retry_at": classified.retry_at,
+                                                "consumes_retry": classified.consumes_retry}
         send_message(reply)
 
 

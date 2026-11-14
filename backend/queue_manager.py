@@ -28,6 +28,7 @@ from backend.services.publication import reconcile_publication
 from backend.services.job_state import RUNNABLE, TERMINAL, accepts_progress
 from backend.services.resume import FreshAuthRequired
 from backend.services.auth_context import validate_fresh_cookies
+from backend.services.retry_policy import decide
 from backend.db.ownership import require_owner
 
 logger = logging.getLogger("vidgrab.queue_manager")
@@ -79,6 +80,9 @@ class DownloadTask(BaseModel):
     job_kind: str = "media"
     parent_id: Optional[str] = None
     playlist_index: Optional[int] = None
+    retry_at: Optional[float] = None
+    error_code: Optional[str] = None
+    request_count: int = 0
 
 # WebSocket Connection Manager
 class ConnectionManager:
@@ -152,6 +156,15 @@ class QueueManager:
                 return None
             attempt = await self.attempts.claim(task_id, self._now())
             if attempt is None:
+                async with aiosqlite.connect(self.runtime.db_path) as db:
+                    db.row_factory = aiosqlite.Row
+                    async with db.execute("SELECT * FROM downloads WHERE id=?", (task_id,)) as cursor:
+                        current = await cursor.fetchone()
+                if current is not None:
+                    self.in_memory_progress[task_id] = dict(current)
+                    if current["error_code"] == "ATTEMPT_BUDGET_EXHAUSTED":
+                        await self.connections.broadcast({"event": "task_failed", "data": dict(current)})
+                        await self._refresh_playlist(task_id)
                 return None
             self.active_attempts[task_id] = attempt
             if task_id not in self.in_memory_progress and row is not None:
@@ -159,7 +172,8 @@ class QueueManager:
             if task_id in self.in_memory_progress:
                 self.in_memory_progress[task_id].update(
                     status="downloading", attempt_count=attempt.number, current_attempt_id=attempt.id,
-                    progress=0.0, speed=0.0, eta=None, file_path=None, error_message=None, completed_at=None)
+                    progress=0.0, speed=0.0, eta=None, file_path=None, error_message=None, completed_at=None,
+                    error_code=None, retry_at=None)
             return attempt
 
     async def _recover(self):
@@ -396,13 +410,13 @@ class QueueManager:
                         options["user_agent"] = user_agent
                     options_json = json.dumps(options)
                     await db.execute("""UPDATE downloads SET status='queued', error_message=NULL,
-                        progress=0, speed=0, eta=NULL, completed_at=NULL, download_options=?,
+                        error_code=NULL, retry_at=NULL, progress=0, speed=0, eta=NULL, completed_at=NULL, download_options=?,
                         auth_required=? WHERE id=?""", (options_json, int(bool(cookies) or row["auth_required"]), task_id))
                     if row["parent_id"] is not None:
                         await sync_parent(db, row["parent_id"], self._now())
                     current = dict(row)
                     current.update(status="queued", error_message=None, progress=0.0, speed=0.0,
-                                   eta=None, completed_at=None, download_options=options_json,
+                                   eta=None, completed_at=None, error_code=None, retry_at=None, download_options=options_json,
                                    auth_required=int(bool(cookies) or row["auth_required"]))
             if children:
                 for child, scoped in selected:
@@ -444,10 +458,11 @@ class QueueManager:
             if user_agent:
                 options["user_agent"] = user_agent
             child.update(status=status, progress=0.0, speed=0.0, eta=None, completed_at=None,
+                         error_code=None, retry_at=None,
                          error_message="Fresh browser authentication is required" if status == "waiting_for_auth" else None,
                          download_options=json.dumps(options), auth_required=int(scoped or child["auth_required"]))
             await db.execute("""UPDATE downloads SET status=?, progress=0, speed=0, eta=NULL, completed_at=NULL,
-                error_message=?, download_options=?, auth_required=? WHERE id=?""",
+                error_message=?, download_options=?, auth_required=?, error_code=NULL, retry_at=NULL WHERE id=?""",
                 (status, child["error_message"], child["download_options"], child["auth_required"], child["id"]))
             selected.append((child, scoped))
         await sync_parent(db, parent["id"], self._now())
@@ -487,6 +502,14 @@ class QueueManager:
                                                  artifacts=artifacts, outcome=outcome, **fields)
             fields.update(status=status, speed=0.0, eta=None, current_attempt_id=None,
                           completed_at=now if status in TERMINAL else None)
+            if status != "retry_wait":
+                fields["retry_at"] = None
+            if status in ("complete", "cancelled", "queued"):
+                fields["error_code"] = None
+            if changed:
+                async with aiosqlite.connect(self.runtime.db_path) as db:
+                    async with db.execute("SELECT request_count FROM downloads WHERE id=?", (task_id,)) as cursor:
+                        fields["request_count"] = (await cursor.fetchone())[0]
             attempt = self.active_attempts.get(task_id)
             if changed and attempt is not None and attempt.id == attempt_id:
                 self.active_attempts.pop(task_id, None)
@@ -561,6 +584,8 @@ class QueueManager:
         while True:
             try:
                 config = await self.settings.get_all()
+                for due in await self.attempts.promote_due_retries(self.clock()):
+                    self.in_memory_progress[due["id"]] = due
                 max_concurrent = config.get("max_concurrent", 3)
 
                 # Clean up finished tasks from active list
@@ -584,8 +609,16 @@ class QueueManager:
                         row = await cursor.fetchone()
 
                 if not row:
-                    # No queued items, wait for wakeup signal
-                    await self.wakeup_event.wait()
+                    async with aiosqlite.connect(self.runtime.db_path) as db:
+                        async with db.execute("SELECT MIN(retry_at) FROM downloads WHERE status='retry_wait'") as cursor:
+                            deadline = (await cursor.fetchone())[0]
+                    if deadline is None:
+                        await self.wakeup_event.wait()
+                    else:
+                        try:
+                            await asyncio.wait_for(self.wakeup_event.wait(), max(0.01, deadline - self.clock()))
+                        except TimeoutError:
+                            pass
                     continue
 
                 task_id = row["id"]
@@ -704,14 +737,16 @@ class QueueManager:
             elif self.stopping:
                 status = "queued"
                 outcome = "interrupted"
-            elif isinstance(error, (OutputPathError, PlaylistError)) or retry_count >= config.get("max_retries", 3):
-                status = "failed"
-                logger.error("Task %s failed: %s", task_id, error_message)
             else:
-                status = "queued"
-                retry_count += 1
-                logger.warning("Task %s execution failed (%s/%s): %s", task_id, retry_count, config.get("max_retries", 3), error_message)
-            fields = {"error_message": error_message, "retry_count": retry_count}
+                decision = decide(error, retry_count, config.get("max_retries", 3), self.clock())
+                status = decision.status
+                retry_count = decision.retry_count
+                fields.update(retry_at=decision.retry_at, error_code=decision.code)
+                if status == "waiting_for_auth":
+                    fields["auth_required"] = 1
+                logger.log(logging.ERROR if status == "failed" else logging.WARNING,
+                           "Task %s execution failed (%s): %s", task_id, decision.code, error_message)
+            fields.update(error_message=error_message, retry_count=retry_count)
         finally:
             # The executor has joined the worker tree before returning or raising cancellation.
             cleanup = asyncio.create_task(self.attempts.cleanup_cookies(attempt))
@@ -773,7 +808,7 @@ class QueueManager:
         transition = asyncio.create_task(self._finish(task_id, status, attempt_id=attempt.id,
                                                      artifacts=artifacts, outcome=outcome, **fields))
         changed = await join_owned_task(transition)
-        if changed and status == "queued" and not self.stopping:
+        if changed and status in ("queued", "retry_wait") and not self.stopping:
             self.wakeup_event.set()
 
     async def _expand_playlist(self, task_id, attempt_id, result, cookies):

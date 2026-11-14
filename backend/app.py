@@ -34,7 +34,7 @@ def create_app(
     connections = ConnectionManager()
     owner = RuntimeOwner(runtime, clock)
     queue = QueueManager(runtime, settings, connections, download_runner, clock, open_folder, download_executor, owner=owner)
-    probes = ProbeService(runtime, runner=probe_runner, clock=clock)
+    probes = ProbeService(runtime, runner=probe_runner, clock=clock, owner=owner)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -44,6 +44,7 @@ def create_app(
             await settings.initialize()
             await owner.start()
             await queue.initialize()
+            await probes.initialize()
             if start_queue:
                 queue.start()
             app.state.ready = True
@@ -53,6 +54,7 @@ def create_app(
             async def cleanup():
                 try:
                     if owner.active:
+                        await probes.stop()
                         await queue.stop()
                 except BaseException:
                     await owner.stop(release=False)
@@ -76,6 +78,7 @@ def create_app(
 
     async def ownership_failed():
         app.state.ready = False
+        await probes.stop()
         await queue.stop()
 
     owner.on_failure = ownership_failed

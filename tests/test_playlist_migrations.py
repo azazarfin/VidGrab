@@ -30,7 +30,8 @@ class PlaylistMigrationTests(OfflineTestCase):
         runtime = self.schema_six()
         asyncio.run(init_db(runtime))
         with closing(sqlite3.connect(runtime.db_path)) as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 7)
+            from backend.db.migrations import SCHEMA_VERSION
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
             self.assertEqual(db.execute("SELECT id,job_kind,parent_id,attempt_count FROM downloads ORDER BY id").fetchall(),
                              [("history", "media", None, 0), ("unfinished", "playlist", None, 0)])
             self.assertEqual(db.execute("SELECT COUNT(*) FROM enqueue_receipts").fetchone()[0], 0)

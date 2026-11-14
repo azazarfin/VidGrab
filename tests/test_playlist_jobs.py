@@ -71,7 +71,33 @@ class PlaylistJobTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
                 columns = {row[1] for row in db.execute("PRAGMA table_info(downloads)")}
                 self.assertTrue({"job_kind", "parent_id", "playlist_index"} <= columns,
                                 "Children need explicit durable parent and selected-position authority")
-                self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 7)
+                from backend.db.migrations import SCHEMA_VERSION
+                self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
+
+    async def test_children_share_the_root_request_budget_across_attempts(self):
+        from backend.services.request_budget import RequestCoordinator, MAX_REQUESTS
+        from backend.engine.process_identity import ProcessIdentity
+        app, parent, children = await self.expanded()
+        queue = app.state.queue
+        with closing(sqlite3.connect(queue.runtime.db_path)) as db, db:
+            db.execute("UPDATE downloads SET request_count=? WHERE id=?", (MAX_REQUESTS - 1, parent))
+        for index, child in enumerate(children):
+            attempt = await queue._claim(child["id"], child)
+            with closing(sqlite3.connect(queue.runtime.db_path)) as db, db:
+                db.execute("UPDATE download_attempts SET worker_identity=? WHERE id=?", (ProcessIdentity.capture().to_json(), attempt.id))
+            coordinator = RequestCoordinator(queue.runtime, {"owner_id": queue.owner.id, "attempt_id": attempt.id})
+            try:
+                if index == 0:
+                    lease = coordinator.acquire(child["url"], 1000)
+                    coordinator.release(lease)
+                else:
+                    with self.assertRaisesRegex(Exception, "REQUEST_BUDGET_EXHAUSTED"):
+                        coordinator.acquire(child["url"], 1000)
+            finally:
+                with closing(sqlite3.connect(queue.runtime.db_path)) as db, db:
+                    db.execute("UPDATE download_attempts SET worker_identity=NULL WHERE id=?", (attempt.id,))
+        self.assertEqual(self.query(queue.runtime, "SELECT request_count FROM downloads WHERE id=?", (parent,)), [(MAX_REQUESTS,)])
+        self.assertEqual(self.query(queue.runtime, "SELECT request_count FROM downloads WHERE parent_id=?", (parent,)), [(0,), (0,)])
 
     async def test_cookie_playlist_scopes_volatile_child_context_and_parent_retry(self):
         delivered = []

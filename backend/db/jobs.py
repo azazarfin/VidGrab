@@ -2,13 +2,14 @@
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
 from backend.runtime import RuntimeConfig
 from backend.engine.execution import join_owned_task
-from backend.db.ownership import require_owner, require_recoverable, recovery_attempts, transaction
+from backend.db.ownership import require_owner, require_recoverable, recovery_attempts, recover_requests, transaction
 from backend.db.playlists import PlaylistStore, sync_parent, sync_parents
 from backend import cookie_manager
 from backend.services.job_state import ACTIVE, FINISH_FROM, TERMINAL
@@ -17,8 +18,9 @@ from backend.services.publication import cleanup_publication, reconcile_publicat
 logger = logging.getLogger("vidgrab.attempts")
 
 JOB_FIELDS = frozenset({"progress", "speed", "eta", "file_size", "file_path", "title", "thumbnail_url",
-                        "error_message", "retry_count", "auth_required"})
+                        "error_message", "retry_count", "auth_required", "retry_at", "error_code"})
 ATTEMPT_OUTCOMES = frozenset({"complete", "failed", "cancelled", "interrupted"})
+MAX_ATTEMPTS = 64
 
 
 async def record_artifacts(db, attempt_id, now, artifacts):
@@ -45,6 +47,13 @@ class AttemptStore:
 
     def transaction(self):
         return transaction(self.runtime)
+
+    async def promote_due_retries(self, now):
+        async with self.transaction() as db:
+            await require_owner(db, self.owner)
+            cursor = await db.execute("""UPDATE downloads SET status='queued', retry_at=NULL
+                WHERE status='retry_wait' AND retry_at<=? RETURNING *""", (now,))
+            return [dict(row) for row in await cursor.fetchall()]
 
     async def expand(self, job_id, attempt_id, result, now):
         return await PlaylistStore(self.runtime, self.owner).expand(job_id, attempt_id, result, now)
@@ -75,16 +84,25 @@ class AttemptStore:
     async def claim(self, job_id: str, now: str) -> Attempt | None:
         async with self.transaction() as db:
             lease = await require_owner(db, self.owner)
-            async with db.execute("SELECT attempt_count FROM downloads WHERE id=? AND status='queued' AND current_attempt_id IS NULL",
-                                  (job_id,)) as cursor:
+            async with db.execute("""SELECT attempt_count, parent_id FROM downloads WHERE id=? AND status='queued'
+                AND current_attempt_id IS NULL AND (retry_at IS NULL OR retry_at<=?)""",
+                                  (job_id, datetime.fromisoformat(now).timestamp())) as cursor:
                 row = await cursor.fetchone()
             if row is None:
+                return None
+            if row["attempt_count"] >= MAX_ATTEMPTS:
+                await db.execute("""UPDATE downloads SET status='failed', retry_at=NULL,
+                    error_code='ATTEMPT_BUDGET_EXHAUSTED', error_message='Attempt budget exhausted',
+                    speed=0, eta=NULL, completed_at=? WHERE id=?""", (now, job_id))
+                if row["parent_id"] is not None:
+                    await sync_parent(db, row["parent_id"], now)
                 return None
             attempt_id = str(uuid4())
             attempt = Attempt(attempt_id, job_id, row["attempt_count"] + 1,
                               self.runtime.data_dir / "attempts" / attempt_id, self.owner.id)
             await db.execute("""UPDATE downloads SET status='downloading', attempt_count=?, current_attempt_id=?,
-                                progress=0, speed=0, eta=NULL, file_path=NULL, completed_at=NULL, error_message=NULL
+                                progress=0, speed=0, eta=NULL, file_path=NULL, completed_at=NULL, error_message=NULL,
+                                retry_at=NULL, error_code=NULL
                                 WHERE id=?""", (attempt.number, attempt.id, job_id))
             await db.execute("""INSERT INTO download_attempts
                                 (id, download_id, number, status, workspace, started_at, owner_id, lease_expires_at)
@@ -97,8 +115,8 @@ class AttemptStore:
         if not fields.keys() <= JOB_FIELDS:
             raise ValueError("Unsupported job transition fields")
         expected = FINISH_FROM[status]
-        outcome = outcome or ("interrupted" if status in ("queued", "waiting_for_auth") else status)
-        permitted = {"failed", "interrupted"} if status in ("queued", "waiting_for_auth") else {status}
+        outcome = outcome or ("interrupted" if status in ("queued", "waiting_for_auth", "retry_wait") else status)
+        permitted = {"failed", "interrupted"} if status in ("queued", "waiting_for_auth", "retry_wait") else {status}
         if outcome not in ATTEMPT_OUTCOMES or outcome not in permitted:
             raise ValueError("Invalid attempt outcome")
         async with self.transaction() as db:
@@ -113,6 +131,7 @@ class AttemptStore:
                 if owned is None:
                     return False
                 require_recoverable(owned, self.owner.id)
+                await recover_requests(db, self.owner.id, attempt_id=attempt_id)
                 cursor = await db.execute("""UPDATE download_attempts SET status=?, finished_at=?, error_message=?
                                              WHERE id=? AND download_id=? AND status='running'""",
                                           (outcome, now, fields.get("error_message"), attempt_id, job_id))
@@ -123,6 +142,10 @@ class AttemptStore:
                 raise ValueError("Artifacts require an owned attempt")
             fields.update(status=status, speed=0.0, eta=None, current_attempt_id=None,
                           completed_at=now if status in TERMINAL else None)
+            if status != "retry_wait":
+                fields["retry_at"] = None
+            if status in ("complete", "cancelled", "queued"):
+                fields["error_code"] = None
             assignments = ", ".join(f"{key}=?" for key in fields)
             await db.execute(f"UPDATE downloads SET {assignments} WHERE id=?", (*fields.values(), job_id))
             async with db.execute("SELECT parent_id FROM downloads WHERE id=?", (job_id,)) as cursor:
@@ -141,6 +164,7 @@ class AttemptStore:
             candidates = await recovery_attempts(db)
             for attempt in candidates:
                 require_recoverable(attempt, self.owner.id)
+            await recover_requests(db, self.owner.id)
             for attempt in candidates:
                 if attempt["cookie_ownership"] is not None:
                     selected = Attempt(attempt["id"], attempt["download_id"], attempt["number"],
@@ -172,7 +196,7 @@ class AttemptStore:
                 await db.execute("UPDATE download_attempts SET status=?, finished_at=?, error_message=? WHERE id=?",
                                  (outcome, now, fields.get("error_message"), attempt["id"]))
                 fields.update(status=status, current_attempt_id=None, speed=0, eta=None,
-                              completed_at=now if status in TERMINAL else None)
+                              completed_at=now if status in TERMINAL else None, retry_at=None, error_code=None)
                 assignments = ", ".join(f"{key}=?" for key in fields)
                 await db.execute(f"UPDATE downloads SET {assignments} WHERE id=?", (*fields.values(), owned.job_id))
             states = (*sorted(ACTIVE), "cancelling")
@@ -182,7 +206,8 @@ class AttemptStore:
             await db.execute(f"""UPDATE downloads SET
                                  status=CASE WHEN status='cancelling' THEN 'cancelled' ELSE 'queued' END,
                                  completed_at=CASE WHEN status='cancelling' THEN ? ELSE NULL END,
-                                 speed=0, eta=NULL, current_attempt_id=NULL WHERE status IN ({placeholders})""",
+                                 speed=0, eta=NULL, current_attempt_id=NULL, retry_at=NULL, error_code=NULL
+                                 WHERE status IN ({placeholders})""",
                              (now, *states))
             cursor = await db.execute("""UPDATE downloads SET status='waiting_for_auth',
                 error_message='Fresh browser authentication is required'

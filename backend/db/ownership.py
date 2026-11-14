@@ -72,6 +72,29 @@ async def require_owner(db, owner):
     return row["lease_expires_at"]
 
 
+async def recover_requests(db, current_owner, *, attempt_id=None):
+    """Verify all selected authorities before deleting any spent response lease."""
+    selection = " WHERE r.attempt_id=?" if attempt_id is not None else ""
+    async with db.execute("""SELECT r.id, r.identity, r.owner_id, o.identity AS runtime_identity
+        FROM request_leases r LEFT JOIN runtime_owners o ON o.id=r.owner_id""" + selection,
+        (attempt_id,) if attempt_id is not None else ()) as cursor:
+        leases = await cursor.fetchall()
+    probes = []
+    if attempt_id is None:
+        async with db.execute("""SELECT r.id, r.identity, r.owner_id, o.identity AS runtime_identity
+            FROM request_probes r LEFT JOIN runtime_owners o ON o.id=r.owner_id""") as cursor:
+            probes = await cursor.fetchall()
+    for rows, label, tree in ((leases, "request worker", True), (probes, "probe", False)):
+        for row in rows:
+            if row["owner_id"] != current_owner:
+                require_dead(row["runtime_identity"], "request owner")
+            require_dead(row["identity"], label, tree=tree)
+    for row in leases:
+        await db.execute("DELETE FROM request_leases WHERE id=?", (row["id"],))
+    for row in probes:
+        await db.execute("DELETE FROM request_probes WHERE id=?", (row["id"],))
+
+
 class OwnerStore:
     def __init__(self, runtime):
         self.runtime = runtime
@@ -85,6 +108,7 @@ class OwnerStore:
             # Check every attempt before retiring owners or changing any recovery state.
             for attempt in await recovery_attempts(db):
                 require_recoverable(attempt, owner.id)
+            await recover_requests(db, owner.id)
             await db.execute("UPDATE runtime_owners SET released_at=? WHERE released_at IS NULL", (now,))
             await db.execute("""INSERT INTO runtime_owners
                                 (id, identity, acquired_at, heartbeat_at, lease_expires_at)
@@ -104,6 +128,10 @@ class OwnerStore:
     async def release(self, owner, now):
         async with transaction(self.runtime) as db:
             await require_owner(db, owner)
+            async with db.execute("""SELECT 1 FROM request_leases WHERE owner_id=?
+                UNION ALL SELECT 1 FROM request_probes WHERE owner_id=? LIMIT 1""", (owner.id, owner.id)) as cursor:
+                if await cursor.fetchone():
+                    raise RuntimeOwnershipError("Cannot release an owner with pending request or probe authority")
             async with db.execute("SELECT 1 FROM download_attempts WHERE owner_id=? AND status='running' LIMIT 1",
                                   (owner.id,)) as cursor:
                 if await cursor.fetchone():

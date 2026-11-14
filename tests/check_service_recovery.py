@@ -121,7 +121,7 @@ def terminate_windows_identity(value):
 
 
 class Service:
-    def __init__(self, root, runtime, sequence):
+    def __init__(self, root, runtime, sequence, *, hold_terminal=False, hold_expansion=False):
         self.runtime = runtime
         self.root = root
         self.token = secrets.token_hex(32)
@@ -129,8 +129,16 @@ class Service:
         self.server_identity = None
         self.port = None
         self.log = root / f"service-{sequence}.log"
+        self.hold_terminal = hold_terminal
+        self.hold_expansion = hold_expansion
 
     def command(self):
+        if self.hold_terminal or self.hold_expansion:
+            command = [sys.executable, "-B", "-m", "tests.check_service_recovery", "--serve", "--tools", str(TOOLS),
+                       "--hold-terminal" if self.hold_terminal else "--hold-expansion"]
+            if ENGINE:
+                command.extend(["--engine", str(ENGINE)])
+            return command
         return ([str(ENGINE)] if ENGINE else [sys.executable, "-B", "-m", "tests.check_service_recovery",
                                              "--serve", "--tools", str(TOOLS)])
 
@@ -225,8 +233,8 @@ class ServiceRecoveryFixture(unittest.TestCase):
         RECEIPTS.append({"case": self.id(), "logs": {path.name: path.read_text(errors="replace")[-4000:]
                                                     for path in self.root.glob("*.log")}})
 
-    def service(self, *, refused=False):
-        service = Service(self.root, self.runtime, len(self.services))
+    def service(self, *, refused=False, hold_terminal=False):
+        service = Service(self.root, self.runtime, len(self.services), hold_terminal=hold_terminal)
         self.services.append(service)
         service.start(refused=refused)
         return service
@@ -236,8 +244,8 @@ class ServiceRecoveryFixture(unittest.TestCase):
             db.row_factory = sqlite3.Row
             return [dict(row) for row in db.execute(sql, values)]
 
-    def active(self, server):
-        first = self.service()
+    def active(self, server, *, hold_terminal=False):
+        first = self.service(hold_terminal=hold_terminal)
         job = first.request("POST", "/spike/fixture", {"url": server.url})["task_id"]
 
         def registered():
@@ -409,28 +417,23 @@ class ServiceRecoveryChecks(ServiceRecoveryFixture):
     def test_real_media_result_before_sqlite_terminal_write_recovers_without_redownload(self):
         import hashlib
         with WaveServer(phase="download") as fixture:
-            first, job, attempt = self.active(fixture)
+            first, job, attempt = self.active(fixture, hold_terminal=True)
             workspace = Path(attempt["workspace"])
-            with closing(sqlite3.connect(self.runtime.db_path)) as gate:
-                gate.execute("BEGIN IMMEDIATE")
-                fixture.release.set()
-
-                def durable_result():
-                    _, result = read_journal(self.runtime, workspace)
-                    return result
-
-                result = wait_for(durable_result, "Real worker result was not durably journaled", timeout=4)
-                self.wait_tree_exit(attempt)
-                self.assertEqual(self.rows("SELECT status, current_attempt_id FROM downloads"),
-                                 [{"status": "downloading", "current_attempt_id": attempt["id"]}])
-                output = Path(result["filepath"])
-                digest = hashlib.sha256(output.read_bytes()).hexdigest()
-                probe = subprocess.run([str(TOOLS / ("ffprobe.exe" if sys.platform == "win32" else "ffprobe")),
-                                        "-v", "error", "-show_entries", "stream=codec_name", "-of", "json", str(output)],
-                                       capture_output=True, text=True, timeout=5, check=True)
-                self.assertEqual(json.loads(probe.stdout)["streams"][0]["codec_name"], "mp3")
-                first.stop(hard=True)
-                gate.rollback()
+            fixture.release.set()
+            wait_for((self.root / "terminal-held").is_file, "Completion did not reach its selected terminal gate", timeout=10)
+            _, result = read_journal(self.runtime, workspace)
+            self.assertIsNotNone(result, "Real worker result was not durably journaled")
+            self.wait_tree_exit(attempt)
+            self.assertEqual(self.rows("SELECT status, current_attempt_id FROM downloads"),
+                             [{"status": "downloading", "current_attempt_id": attempt["id"]}])
+            self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM request_leases"), [{"n": 0}])
+            output = Path(result["filepath"])
+            digest = hashlib.sha256(output.read_bytes()).hexdigest()
+            probe = subprocess.run([str(TOOLS / ("ffprobe.exe" if sys.platform == "win32" else "ffprobe")),
+                                    "-v", "error", "-show_entries", "stream=codec_name", "-of", "json", str(output)],
+                                   capture_output=True, text=True, timeout=5, check=True)
+            self.assertEqual(json.loads(probe.stdout)["streams"][0]["codec_name"], "mp3")
+            first.stop(hard=True)
             second = self.service()
             self.assertEqual(self.rows("SELECT status, attempt_count, retry_count, file_path, error_message FROM downloads"),
                              [{"status": "complete", "attempt_count": 1, "retry_count": 0, "file_path": str(output), "error_message": None}])
@@ -441,7 +444,8 @@ class ServiceRecoveryChecks(ServiceRecoveryFixture):
             self.assertEqual(self.rows("SELECT status, attempt_count FROM downloads"), [{"status": "complete", "attempt_count": 1}])
             self.assertEqual(hashlib.sha256(output.read_bytes()).hexdigest(), digest)
             RECEIPTS.append({"case": self.id(), "boundary": "result-before-terminal-write", "synthetic_publication": False,
-                             "sha256": digest, "output": str(output), "attempt_id": attempt["id"], "worker_tree_exited": True})
+                             "sha256": digest, "output": str(output), "attempt_id": attempt["id"], "worker_tree_exited": True,
+                             "source_terminal_gate": True, "frozen_worker_and_recovery": bool(ENGINE)})
 
     @unittest.skipUnless(sys.platform == "linux", "Uses POSIX stop/continue to hold the actual prior worker owner")
     def test_live_orphan_owner_blocks_recovery_after_engine_death(self):
@@ -545,7 +549,7 @@ print(json.dumps({'leader': ProcessIdentity.capture().to_json(), 'child': Proces
         asyncio.run(check())
 
 
-def serve(tools):
+def serve(tools, *, hold_terminal=False, hold_expansion=False):
     paths, versions = check_components(tools)
     bootstrap = Bootstrap.model_validate_json(sys.stdin.buffer.readline(16385))
     runtime = RuntimeConfig(Path(bootstrap.data_dir), Path(bootstrap.download_dir))
@@ -553,9 +557,28 @@ def serve(tools):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))
         app = create_engine_app(runtime, token=bootstrap.token, port=listener.getsockname()[1], components=paths)
+        if hold_terminal:
+            # Pause only the selected completion boundary. A database-wide writer
+            # lock would prevent a media response from releasing its request lease.
+            finish = app.app.state.queue._finish
+            async def held_finish(task_id, status, **kwargs):
+                if status == "complete":
+                    (runtime.data_dir.parent / "terminal-held").write_text(task_id, encoding="utf-8")
+                    await asyncio.Event().wait()
+                return await finish(task_id, status, **kwargs)
+            app.app.state.queue._finish = held_finish
+        if hold_expansion:
+            async def held_expansion(*_args, **_kwargs):
+                (runtime.data_dir.parent / "expansion-held").write_text("ready", encoding="utf-8")
+                await asyncio.Event().wait()
+            app.app.state.queue._expand_playlist = held_expansion
         server = ReadyServer(uvicorn.Config(app, log_config=None, access_log=False, loop="asyncio", lifespan="on"))
         server.component_versions = versions
-        asyncio.run(server.serve(sockets=[listener]))
+        if ENGINE:
+            with patch("backend.engine.execution.entry_command", lambda _module, flag: [str(ENGINE), flag]):
+                asyncio.run(server.serve(sockets=[listener]))
+        else:
+            asyncio.run(server.serve(sockets=[listener]))
 
 
 def publication_worker():
@@ -591,6 +614,9 @@ def main():
     parser.add_argument("--engine", type=Path)
     parser.add_argument("--report", type=Path)
     parser.add_argument("--serve", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--hold-terminal", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--hold-expansion", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--case", action="append")
     parser.add_argument("--publication-worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     TOOLS = args.tools.resolve(strict=True)
@@ -600,11 +626,13 @@ def main():
         publication_worker()
         return
     if args.serve:
-        serve(TOOLS)
+        serve(TOOLS, hold_terminal=args.hold_terminal, hold_expansion=args.hold_expansion)
         return
     check_components(TOOLS)
     started = time.monotonic()
-    result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(ServiceRecoveryChecks))
+    suite = (unittest.defaultTestLoader.loadTestsFromNames(args.case, ServiceRecoveryChecks) if args.case else
+             unittest.defaultTestLoader.loadTestsFromTestCase(ServiceRecoveryChecks))
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
     if args.report:
         args.report.write_text(json.dumps({"ok": result.wasSuccessful(), "cases": result.testsRun,
             "seconds": round(time.monotonic() - started, 3), "engine": str(ENGINE) if ENGINE else None,

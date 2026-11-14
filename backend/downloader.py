@@ -1,4 +1,5 @@
 import os
+from contextlib import ExitStack
 import logging
 import shlex
 from pathlib import Path
@@ -352,11 +353,23 @@ def run_download(
 
     logger.info(f"Starting download for task {task_id} with format {format_id} to {outtmpl}")
     
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    if resume_attempt is not None:
+        from backend.services.request_network import constrain_network_options
+        constrain_network_options(ydl_opts)
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl, ExitStack() as cleanup:
+        budget = None
+        if resume_attempt is not None:
+            from backend.services.request_network import install_request_budget
+            budget = install_request_budget(ydl, runtime, {"owner_id": resume_attempt["owner_id"],
+                "attempt_id": resume_attempt["id"]}, is_cancelled_cb or (lambda: False))
+            cleanup.callback(budget.close)
         if is_playlist or playlist_items:
             from backend.services.playlists import extract_playlist
             # Raw extraction neither downloads media nor runs playlist postprocessors.
-            return extract_playlist(ydl, url, playlist_items, is_cancelled_cb or (lambda: False))
+            result = extract_playlist(ydl, url, playlist_items, is_cancelled_cb or (lambda: False))
+            if budget is not None:
+                budget.check()
+            return result
         if workspace is not None and hasattr(ydl, "process_ie_result"):
             from backend.services.playlists import enforce_single_item
             enforce_single_item(ydl)
@@ -369,6 +382,8 @@ def run_download(
         ydl.add_post_processor(CaptureArtifactMovesPP(runtime, workspace), when='post_process')
         ydl.add_post_processor(RecordFinalArtifactsPP(runtime, artifacts, workspace), when='after_move')
         info = ydl.extract_info(url, download=True)
+        if budget is not None:
+            budget.check()
         if info is None:
             raise Exception("Failed to extract video information or download file.")
         

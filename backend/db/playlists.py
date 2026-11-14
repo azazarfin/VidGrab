@@ -27,7 +27,7 @@ async def sync_parent(db, parent_id, now):
         status = "failed" if "failed" in states else "cancelled" if "cancelled" in states else "complete"
     error = "One or more playlist items failed" if status == "failed" else None
     await db.execute("""UPDATE downloads SET status=?, progress=?, speed=0, eta=NULL, file_path=NULL,
-        completed_at=?, error_message=? WHERE id=?""",
+        completed_at=?, error_message=?, retry_at=NULL, error_code=NULL WHERE id=?""",
                      (status, finished * 100 / len(states), now if status in TERMINAL else None, error, parent_id))
 
 
@@ -65,11 +65,13 @@ class PlaylistStore:
                 async with db.execute("SELECT id, status FROM downloads WHERE id=? OR parent_id=?", (root, root)) as cursor:
                     group = await cursor.fetchall()
                 async with db.execute("""SELECT 1 FROM downloads d JOIN download_attempts a ON a.download_id=d.id
-                    JOIN attempt_cookie_files c ON c.attempt_id=a.id WHERE d.id=? OR d.parent_id=? LIMIT 1""", (root, root)) as cursor:
+                    LEFT JOIN attempt_cookie_files c ON c.attempt_id=a.id
+                    LEFT JOIN request_leases r ON r.attempt_id=a.id
+                    WHERE (d.id=? OR d.parent_id=?) AND (c.attempt_id IS NOT NULL OR r.id IS NOT NULL) LIMIT 1""", (root, root)) as cursor:
                     retained = await cursor.fetchone()
                 if retained or any(row["status"] not in TERMINAL for row in group):
                     if job_id is not None:
-                        raise HTTPException(409, "Playlist activity or retained cookie ownership prevents history removal")
+                        raise HTTPException(409, "Playlist activity or retained cookie/request ownership prevents history removal")
                     continue
                 await db.execute("DELETE FROM downloads WHERE parent_id=?", (root,))
                 await db.execute("DELETE FROM downloads WHERE id=?", (root,))

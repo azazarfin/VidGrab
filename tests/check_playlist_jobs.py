@@ -210,20 +210,18 @@ class PlaylistWorkerChecks(unittest.IsolatedAsyncioTestCase):
             parent = await self.queue.enqueue(server.url, "best", is_playlist=True, audio_only=True,
                                               audio_format="wav", output_template="%(id)s.%(ext)s", idempotency_key="crash-parent")
             await self.context.__aexit__(None, None, None)
-            first = services.Service(self.root, self.runtime, "before-commit-1")
+            first = services.Service(self.root, self.runtime, "before-commit-1", hold_expansion=True)
             second = services.Service(self.root, self.runtime, "before-commit-2")
-            writer = None
             try:
                 await asyncio.to_thread(first.start)
                 await self.until(server.entered.is_set, timeout=10, label="gated metadata extraction")
                 attempt = self.rows("SELECT * FROM download_attempts WHERE download_id=? AND status='running'", (parent,))[0]
-                writer = sqlite3.connect(self.runtime.db_path)
-                writer.execute("BEGIN IMMEDIATE")
                 server.release.set()
+                await self.until((self.root / "expansion-held").is_file, timeout=10, label="selected child-expansion gate")
                 await self.until(lambda: not ProcessIdentity.from_json(attempt["worker_identity"]).worker_tree_is_running(), timeout=10, label="metadata worker tree exit before commit")
+                self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM request_leases"), [{"n": 0}],
+                                 "The metadata producer must finish its responses before the child-commit gate")
                 await asyncio.to_thread(first.stop, hard=True)
-                writer.close()
-                writer = None
                 self.assertEqual(self.rows("SELECT * FROM downloads WHERE parent_id=?", (parent,)), [])
                 await asyncio.to_thread(second.start)
                 await self.until(lambda: self.rows("SELECT status FROM downloads WHERE id=?", (parent,))[0]["status"] == "complete", timeout=15, label="recovered playlist completion")
@@ -235,14 +233,14 @@ class PlaylistWorkerChecks(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(hashlib.sha256(source.readframes(source.getnframes())).hexdigest(), server.pcm[name])
                 self.assertEqual(len(self.rows("SELECT * FROM enqueue_receipts")), 1)
             finally:
-                if writer is not None:
-                    writer.close()
                 server.release.set()
                 await asyncio.to_thread(first.stop, hard=True)
                 await asyncio.to_thread(second.stop, hard=True)
                 self.context = self.app.router.lifespan_context(self.app)
                 await self.context.__aenter__()
-            RECEIPTS.append({"case": self.id(), "parent_attempts": self.rows("SELECT number,status FROM download_attempts WHERE download_id=? ORDER BY number", (parent,)), "logs": {path.name: path.read_text(errors="replace")[-6000:] for path in self.root.glob("service-before-commit-*.log")}})
+            RECEIPTS.append({"case": self.id(), "parent_attempts": self.rows("SELECT number,status FROM download_attempts WHERE download_id=? ORDER BY number", (parent,)),
+                "source_expansion_gate": True, "frozen_worker_and_recovery": bool(media.ENGINE),
+                "logs": {path.name: path.read_text(errors="replace")[-6000:] for path in self.root.glob("service-before-commit-*.log")}})
 
     async def test_engine_death_after_expansion_preserves_children_and_persisted_cancel(self):
         with PlaylistServer(gate="/two.wav") as server:

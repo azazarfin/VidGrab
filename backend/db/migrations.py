@@ -16,7 +16,7 @@ import aiosqlite
 
 from backend.runtime import RuntimeCompatibilityError, RuntimeConfig
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 BASE_COLUMNS = {
     "id", "url", "title", "thumbnail_url", "status", "progress", "speed", "eta",
     "file_size", "file_path", "format_selected", "error_message", "created_at", "completed_at",
@@ -36,6 +36,11 @@ PLAYLIST_COLUMNS = {
                       "(parent_id IS NOT NULL AND playlist_index IS NOT NULL AND typeof(playlist_index)='integer' "
                       "AND playlist_index BETWEEN 1 AND 4096 AND job_kind='media'))",
 }
+REQUEST_COLUMNS = {
+    "retry_at": "REAL CHECK (retry_at IS NULL OR (typeof(retry_at) IN ('real','integer') AND retry_at BETWEEN 0 AND 253402300799))",
+    "error_code": "TEXT CHECK (error_code IS NULL OR length(error_code) <= 64)",
+    "request_count": "INTEGER NOT NULL DEFAULT 0 CHECK (typeof(request_count)='integer' AND request_count >= 0)",
+}
 OWNERSHIP_COLUMNS = {
     "owner_id": "TEXT REFERENCES runtime_owners(id)",
     "lease_expires_at": "REAL",
@@ -49,6 +54,9 @@ RELATED_COLUMNS = {
     "attempt_cookie_files": {"attempt_id", "ownership", "ready"},
     "attempt_partials": {"attempt_id", "source_key", "record"},
     "enqueue_receipts": {"key_hash", "request_hash", "job_id", "created_at"},
+    "request_hosts": {"host_key", "retry_at"},
+    "request_probes": {"id", "owner_id", "identity", "host_key", "request_count", "started_at"},
+    "request_leases": {"id", "owner_id", "attempt_id", "probe_id", "identity", "host_key", "created_at"},
 }
 
 
@@ -183,13 +191,38 @@ async def _migration_seven(db):
             await db.execute("UPDATE downloads SET job_kind='playlist' WHERE id=?", (job_id,))
 
 
+async def _migration_eight(db):
+    async with db.execute("PRAGMA table_info(downloads)") as cursor:
+        existing = {row[1] for row in await cursor.fetchall()}
+    for column, definition in REQUEST_COLUMNS.items():
+        if column not in existing:
+            await db.execute(f"ALTER TABLE downloads ADD COLUMN {column} {definition}")
+    await db.execute("CREATE INDEX IF NOT EXISTS retry_deadlines ON downloads(retry_at) WHERE status='retry_wait'")
+    await db.execute("""CREATE TABLE IF NOT EXISTS request_hosts (
+        host_key TEXT PRIMARY KEY NOT NULL CHECK (length(host_key)=64),
+        retry_at REAL NOT NULL CHECK (retry_at BETWEEN 0 AND 253402300799))""")
+    await db.execute("""CREATE TABLE IF NOT EXISTS request_probes (
+        id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL REFERENCES runtime_owners(id) ON DELETE RESTRICT,
+        identity TEXT NOT NULL CHECK (length(CAST(identity AS BLOB)) <= 8192),
+        host_key TEXT NOT NULL CHECK (length(host_key)=64),
+        request_count INTEGER NOT NULL DEFAULT 0 CHECK (request_count BETWEEN 0 AND 64), started_at REAL NOT NULL)""")
+    await db.execute("""CREATE TABLE IF NOT EXISTS request_leases (
+        id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL REFERENCES runtime_owners(id) ON DELETE RESTRICT,
+        attempt_id TEXT REFERENCES download_attempts(id) ON DELETE RESTRICT,
+        probe_id TEXT REFERENCES request_probes(id) ON DELETE RESTRICT,
+        identity TEXT NOT NULL CHECK (length(CAST(identity AS BLOB)) <= 8192),
+        host_key TEXT NOT NULL CHECK (length(host_key)=64), created_at REAL NOT NULL,
+        CHECK ((attempt_id IS NOT NULL AND probe_id IS NULL) OR (attempt_id IS NULL AND probe_id IS NOT NULL)))""")
+    await db.execute("CREATE INDEX IF NOT EXISTS request_host_leases ON request_leases(host_key)")
+
+
 async def _validate_schema(db):
     async with db.execute("PRAGMA quick_check") as cursor:
         if await cursor.fetchall() != [("ok",)]:
             raise RuntimeCompatibilityError("Database integrity check failed")
     async with db.execute("PRAGMA table_info(downloads)") as cursor:
         columns = {row[1] for row in await cursor.fetchall()}
-    missing = (BASE_COLUMNS | EXTRA_COLUMNS.keys() | ATTEMPT_COLUMNS.keys() | AUTH_COLUMNS.keys() | PLAYLIST_COLUMNS.keys()) - columns
+    missing = (BASE_COLUMNS | EXTRA_COLUMNS.keys() | ATTEMPT_COLUMNS.keys() | AUTH_COLUMNS.keys() | PLAYLIST_COLUMNS.keys() | REQUEST_COLUMNS.keys()) - columns
     if missing:
         raise RuntimeCompatibilityError(f"Database is missing download columns: {', '.join(sorted(missing))}")
     async with db.execute("PRAGMA table_info(config)") as cursor:
@@ -204,6 +237,14 @@ async def _validate_schema(db):
     async with db.execute("PRAGMA foreign_key_check") as cursor:
         if await cursor.fetchone():
             raise RuntimeCompatibilityError("Database contains orphan attempt/artifact records")
+    for table, index, columns in (("downloads", "retry_deadlines", ["retry_at"]),
+                                  ("request_leases", "request_host_leases", ["host_key"])):
+        async with db.execute(f"PRAGMA index_list({table})") as cursor:
+            if not any(row[1] == index for row in await cursor.fetchall()):
+                raise RuntimeCompatibilityError("Database is missing its request budget index")
+        async with db.execute(f"PRAGMA index_info({index})") as cursor:
+            if [row[2] for row in await cursor.fetchall()] != columns:
+                raise RuntimeCompatibilityError("Database has an invalid request budget index")
     async with db.execute("PRAGMA index_list(downloads)") as cursor:
         indexes = await cursor.fetchall()
     if not any(row[1] == "playlist_positions" and row[2] == 1 and row[4] == 1 for row in indexes):
@@ -236,7 +277,8 @@ async def _validate_schema(db):
             raise RuntimeCompatibilityError("Database contains inconsistent attempt ownership/lease information")
     async with db.execute("""SELECT identity FROM runtime_owners
         UNION ALL SELECT worker_owner_identity FROM download_attempts WHERE worker_owner_identity IS NOT NULL
-        UNION ALL SELECT worker_identity FROM download_attempts WHERE worker_identity IS NOT NULL""") as cursor:
+        UNION ALL SELECT worker_identity FROM download_attempts WHERE worker_identity IS NOT NULL
+        UNION ALL SELECT identity FROM request_leases UNION ALL SELECT identity FROM request_probes""") as cursor:
         for (identity,) in await cursor.fetchall():
             ProcessIdentity.from_json(identity)
     async with db.execute("""SELECT 1 FROM downloads d LEFT JOIN download_attempts a ON a.id=d.current_attempt_id
@@ -273,7 +315,7 @@ async def migrate_database(runtime: RuntimeConfig, defaults: dict, validate_sett
                 version = (await cursor.fetchone())[0]
             _check_version(version)
             for target, migration in ((1, _migration_one), (2, _migration_two), (3, _migration_three),
-                                      (4, _migration_four), (5, _migration_five), (6, _migration_six), (7, _migration_seven)):
+                                      (4, _migration_four), (5, _migration_five), (6, _migration_six), (7, _migration_seven), (8, _migration_eight)):
                 if version < target:
                     await migration(db)
                     await db.execute(f"PRAGMA user_version = {target}")
