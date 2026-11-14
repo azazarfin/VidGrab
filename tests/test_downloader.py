@@ -10,6 +10,22 @@ from tests.support import OfflineTestCase
 
 
 class DownloaderPathTests(OfflineTestCase):
+    def test_legacy_options_cannot_enable_unverified_resume(self):
+        runtime = self.runtime()
+        runtime.download_dir.mkdir()
+        output = runtime.download_dir / "finished.mp3"
+        output.write_bytes(b"media")
+        captured = {}
+        self.run_attempt([{"filepath": str(output)}], runtime=runtime, captured=captured,
+                         extra_args={"continuedl": True, "noresume": False})
+        self.assertFalse(captured.get("continuedl"), "Unverified yt-dlp append must stay disabled")
+        self.assertTrue(captured["noresume"])
+
+    def test_worker_can_receive_only_the_explicit_attempt_resume_context(self):
+        from backend.downloader import run_download
+        self.assertIn("resume_attempt", inspect.signature(run_download).parameters,
+                      "Owned workers need the attempt identity for fenced resume")
+
     def fake_ydl(self, records, captured=None):
         class FakeYDL:
             def __init__(self, options):

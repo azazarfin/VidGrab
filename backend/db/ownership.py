@@ -132,3 +132,19 @@ def register_worker(runtime, attempt_id, owner_id, job_id, workspace, worker_own
         verify_cookie_delivery(db, runtime, attempt_id, owner_id, workspace, cookies_file_path)
         db.execute("UPDATE download_attempts SET worker_owner_identity=?, worker_identity=? WHERE id=?",
                    (worker_owner.to_json(), worker.to_json(), attempt_id))
+
+
+def register_executing_worker(runtime, attempt_id, owner_id, launcher, worker):
+    """The private worker owner verifies exact containment before acknowledging execution."""
+    with closing(sqlite3.connect(runtime.db_path.resolve().as_uri()+"?mode=rw", uri=True)) as db, db:
+        db.row_factory = sqlite3.Row
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("""SELECT o.identity FROM download_attempts a JOIN downloads d ON d.id=a.download_id
+            JOIN runtime_owners o ON o.id=a.owner_id WHERE a.id=? AND a.owner_id=? AND a.status='running'
+            AND d.current_attempt_id=a.id AND d.status='downloading' AND o.released_at IS NULL
+            AND a.worker_owner_identity=? AND a.worker_identity=?""",
+            (attempt_id, owner_id, ProcessIdentity.capture().to_json(), launcher.to_json())).fetchone()
+        if (row is None or not ProcessIdentity.from_json(row["identity"]).is_running()
+                or not launcher.is_running() or not worker.is_running()):
+            raise RuntimeOwnershipError("Worker execution lost its private owner or current attempt")
+        db.execute("UPDATE download_attempts SET worker_identity=? WHERE id=?", (worker.to_json(), attempt_id))

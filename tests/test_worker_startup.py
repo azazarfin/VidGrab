@@ -1,12 +1,34 @@
 """A Windows launcher must not create children before Job Object assignment."""
 
 import io
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from tests.support import OfflineTestCase
 
 
 class WorkerStartupTests(OfflineTestCase):
+    def test_executing_identity_requires_membership_in_the_exact_windows_job(self):
+        from backend.engine import worker_owner
+        from backend.engine.process_identity import ProcessIdentity
+        self.assertTrue(callable(getattr(worker_owner, "executing_identity", None)),
+                        "The venv interpreter needs a verified private startup identity")
+        actual = ProcessIdentity.capture()
+        tree = SimpleNamespace(process=SimpleNamespace(pid=10), job=SimpleNamespace(contains=lambda pid: False))
+        with self.assertRaisesRegex(RuntimeError, "worker|Job"):
+            worker_owner.executing_identity(tree, {"type": "identity", "identity": actual.to_json()})
+        tree.job.contains = lambda pid: pid == actual.pid
+        self.assertEqual(worker_owner.executing_identity(tree, {"type": "identity", "identity": actual.to_json()}), actual)
+
+    def test_linux_execution_identity_must_equal_the_created_worker_process(self):
+        from backend.engine import worker_owner
+        from backend.engine.process_identity import ProcessIdentity
+        self.assertTrue(callable(getattr(worker_owner, "executing_identity", None)))
+        actual = ProcessIdentity.capture()
+        tree = SimpleNamespace(process=SimpleNamespace(pid=actual.pid+1), job=None)
+        with self.assertRaisesRegex(RuntimeError, "worker|identity"):
+            worker_owner.executing_identity(tree, {"type": "identity", "identity": actual.to_json()})
+
     def fixture(self, *, resume_error=False):
         events = []
         test = self

@@ -41,6 +41,22 @@ class ControlledProcess:
 
 
 class ProcessExecutionTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
+    async def test_owned_worker_failure_keeps_its_type_after_process_exit(self):
+        from backend.runtime import OutputPathError
+        process = ControlledProcess()
+        messages = iter([{"type": "started", "pid": 123},
+                         {"type": "error", "code": "OWNERSHIP_REJECTED", "message": "Partial retained"}])
+        async def readline():
+            return (json.dumps(next(messages)) + "\n").encode()
+        async def launch(*args, **kwargs):
+            return process
+        process.readline = readline
+        process.release.set()
+        with patch("asyncio.create_subprocess_exec", launch):
+            with self.assertRaises(OutputPathError):
+                await ProcessDownloadExecutor().run(runtime=self.runtime(), task_id="fixture", progress_callback=lambda *_: None)
+        self.assertTrue(process.joined)
+
     async def test_owner_response_requires_a_complete_frame(self):
         process = ControlledProcess()
         process.release.set()

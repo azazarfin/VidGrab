@@ -22,6 +22,9 @@ from backend.db.jobs import AttemptStore
 from backend.services.artifacts import completed_artifacts, prepare_workspace
 from backend.services.publication import reconcile_publication
 from backend.services.job_state import RUNNABLE, TERMINAL, accepts_progress
+from backend.services.resume import FreshAuthRequired
+from backend.services.auth_context import validate_fresh_cookies
+from backend.db.ownership import require_owner
 
 logger = logging.getLogger("vidgrab.queue_manager")
 
@@ -68,6 +71,7 @@ class DownloadTask(BaseModel):
     scheduled_at: Optional[str] = None
     attempt_count: int = 0
     current_attempt_id: Optional[str] = None
+    auth_required: int = 0
 
 # WebSocket Connection Manager
 class ConnectionManager:
@@ -129,6 +133,15 @@ class QueueManager:
 
     async def _claim(self, task_id, row=None):
         async with self._state_lock(task_id):
+            async with aiosqlite.connect(self.runtime.db_path) as db:
+                async with db.execute("SELECT auth_required, status FROM downloads WHERE id=?", (task_id,)) as cursor:
+                    auth = await cursor.fetchone()
+            if auth and auth[0] and auth[1] == "queued" and not self.task_cookies.get(task_id):
+                await self.attempts.finish(task_id, "waiting_for_auth", self._now(),
+                                           error_message="Fresh browser authentication is required")
+                if task_id in self.in_memory_progress:
+                    self.in_memory_progress[task_id].update(status="waiting_for_auth", error_message="Fresh browser authentication is required")
+                return None
             attempt = await self.attempts.claim(task_id, self._now())
             if attempt is None:
                 return None
@@ -261,10 +274,10 @@ class QueueManager:
         async with aiosqlite.connect(self.runtime.db_path) as db:
             await db.execute(
                 """
-                INSERT INTO downloads (id, url, title, thumbnail_url, status, progress, created_at, format_selected, download_options, scheduled_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO downloads (id, url, title, thumbnail_url, status, progress, created_at, format_selected, download_options, scheduled_at, auth_required)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (task_id, url, title, thumbnail_url, status, 0.0, created_at, format_id, options_json, scheduled_at)
+                (task_id, url, title, thumbnail_url, status, 0.0, created_at, format_id, options_json, scheduled_at, int(bool(cookies)))
             )
             await db.commit()
 
@@ -327,6 +340,42 @@ class QueueManager:
             await self._finish(task_id, "cancelled", attempt_id=attempt_id)
             self.task_cookies.pop(task_id, None)
             self.cancelled_tasks.discard(task_id)
+
+    async def retry(self, task_id, cookies=None, user_agent=None, *, expected_status=None):
+        async with self._state_lock(task_id):
+            async with self.attempts.transaction() as db:
+                await require_owner(db, self.owner)
+                async with db.execute("SELECT * FROM downloads WHERE id=?", (task_id,)) as cursor:
+                    row = await cursor.fetchone()
+                if row is None:
+                    raise HTTPException(status_code=404, detail="Download task not found")
+                if expected_status is not None and row["status"] != expected_status:
+                    raise HTTPException(status_code=400, detail="Download no longer waits for browser authentication")
+                if row["status"] not in ("failed", "cancelled", "waiting_for_auth"):
+                    raise HTTPException(status_code=400, detail="Only failed, cancelled or authentication-waiting downloads can be retried")
+                if row["status"] == "waiting_for_auth" or row["auth_required"]:
+                    try:
+                        validate_fresh_cookies(row["url"], cookies, self.clock())
+                    except ValueError as error:
+                        raise HTTPException(status_code=400, detail=str(error)) from error
+                options = json.loads(row["download_options"] or "{}")
+                if user_agent:
+                    options["user_agent"] = user_agent
+                options_json = json.dumps(options)
+                await db.execute("""UPDATE downloads SET status='queued', error_message=NULL,
+                    progress=0, speed=0, eta=NULL, completed_at=NULL, download_options=?,
+                    auth_required=? WHERE id=?""", (options_json, int(bool(cookies) or row["auth_required"]), task_id))
+            if cookies:
+                self.task_cookies[task_id] = cookies
+            else:
+                self.task_cookies.pop(task_id, None)
+            self.cancelled_tasks.discard(task_id)
+            current = dict(row)
+            current.update(status="queued", error_message=None, progress=0.0, speed=0.0,
+                           eta=None, completed_at=None, download_options=options_json)
+            self.in_memory_progress[task_id] = current
+        self.wakeup_event.set()
+        await self.connections.broadcast({"event": "task_queued", "data": current})
 
     async def _finish(self, task_id, status, *, attempt_id=None, artifacts=(), outcome=None, **fields):
         now = self._now()
@@ -500,6 +549,7 @@ class QueueManager:
                 download_dir=download_dir, filename_template=filename_template,
                 progress_callback=lambda tid, payload: self.handle_progress(tid, payload, attempt_id=attempt.id),
                 attempt_dir=str(attempt.workspace),
+                resume_attempt={"id": attempt.id, "job_id": task_id, "number": attempt.number, "owner_id": attempt.owner_id},
                 speed_limit=config.get("speed_limit", 0), cookies_file_path=cookies_file_path,
                 is_cancelled_cb=lambda: self.is_cancelled(task_id),
                 audio_only=options.get("audio_only", False), audio_format=options.get("audio_format", "mp3"),
@@ -529,6 +579,11 @@ class QueueManager:
             status = "cancelled" if task_id in self.cancelled_tasks else "queued"
             outcome = "cancelled" if status == "cancelled" else "interrupted"
             fields = {"error_message": None}
+        except FreshAuthRequired:
+            status = "cancelled" if task_id in self.cancelled_tasks else "waiting_for_auth"
+            outcome = "cancelled" if status == "cancelled" else "failed"
+            fields = {"error_message": "Fresh browser authentication is required", "auth_required": 1,
+                      "retry_count": previous_retry_count}
         except Exception as error:
             error_message = sanitize_text(str(error))
             if task_id in self.cancelled_tasks:
@@ -728,61 +783,14 @@ def create_download_router(queue_manager: QueueManager) -> APIRouter:
 
     @router.post("/{task_id}/retry", response_model=Dict[str, str])
     async def retry_download(task_id: str, req: RetryRequest, request: Request):
-        user_agent = request.headers.get("user-agent")
-        if req.cookies:
-            queue_manager.task_cookies[task_id] = req.cookies
-        async with aiosqlite.connect(queue_manager.runtime.db_path) as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute("SELECT * FROM downloads WHERE id = ?", (task_id,)) as cursor:
-                row = await cursor.fetchone()
-                if not row:
-                    raise HTTPException(status_code=404, detail="Download task not found")
-
-                task_dict = dict(row)
-                if task_dict["status"] not in ("failed", "cancelled"):
-                    raise HTTPException(status_code=400, detail="Only failed or cancelled downloads can be retried")
-
-                # Extract options and update user_agent if present
-                try:
-                    opts = json.loads(task_dict.get("download_options") or "{}")
-                    if user_agent:
-                        opts["user_agent"] = user_agent
-                    options_json = json.dumps(opts)
-                except Exception:
-                    options_json = task_dict.get("download_options")
-
-                # Update status back to queued in database
-                await db.execute(
-                    "UPDATE downloads SET status = ?, error_message = NULL, progress = 0.0, speed = 0.0, eta = NULL, download_options = ? WHERE id = ?",
-                    ("queued", options_json, task_id)
-                )
-                await db.commit()
-
-        # Update in-memory state
-        queue_manager.in_memory_progress[task_id] = {
-            "id": task_id,
-            "url": task_dict["url"],
-            "title": task_dict["title"],
-            "thumbnail_url": task_dict["thumbnail_url"],
-            "status": "queued",
-            "progress": 0.0,
-            "speed": 0.0,
-            "eta": None,
-            "file_size": None,
-            "format_selected": task_dict["format_selected"],
-            "created_at": datetime.fromtimestamp(queue_manager.clock(), timezone.utc).isoformat(),
-            "download_options": options_json
-        }
-
-        # Broadcast task queued event
-        await queue_manager.connections.broadcast({
-            "event": "task_queued",
-            "data": queue_manager.in_memory_progress[task_id]
-        })
-
-        # Wake up worker
-        queue_manager.wakeup_event.set()
+        await queue_manager.retry(task_id, req.cookies, request.headers.get("user-agent"))
         return {"message": f"Download task {task_id} re-enqueued for retry"}
+
+    @router.post("/{task_id}/authentication", response_model=Dict[str, str])
+    async def refresh_authentication(task_id: str, req: RetryRequest, request: Request):
+        await queue_manager.retry(task_id, req.cookies, request.headers.get("user-agent"),
+                                  expected_status="waiting_for_auth")
+        return {"message": "Fresh browser authentication supplied"}
 
     @router.post("/{task_id}/open-folder", response_model=Dict[str, Any])
     async def open_task_folder(task_id: str):

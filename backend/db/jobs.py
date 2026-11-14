@@ -16,7 +16,7 @@ from backend.services.publication import cleanup_publication, reconcile_publicat
 logger = logging.getLogger("vidgrab.attempts")
 
 JOB_FIELDS = frozenset({"progress", "speed", "eta", "file_size", "file_path", "title", "thumbnail_url",
-                        "error_message", "retry_count"})
+                        "error_message", "retry_count", "auth_required"})
 ATTEMPT_OUTCOMES = frozenset({"complete", "failed", "cancelled", "interrupted"})
 
 
@@ -93,8 +93,8 @@ class AttemptStore:
         if not fields.keys() <= JOB_FIELDS:
             raise ValueError("Unsupported job transition fields")
         expected = FINISH_FROM[status]
-        outcome = outcome or ("interrupted" if status == "queued" else status)
-        permitted = {"failed", "interrupted"} if status == "queued" else {status}
+        outcome = outcome or ("interrupted" if status in ("queued", "waiting_for_auth") else status)
+        permitted = {"failed", "interrupted"} if status in ("queued", "waiting_for_auth") else {status}
         if outcome not in ATTEMPT_OUTCOMES or outcome not in permitted:
             raise ValueError("Invalid attempt outcome")
         async with self.transaction() as db:
@@ -176,6 +176,10 @@ class AttemptStore:
                                  completed_at=CASE WHEN status='cancelling' THEN ? ELSE NULL END,
                                  speed=0, eta=NULL, current_attempt_id=NULL WHERE status IN ({placeholders})""",
                              (now, *states))
+            cursor = await db.execute("""UPDATE downloads SET status='waiting_for_auth',
+                error_message='Fresh browser authentication is required'
+                WHERE status='queued' AND auth_required=1 RETURNING id""")
+            recovered_ids.extend(row["id"] for row in await cursor.fetchall())
             if not recovered_ids:
                 return []
             placeholders = ", ".join("?" for _ in recovered_ids)

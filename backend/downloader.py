@@ -178,7 +178,8 @@ def run_download(
     extra_args: Optional[Dict[str, Any]] = None,
     user_agent: Optional[str] = None,
     components: Optional[Dict[str, str]] = None,
-    attempt_dir: Optional[str] = None
+    attempt_dir: Optional[str] = None,
+    resume_attempt: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """Synchronous yt-dlp attempt, normally run inside an owned worker process."""
     
@@ -244,6 +245,8 @@ def run_download(
     
     # Enforce the injected cache/component policy after merging legacy options.
     ydl_opts['remote_components'] = []
+    ydl_opts['noresume'] = True
+    ydl_opts['continuedl'] = False
     ydl_opts['cachedir'] = str(runtime.temp_dir / 'yt-dlp-cache')
     if components is not None:
         # App-owned paths win over legacy custom options and host PATH discovery.
@@ -350,6 +353,12 @@ def run_download(
     logger.info(f"Starting download for task {task_id} with format {format_id} to {outtmpl}")
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        if resume_attempt is not None:
+            from backend.services.resume import install_http_resume
+            from types import SimpleNamespace
+            if workspace is None or set(resume_attempt) != {"id", "job_id", "number", "owner_id"}:
+                raise ValueError("Verified resume requires an explicit owned attempt")
+            install_http_resume(ydl, runtime, SimpleNamespace(**resume_attempt, workspace=workspace))
         ydl.add_post_processor(CaptureArtifactMovesPP(runtime, workspace), when='post_process')
         ydl.add_post_processor(RecordFinalArtifactsPP(runtime, artifacts, workspace), when='after_move')
         info = ydl.extract_info(url, download=True)

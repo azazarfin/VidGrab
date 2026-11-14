@@ -43,6 +43,8 @@ class WindowsJob:
             "CreateJobObjectW": ([ctypes.c_void_p, wintypes.LPCWSTR], wintypes.HANDLE),
             "SetInformationJobObject": ([wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD], wintypes.BOOL),
             "AssignProcessToJobObject": ([wintypes.HANDLE, wintypes.HANDLE], wintypes.BOOL),
+            "OpenProcess": ([wintypes.DWORD, wintypes.BOOL, wintypes.DWORD], wintypes.HANDLE),
+            "IsProcessInJob": ([wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)], wintypes.BOOL),
             "TerminateJobObject": ([wintypes.HANDLE, wintypes.UINT], wintypes.BOOL),
             "QueryInformationJobObject": ([wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p], wintypes.BOOL),
             "CloseHandle": ([wintypes.HANDLE], wintypes.BOOL),
@@ -74,6 +76,16 @@ class WindowsJob:
     def assign(self, process):
         # The worker waits for bootstrap before importing or invoking media tools.
         self.check(self.kernel.AssignProcessToJobObject(self.handle, int(process._handle)))
+
+    def contains(self, pid):
+        process = self.kernel.OpenProcess(0x1000, False, pid)
+        self.check(process)
+        try:
+            assigned = wintypes.BOOL()
+            self.check(self.kernel.IsProcessInJob(process, self.handle, ctypes.byref(assigned)))
+            return bool(assigned.value)
+        finally:
+            self.kernel.CloseHandle(process)
 
     def resume(self, process):
         # subprocess.Popen closes CreateProcessW's initial thread handle. Use

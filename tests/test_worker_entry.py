@@ -5,6 +5,12 @@ from tests.support import OfflineTestCase
 
 
 class WorkerEntryTests(OfflineTestCase):
+    def test_unknown_or_malformed_typed_errors_are_rejected(self):
+        self.validate({"type": "error", "message": "Fresh browser authentication is required", "code": "AUTH_REQUIRED"})
+        for code in ("UNKNOWN", 1, None, {}, "secret"):
+            with self.assertRaises(ValueError):
+                self.validate({"type": "error", "message": "failed", "code": code})
+
     def validate(self, message):
         from backend.engine import worker_owner
         validator = getattr(worker_owner, "validate_worker_message", None)

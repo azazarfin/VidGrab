@@ -497,11 +497,13 @@ class CookieRecoveryTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
         await init_db(selected)
         with closing(sqlite3.connect(selected.db_path)) as db, db:
             db.execute("DROP TABLE IF EXISTS attempt_cookie_files")
+            db.execute("DROP TABLE IF EXISTS attempt_partials")
+            db.execute("ALTER TABLE downloads DROP COLUMN auth_required")
             db.execute("PRAGMA user_version=4")
             db.execute("INSERT INTO downloads (id, url, status, created_at) VALUES ('history', 'fixture', 'complete', ?)", (NOW,))
         await init_db(selected)
         with closing(sqlite3.connect(selected.db_path)) as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 5,
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 6,
                              "Cookie ownership needs an explicit transactional schema migration")
             self.assertEqual(db.execute("SELECT COUNT(*) FROM attempt_cookie_files").fetchone()[0], 0)
             self.assertEqual(db.execute("SELECT status, attempt_count FROM downloads").fetchall(), [("complete", 0)])
@@ -513,6 +515,8 @@ class CookieRecoveryTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
         await init_db(selected)
         with closing(sqlite3.connect(selected.db_path)) as db, db:
             db.execute("DROP TABLE IF EXISTS attempt_cookie_files")
+            db.execute("DROP TABLE IF EXISTS attempt_partials")
+            db.execute("ALTER TABLE downloads DROP COLUMN auth_required")
             db.execute("PRAGMA user_version=4")
             db.execute("DELETE FROM config WHERE key='max_retries'")
             db.execute("""CREATE TRIGGER interrupt_cookie_migration BEFORE INSERT ON config

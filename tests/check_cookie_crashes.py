@@ -131,17 +131,18 @@ class CookieCrashChecks(recovery.ServiceRecoveryFixture):
                 self.assertFalse(witness.exists())
             self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM attempt_cookie_files"), [{"n": 0}])
             fixture.release.set()
-            recovery.wait_for(lambda: any(row["id"] == frame["attempt"]["download_id"] and row["status"] == "complete"
+            expected_status = "complete" if completing else "waiting_for_auth"
+            recovery.wait_for(lambda: any(row["id"] == frame["attempt"]["download_id"] and row["status"] == expected_status
                                          for row in second.request("GET", "/spike/status")["jobs"]),
-                              "Cookie crash restart did not complete its public local fixture", timeout=12)
+                              "Cookie crash restart did not reconcile its authenticated fixture", timeout=12)
             attempts = self.rows("SELECT id, number, status FROM download_attempts ORDER BY number")
             if completing:
                 self.assertEqual(attempts, [{"id": frame["attempt"]["id"], "number": 1, "status": "complete"}])
                 self.assertEqual(len(fixture.cookie_headers), requests_before, "Verified media must not be redownloaded")
             else:
-                self.assertEqual([row["status"] for row in attempts], ["interrupted", "complete"])
-                self.assertTrue(all(COOKIE_VALUE not in header for header in fixture.cookie_headers[requests_before:]),
-                                "A restarted attempt cannot reuse discarded credentials")
+                self.assertEqual([row["status"] for row in attempts], ["interrupted"])
+                self.assertEqual(len(fixture.cookie_headers), requests_before,
+                                 "A recovered authenticated job must wait without reusing discarded credentials")
             self.assertEqual(unrelated.read_bytes(), b"unrelated credential bytes")
             self.assertNotIn(COOKIE_VALUE.encode(), self.runtime.db_path.read_bytes())
             second.stop(hard=True)

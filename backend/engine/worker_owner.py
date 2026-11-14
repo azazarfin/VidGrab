@@ -33,6 +33,8 @@ def validate_worker_message(message):
         error = message.get("message")
         if not isinstance(error, str) or len(error) > 4096:
             raise ValueError("Invalid worker error message")
+        if "code" in message and message["code"] not in ("AUTH_REQUIRED", "OWNERSHIP_REJECTED"):
+            raise ValueError("Invalid typed worker error")
     else:
         raise ValueError("Invalid worker response")
 
@@ -133,6 +135,17 @@ class ProcessTree:
                 process.stdout.close()
 
 
+def executing_identity(tree, message):
+    from backend.engine.process_identity import ProcessIdentity
+    if message.keys() != {"type", "identity"} or message["type"] != "identity":
+        raise ValueError("Invalid executing worker identity frame")
+    actual = ProcessIdentity.from_json(message["identity"])
+    if (not actual.is_running() or (tree.job is not None and not tree.job.contains(actual.pid))
+            or (tree.job is None and actual != ProcessIdentity.capture(tree.process.pid))):
+        raise RuntimeError("Executing worker identity is outside its owned process or Job Object")
+    return actual
+
+
 def main(arguments=None):
     arguments = sys.argv[1:] if arguments is None else arguments
     if len(arguments) < 2 or arguments[0] != "--" or not os.path.isabs(arguments[1]):
@@ -172,6 +185,7 @@ def main(arguments=None):
             tree = ProcessTree(arguments[1:], log)
             options = bootstrap.get("options", {})
             ownership = options.pop("ownership", None)
+            identity_ready = False
             if ownership is not None:
                 from backend.db.ownership import register_worker
                 from backend.engine.process_identity import ProcessIdentity
@@ -201,8 +215,22 @@ def main(arguments=None):
                     break
                 kind = message.get("type")
                 try:
+                    if kind == "identity":
+                        if identity_ready:
+                            raise ValueError("Duplicate executing worker identity")
+                        actual = executing_identity(tree, message)
+                        if ownership is not None:
+                            from backend.db.ownership import register_executing_worker
+                            register_executing_worker(RuntimeConfig(**bootstrap["runtime"]), ownership["attempt_id"],
+                                ownership["owner_id"], ProcessIdentity.capture(tree.process.pid), actual)
+                        tree.process.stdin.write(b'{"type":"execute"}\n')
+                        tree.process.stdin.flush()
+                        identity_ready = True
+                        continue
+                    if ownership is not None and not identity_ready:
+                        raise ValueError("Owned worker response preceded its executing identity")
                     validate_worker_message(message)
-                except ValueError as error:
+                except (OSError, ValueError, RuntimeError) as error:
                     terminal = {"type": "error", "message": str(error)}
                     break
                 if kind == "progress":

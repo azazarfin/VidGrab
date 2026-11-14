@@ -8,8 +8,9 @@ FINISH_FROM = {
     "failed": RUNNABLE,
     "queued": RUNNABLE,
     "cancelled": frozenset({"cancelling"}),
+    "waiting_for_auth": RUNNABLE,
 }
 
 
 def accepts_progress(status):
-    return status not in TERMINAL and status != "cancelling"
+    return status not in TERMINAL and status not in ("cancelling", "waiting_for_auth")

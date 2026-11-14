@@ -120,7 +120,7 @@ class QueueLifecycleTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(outcomes, [None] * len(actions))
             self.assertTrue(exited.is_set())
             self.assertFalse(cookie.exists())
-            self.assertEqual((await self.row(runtime, task_id))["status"], "queued" if shutdown else "cancelled")
+            self.assertEqual((await self.row(runtime, task_id))["status"], "waiting_for_auth" if shutdown else "cancelled")
 
     async def test_cancel_waits_for_execution_before_terminal_state_and_cookie_cleanup(self):
         await self.blocking_download()

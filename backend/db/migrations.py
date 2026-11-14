@@ -16,7 +16,7 @@ import aiosqlite
 
 from backend.runtime import RuntimeCompatibilityError, RuntimeConfig
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 BASE_COLUMNS = {
     "id", "url", "title", "thumbnail_url", "status", "progress", "speed", "eta",
     "file_size", "file_path", "format_selected", "error_message", "created_at", "completed_at",
@@ -28,6 +28,7 @@ ATTEMPT_COLUMNS = {
     "attempt_count": "INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0)",
     "current_attempt_id": "TEXT",
 }
+AUTH_COLUMNS = {"auth_required": "INTEGER NOT NULL DEFAULT 0 CHECK (auth_required IN (0, 1))"}
 OWNERSHIP_COLUMNS = {
     "owner_id": "TEXT REFERENCES runtime_owners(id)",
     "lease_expires_at": "REAL",
@@ -39,6 +40,7 @@ RELATED_COLUMNS = {
     "download_artifacts": {"attempt_id", "path", "kind", "state", "size", "updated_at"},
     "runtime_owners": {"id", "identity", "acquired_at", "heartbeat_at", "lease_expires_at", "released_at"},
     "attempt_cookie_files": {"attempt_id", "ownership", "ready"},
+    "attempt_partials": {"attempt_id", "source_key", "record"},
 }
 
 
@@ -128,13 +130,24 @@ async def _migration_five(db):
     )""")
 
 
+async def _migration_six(db):
+    for column, definition in AUTH_COLUMNS.items():
+        await db.execute(f"ALTER TABLE downloads ADD COLUMN {column} {definition}")
+    await db.execute("""CREATE TABLE attempt_partials (
+        attempt_id TEXT NOT NULL REFERENCES download_attempts(id) ON DELETE CASCADE,
+        source_key TEXT NOT NULL CHECK (length(source_key)=64),
+        record TEXT NOT NULL CHECK (length(CAST(record AS BLOB)) <= 4096),
+        PRIMARY KEY (attempt_id, source_key)
+    )""")
+
+
 async def _validate_schema(db):
     async with db.execute("PRAGMA quick_check") as cursor:
         if await cursor.fetchall() != [("ok",)]:
             raise RuntimeCompatibilityError("Database integrity check failed")
     async with db.execute("PRAGMA table_info(downloads)") as cursor:
         columns = {row[1] for row in await cursor.fetchall()}
-    missing = (BASE_COLUMNS | EXTRA_COLUMNS.keys() | ATTEMPT_COLUMNS.keys()) - columns
+    missing = (BASE_COLUMNS | EXTRA_COLUMNS.keys() | ATTEMPT_COLUMNS.keys() | AUTH_COLUMNS.keys()) - columns
     if missing:
         raise RuntimeCompatibilityError(f"Database is missing download columns: {', '.join(sorted(missing))}")
     async with db.execute("PRAGMA table_info(config)") as cursor:
@@ -202,7 +215,7 @@ async def migrate_database(runtime: RuntimeConfig, defaults: dict, validate_sett
                 version = (await cursor.fetchone())[0]
             _check_version(version)
             for target, migration in ((1, _migration_one), (2, _migration_two), (3, _migration_three),
-                                      (4, _migration_four), (5, _migration_five)):
+                                      (4, _migration_four), (5, _migration_five), (6, _migration_six)):
                 if version < target:
                     await migration(db)
                     await db.execute(f"PRAGMA user_version = {target}")

@@ -26,7 +26,7 @@ import aiosqlite
 from backend.app import create_app
 from backend.engine.execution import ProcessDownloadExecutor
 from backend.engine.resources import check_components
-from backend.runtime import RuntimeConfig
+from backend.runtime import OutputPathError, RuntimeConfig
 from backend.db.jobs import Attempt
 from backend.services.artifacts import journal_artifacts, prepare_workspace, read_journal
 from tests.worker_process_support import owned_children
@@ -264,7 +264,7 @@ class WorkerExecutionChecks(unittest.IsolatedAsyncioTestCase):
         with WaveServer() as server:
             options = self.options(server.url)
             options["attempt_dir"] = str(attempt.workspace)
-            with self.assertRaises(RuntimeError):
+            with self.assertRaises(OutputPathError):
                 await asyncio.wait_for(self.executor().run(**options), 15)
         self.assertTrue(existing.exists(), "Preexisting media must never become the owned FFmpeg input")
         self.assertEqual(existing.read_bytes(), before)

@@ -95,6 +95,12 @@ class ProcessDownloadExecutor:
                     elif message.get("type") == "result":
                         result = message["data"]
                     elif message.get("type") == "error":
+                        if message.get("code") == "AUTH_REQUIRED":
+                            from backend.services.resume import FreshAuthRequired
+                            raise FreshAuthRequired()
+                        if message.get("code") == "OWNERSHIP_REJECTED":
+                            from backend.runtime import OutputPathError
+                            raise OutputPathError(message["message"])
                         raise RuntimeError(message["message"] or "Worker failed")
                     else:
                         raise ValueError("Invalid worker response")
