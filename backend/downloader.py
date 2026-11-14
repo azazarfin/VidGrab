@@ -353,6 +353,13 @@ def run_download(
     logger.info(f"Starting download for task {task_id} with format {format_id} to {outtmpl}")
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        if is_playlist or playlist_items:
+            from backend.services.playlists import extract_playlist
+            # Raw extraction neither downloads media nor runs playlist postprocessors.
+            return extract_playlist(ydl, url, playlist_items, is_cancelled_cb or (lambda: False))
+        if workspace is not None and hasattr(ydl, "process_ie_result"):
+            from backend.services.playlists import enforce_single_item
+            enforce_single_item(ydl)
         if resume_attempt is not None:
             from backend.services.resume import install_http_resume
             from types import SimpleNamespace

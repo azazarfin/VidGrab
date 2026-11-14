@@ -28,12 +28,16 @@ def validate_worker_message(message):
         if not isinstance(status, str) or status not in ACTIVE:
             raise ValueError("Invalid worker progress state")
     elif kind == "result":
-        result_artifacts(data)
+        if isinstance(data, dict) and "playlist" in data:
+            from backend.services.playlists import validate_playlist_result
+            validate_playlist_result(data)
+        else:
+            result_artifacts(data)
     elif kind == "error":
         error = message.get("message")
         if not isinstance(error, str) or len(error) > 4096:
             raise ValueError("Invalid worker error message")
-        if "code" in message and message["code"] not in ("AUTH_REQUIRED", "OWNERSHIP_REJECTED"):
+        if "code" in message and message["code"] not in ("AUTH_REQUIRED", "OWNERSHIP_REJECTED", "PLAYLIST_REJECTED"):
             raise ValueError("Invalid typed worker error")
     else:
         raise ValueError("Invalid worker response")

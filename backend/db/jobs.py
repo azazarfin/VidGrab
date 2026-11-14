@@ -9,6 +9,7 @@ from uuid import uuid4
 from backend.runtime import RuntimeConfig
 from backend.engine.execution import join_owned_task
 from backend.db.ownership import require_owner, require_recoverable, recovery_attempts, transaction
+from backend.db.playlists import PlaylistStore, sync_parent, sync_parents
 from backend import cookie_manager
 from backend.services.job_state import ACTIVE, FINISH_FROM, TERMINAL
 from backend.services.publication import cleanup_publication, reconcile_publication
@@ -44,6 +45,9 @@ class AttemptStore:
 
     def transaction(self):
         return transaction(self.runtime)
+
+    async def expand(self, job_id, attempt_id, result, now):
+        return await PlaylistStore(self.runtime, self.owner).expand(job_id, attempt_id, result, now)
 
     async def _cleanup_cookies(self, db, attempt, ownership):
         cleanup = asyncio.create_task(asyncio.to_thread(cookie_manager.cleanup_cookie_file, self.runtime, attempt, ownership))
@@ -121,6 +125,10 @@ class AttemptStore:
                           completed_at=now if status in TERMINAL else None)
             assignments = ", ".join(f"{key}=?" for key in fields)
             await db.execute(f"UPDATE downloads SET {assignments} WHERE id=?", (*fields.values(), job_id))
+            async with db.execute("SELECT parent_id FROM downloads WHERE id=?", (job_id,)) as cursor:
+                parent_id = (await cursor.fetchone())[0]
+            if parent_id is not None:
+                await sync_parent(db, parent_id, now)
         if status == "complete" and attempt_id is not None:
             await self._cleanup_completed(Attempt(attempt_id, job_id, owned["number"], Path(owned["workspace"])))
         return True
@@ -180,6 +188,7 @@ class AttemptStore:
                 error_message='Fresh browser authentication is required'
                 WHERE status='queued' AND auth_required=1 RETURNING id""")
             recovered_ids.extend(row["id"] for row in await cursor.fetchall())
+            recovered_ids.extend(await sync_parents(db, now))
             if not recovered_ids:
                 return []
             placeholders = ", ".join("?" for _ in recovered_ids)

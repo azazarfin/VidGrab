@@ -101,6 +101,9 @@ class ProcessDownloadExecutor:
                         if message.get("code") == "OWNERSHIP_REJECTED":
                             from backend.runtime import OutputPathError
                             raise OutputPathError(message["message"])
+                        if message.get("code") == "PLAYLIST_REJECTED":
+                            from backend.services.playlists import PlaylistError
+                            raise PlaylistError(message["message"])
                         raise RuntimeError(message["message"] or "Worker failed")
                     else:
                         raise ValueError("Invalid worker response")

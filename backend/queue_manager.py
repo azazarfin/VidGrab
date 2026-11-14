@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import subprocess
+import sqlite3
 from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Dict, Any, List, Optional
@@ -19,6 +20,9 @@ from backend.cookie_manager import create_cookie_file
 from backend.sanitizer import sanitize_text
 from backend.engine.execution import ProcessDownloadExecutor, ThreadDownloadExecutor, join_owned_task
 from backend.db.jobs import AttemptStore
+from backend.db.enqueue import EnqueueStore
+from backend.db.playlists import PlaylistStore, sync_parent
+from backend.services.playlists import PlaylistError, parse_selection, validate_playlist_result
 from backend.services.artifacts import completed_artifacts, prepare_workspace
 from backend.services.publication import reconcile_publication
 from backend.services.job_state import RUNNABLE, TERMINAL, accepts_progress
@@ -72,6 +76,9 @@ class DownloadTask(BaseModel):
     attempt_count: int = 0
     current_attempt_id: Optional[str] = None
     auth_required: int = 0
+    job_kind: str = "media"
+    parent_id: Optional[str] = None
+    playlist_index: Optional[int] = None
 
 # WebSocket Connection Manager
 class ConnectionManager:
@@ -112,6 +119,7 @@ class QueueManager:
         self.open_folder = open_folder
         self.active_tasks: Dict[str, asyncio.Task] = {}
         self.attempts = AttemptStore(runtime, owner)
+        self.enqueues = EnqueueStore(runtime, owner)
         self.active_attempts = {}
         self.cancelled_tasks: set = set()
         self.in_memory_progress: Dict[str, Dict[str, Any]] = {}
@@ -233,7 +241,8 @@ class QueueManager:
         extra_args: Optional[Dict[str, Any]] = None,
         duration: Optional[int] = None,
         download_dir: Optional[str] = None,
-        user_agent: Optional[str] = None
+        user_agent: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> str:
         config = await self.settings.get_all()
         try:
@@ -249,9 +258,6 @@ class QueueManager:
         title = sanitize_text(title)
         created_at = datetime.fromtimestamp(self.clock(), timezone.utc).isoformat()
         status = "scheduled" if scheduled_at else "queued"
-
-        if cookies:
-            self.task_cookies[task_id] = cookies
 
         options = {
             "audio_only": audio_only,
@@ -270,18 +276,13 @@ class QueueManager:
             "user_agent": user_agent
         }
         options_json = json.dumps(options)
+        if is_playlist or playlist_items:
+            try:
+                parse_selection(playlist_items)
+            except PlaylistError as error:
+                raise HTTPException(400, str(error)) from error
 
-        async with aiosqlite.connect(self.runtime.db_path) as db:
-            await db.execute(
-                """
-                INSERT INTO downloads (id, url, title, thumbnail_url, status, progress, created_at, format_selected, download_options, scheduled_at, auth_required)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (task_id, url, title, thumbnail_url, status, 0.0, created_at, format_id, options_json, scheduled_at, int(bool(cookies)))
-            )
-            await db.commit()
-
-        self.in_memory_progress[task_id] = {
+        record = {
             "id": task_id,
             "url": url,
             "title": title,
@@ -294,17 +295,32 @@ class QueueManager:
             "format_selected": format_id,
             "created_at": created_at,
             "download_options": options_json,
-            "scheduled_at": scheduled_at
+            "scheduled_at": scheduled_at,
+            "auth_required": int(bool(cookies)),
+            "job_kind": "playlist" if is_playlist or playlist_items else "media",
         }
+        operation = asyncio.create_task(self._admit(record, cookies, idempotency_key))
+        return await join_owned_task(operation)
+
+    async def _admit(self, record, cookies, idempotency_key):
+        if self.stopping:
+            raise HTTPException(503, "Engine is stopping")
+        record, created = await self.enqueues.admit(record, idempotency_key)
+        task_id = record["id"]
+        if not created:
+            return task_id
+        if cookies:
+            self.task_cookies[task_id] = cookies
+        self.in_memory_progress[task_id] = record
 
         # Broadcast event
         await self.connections.broadcast({
-            "event": "task_scheduled" if scheduled_at else "task_queued",
+            "event": "task_scheduled" if record["scheduled_at"] else "task_queued",
             "data": self.in_memory_progress[task_id]
         })
 
         # Wake up worker if queued
-        if not scheduled_at:
+        if not record["scheduled_at"]:
             self.wakeup_event.set()
         return task_id
 
@@ -315,18 +331,22 @@ class QueueManager:
     async def _cancel(self, task_id: str):
         async with self.cancel_locks.setdefault(task_id, asyncio.Lock()):
             async with self._state_lock(task_id):
-                async with aiosqlite.connect(self.runtime.db_path) as db:
+                async with self.attempts.transaction() as db:
+                    await require_owner(db, self.owner)
                     cursor = await db.execute(
                         "UPDATE downloads SET status='cancelling' WHERE id=? AND status NOT IN ('complete', 'failed', 'cancelled')",
                         (task_id,),
                     )
                     if not cursor.rowcount:
-                        await db.commit()
                         return
                     async with db.execute("SELECT current_attempt_id FROM downloads WHERE id=?", (task_id,)) as cursor:
                         attempt_id = (await cursor.fetchone())[0]
-                    await db.commit()
+                    await db.execute("""UPDATE downloads SET status='cancelling' WHERE parent_id=?
+                        AND status NOT IN ('complete', 'failed', 'cancelled')""", (task_id,))
+                    async with db.execute("SELECT id FROM downloads WHERE parent_id=? AND status='cancelling'", (task_id,)) as cursor:
+                        children = [row[0] for row in await cursor.fetchall()]
                 self.cancelled_tasks.add(task_id)
+                self.cancelled_tasks.update(children)
                 if task_id in self.in_memory_progress:
                     self.in_memory_progress[task_id]["status"] = "cancelling"
             task = self.active_tasks.get(task_id)
@@ -337,11 +357,19 @@ class QueueManager:
                 except asyncio.CancelledError:
                     if not task.done():
                         raise
+            if children:
+                await asyncio.gather(*(self._cancel(child) for child in children))
             await self._finish(task_id, "cancelled", attempt_id=attempt_id)
+            await self._refresh_playlist(task_id)
             self.task_cookies.pop(task_id, None)
             self.cancelled_tasks.discard(task_id)
 
     async def retry(self, task_id, cookies=None, user_agent=None, *, expected_status=None):
+        operation = asyncio.create_task(self._retry(task_id, cookies, user_agent, expected_status=expected_status))
+        await join_owned_task(operation)
+
+    async def _retry(self, task_id, cookies=None, user_agent=None, *, expected_status=None):
+        messages = []
         async with self._state_lock(task_id):
             async with self.attempts.transaction() as db:
                 await require_owner(db, self.owner)
@@ -359,23 +387,97 @@ class QueueManager:
                     except ValueError as error:
                         raise HTTPException(status_code=400, detail=str(error)) from error
                 options = json.loads(row["download_options"] or "{}")
-                if user_agent:
-                    options["user_agent"] = user_agent
-                options_json = json.dumps(options)
-                await db.execute("""UPDATE downloads SET status='queued', error_message=NULL,
-                    progress=0, speed=0, eta=NULL, completed_at=NULL, download_options=?,
-                    auth_required=? WHERE id=?""", (options_json, int(bool(cookies) or row["auth_required"]), task_id))
-            if cookies:
+                async with db.execute("SELECT * FROM downloads WHERE parent_id=? ORDER BY playlist_index", (task_id,)) as cursor:
+                    children = [dict(child) for child in await cursor.fetchall()]
+                if children:
+                    selected, current = await self._retry_children(db, dict(row), children, cookies, user_agent)
+                else:
+                    if user_agent:
+                        options["user_agent"] = user_agent
+                    options_json = json.dumps(options)
+                    await db.execute("""UPDATE downloads SET status='queued', error_message=NULL,
+                        progress=0, speed=0, eta=NULL, completed_at=NULL, download_options=?,
+                        auth_required=? WHERE id=?""", (options_json, int(bool(cookies) or row["auth_required"]), task_id))
+                    if row["parent_id"] is not None:
+                        await sync_parent(db, row["parent_id"], self._now())
+                    current = dict(row)
+                    current.update(status="queued", error_message=None, progress=0.0, speed=0.0,
+                                   eta=None, completed_at=None, download_options=options_json,
+                                   auth_required=int(bool(cookies) or row["auth_required"]))
+            if children:
+                for child, scoped in selected:
+                    if scoped:
+                        self.task_cookies[child["id"]] = cookies
+                    else:
+                        self.task_cookies.pop(child["id"], None)
+                    self.cancelled_tasks.discard(child["id"])
+                    self.in_memory_progress[child["id"]] = child
+                    messages.append({"event": "task_" + child["status"], "data": child})
+            elif cookies:
                 self.task_cookies[task_id] = cookies
             else:
                 self.task_cookies.pop(task_id, None)
             self.cancelled_tasks.discard(task_id)
-            current = dict(row)
-            current.update(status="queued", error_message=None, progress=0.0, speed=0.0,
-                           eta=None, completed_at=None, download_options=options_json)
             self.in_memory_progress[task_id] = current
         self.wakeup_event.set()
-        await self.connections.broadcast({"event": "task_queued", "data": current})
+        for message in messages:
+            await self.connections.broadcast(message)
+        await self.connections.broadcast({"event": "task_" + current["status"], "data": current})
+        await self._refresh_playlist(task_id)
+
+    async def _retry_children(self, db, parent, children, cookies, user_agent):
+        if any(child["status"] not in TERMINAL and child["status"] != "waiting_for_auth" for child in children):
+            raise HTTPException(400, "Playlist children are still active")
+        selected = []
+        for child in children:
+            if child["status"] == "complete":
+                continue
+            scoped = False
+            if cookies:
+                try:
+                    validate_fresh_cookies(child["url"], cookies, self.clock())
+                    scoped = True
+                except ValueError:
+                    pass
+            status = "waiting_for_auth" if child["auth_required"] and not scoped else "queued"
+            options = json.loads(child["download_options"] or "{}")
+            if user_agent:
+                options["user_agent"] = user_agent
+            child.update(status=status, progress=0.0, speed=0.0, eta=None, completed_at=None,
+                         error_message="Fresh browser authentication is required" if status == "waiting_for_auth" else None,
+                         download_options=json.dumps(options), auth_required=int(scoped or child["auth_required"]))
+            await db.execute("""UPDATE downloads SET status=?, progress=0, speed=0, eta=NULL, completed_at=NULL,
+                error_message=?, download_options=?, auth_required=? WHERE id=?""",
+                (status, child["error_message"], child["download_options"], child["auth_required"], child["id"]))
+            selected.append((child, scoped))
+        await sync_parent(db, parent["id"], self._now())
+        async with db.execute("SELECT * FROM downloads WHERE id=?", (parent["id"],)) as cursor:
+            current = dict(await cursor.fetchone())
+        return selected, current
+
+    async def _refresh_playlist(self, task_id):
+        async with aiosqlite.connect(self.runtime.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT id, parent_id, job_kind FROM downloads WHERE id=?", (task_id,)) as cursor:
+                job = await cursor.fetchone()
+            if job is None:
+                return
+            parent_id = job["parent_id"] or (job["id"] if job["job_kind"] == "playlist" else None)
+            if parent_id is None:
+                return
+            async with db.execute("SELECT * FROM downloads WHERE id=?", (parent_id,)) as cursor:
+                parent = dict(await cursor.fetchone())
+        self.in_memory_progress[parent_id] = parent
+        await self.connections.broadcast({"event": "task_" + parent["status"], "data": parent})
+
+    async def delete_history(self, task_id=None):
+        async def remove():
+            removed = await PlaylistStore(self.runtime, self.owner).delete_history(task_id)
+            for job_id in removed:
+                self.in_memory_progress.pop(job_id, None)
+                self.task_cookies.pop(job_id, None)
+            return removed
+        return await join_owned_task(asyncio.create_task(remove()))
 
     async def _finish(self, task_id, status, *, attempt_id=None, artifacts=(), outcome=None, **fields):
         now = self._now()
@@ -393,6 +495,8 @@ class QueueManager:
                 message = {"event": f"task_{status}", "data": dict(self.in_memory_progress[task_id])}
         if message:
             await self.connections.broadcast(message)
+        if changed:
+            await self._refresh_playlist(task_id)
         return bool(changed)
 
     def handle_progress(self, task_id: str, payload: Dict[str, Any], *, attempt_id=None):
@@ -528,10 +632,12 @@ class QueueManager:
         workspace_ready = False
         cookie_error = None
         previous_retry_count = retry_count
+        expansion = None
+        cookies = None
         try:
             # A cancellation may finish while the claim's broadcast is awaiting.
             async with aiosqlite.connect(self.runtime.db_path) as db:
-                async with db.execute("SELECT status, current_attempt_id FROM downloads WHERE id=?", (task_id,)) as cursor:
+                async with db.execute("SELECT status, current_attempt_id, job_kind FROM downloads WHERE id=?", (task_id,)) as cursor:
                     row = await cursor.fetchone()
             if row is None or row[0] not in RUNNABLE or row[1] != attempt.id or self.is_cancelled(task_id):
                 return
@@ -556,7 +662,7 @@ class QueueManager:
                 download_subtitles=options.get("download_subtitles", False), subtitle_langs=options.get("subtitle_langs"),
                 subtitle_format=options.get("subtitle_format", "srt"), embed_subtitles=options.get("embed_subtitles", False),
                 embed_thumbnail=options.get("embed_thumbnail", False), playlist_items=options.get("playlist_items"),
-                is_playlist=options.get("is_playlist", False), sponsorblock_enabled=config.get("sponsorblock_enabled", False),
+                is_playlist=row[2] == "playlist", sponsorblock_enabled=config.get("sponsorblock_enabled", False),
                 sponsorblock_categories=config.get("sponsorblock_categories", []), sponsorblock_mode=config.get("sponsorblock_mode", "remove"),
                 postprocess_codec=config.get("postprocess_codec", "none"), postprocess_normalize_audio=config.get("postprocess_normalize_audio", False),
                 custom_args_str=config.get("custom_ytdlp_args", ""), download_threads=config.get("download_threads", 4),
@@ -565,8 +671,14 @@ class QueueManager:
             )
             if self.is_cancelled(task_id):
                 raise asyncio.CancelledError
-            filepath = result.get("filepath")
-            artifacts = completed_artifacts(self.runtime, result)
+            if row[2] == "playlist":
+                expansion = validate_playlist_result(result)
+                filepath = None
+            else:
+                if "playlist" in result:
+                    raise PlaylistError("A media child cannot expand another playlist")
+                filepath = result.get("filepath")
+                artifacts = completed_artifacts(self.runtime, result)
             status = "complete"
             outcome = "complete"
             fields = {"file_path": filepath, "progress": 100.0, "error_message": None}
@@ -592,7 +704,7 @@ class QueueManager:
             elif self.stopping:
                 status = "queued"
                 outcome = "interrupted"
-            elif isinstance(error, OutputPathError) or retry_count >= config.get("max_retries", 3):
+            elif isinstance(error, (OutputPathError, PlaylistError)) or retry_count >= config.get("max_retries", 3):
                 status = "failed"
                 logger.error("Task %s failed: %s", task_id, error_message)
             else:
@@ -654,11 +766,38 @@ class QueueManager:
                         status = outcome = "failed"
                         artifacts = []
                         fields = {"error_message": sanitize_text(str(error)), "retry_count": previous_retry_count}
+        if expansion is not None and status == "complete":
+            operation = asyncio.create_task(self._expand_playlist(task_id, attempt.id, expansion, cookies))
+            await join_owned_task(operation)
+            return
         transition = asyncio.create_task(self._finish(task_id, status, attempt_id=attempt.id,
                                                      artifacts=artifacts, outcome=outcome, **fields))
         changed = await join_owned_task(transition)
         if changed and status == "queued" and not self.stopping:
             self.wakeup_event.set()
+
+    async def _expand_playlist(self, task_id, attempt_id, result, cookies):
+        try:
+            children = await self.attempts.expand(task_id, attempt_id, result, self._now())
+        except (ValueError, OSError, sqlite3.DatabaseError):
+            await self._finish(task_id, "failed", attempt_id=attempt_id,
+                               error_message="Playlist expansion could not be committed")
+            return
+        if children is None:
+            return
+        self.active_attempts.pop(task_id, None)
+        for child in children:
+            self.in_memory_progress[child["id"]] = child
+            if cookies:
+                try:
+                    validate_fresh_cookies(child["url"], cookies, self.clock())
+                    self.task_cookies[child["id"]] = cookies
+                except ValueError:
+                    pass
+        self.wakeup_event.set()
+        await self._refresh_playlist(task_id)
+        for child in children:
+            await self.connections.broadcast({"event": "task_queued", "data": child})
 
 
 def open_folder(parent_dir: str):
@@ -697,7 +836,8 @@ def create_download_router(queue_manager: QueueManager) -> APIRouter:
             extra_args=req.extra_args,
             duration=req.duration,
             download_dir=req.download_dir,
-            user_agent=user_agent
+            user_agent=user_agent,
+            idempotency_key=request.headers.get("idempotency-key"),
         )
         return {"task_id": task_id}
 
@@ -715,45 +855,13 @@ def create_download_router(queue_manager: QueueManager) -> APIRouter:
 
     @router.delete("/history", response_model=Dict[str, str], tags=["history"])
     async def clear_all_history():
-        async with aiosqlite.connect(queue_manager.runtime.db_path) as db:
-            await db.execute("PRAGMA foreign_keys=ON")
-            # Delete only completed, failed, or cancelled tasks from DB
-            cursor = await db.execute(
-                """DELETE FROM downloads WHERE status IN (?, ?, ?) AND NOT EXISTS (
-                    SELECT 1 FROM download_attempts a JOIN attempt_cookie_files c ON c.attempt_id=a.id
-                    WHERE a.download_id=downloads.id) RETURNING id""",
-                ("complete", "failed", "cancelled")
-            )
-            removed = [row[0] for row in await cursor.fetchall()]
-            await db.commit()
-
-        # Remove from in-memory tracking if present
-        for tid in removed:
-            queue_manager.in_memory_progress.pop(tid, None)
+        await queue_manager.delete_history()
 
         return {"message": "Removable download history cleared"}
 
     @router.delete("/history/{task_id}", response_model=Dict[str, str], tags=["history"])
     async def delete_history_item(task_id: str):
-        async with aiosqlite.connect(queue_manager.runtime.db_path) as db:
-            await db.execute("PRAGMA foreign_keys=ON")
-            async with db.execute("SELECT status FROM downloads WHERE id = ?", (task_id,)) as cursor:
-                row = await cursor.fetchone()
-                if not row:
-                    raise HTTPException(status_code=404, detail="History item not found")
-                if row[0] not in ("complete", "failed", "cancelled"):
-                    raise HTTPException(status_code=400, detail="Cannot delete an active download from history")
-
-                async with db.execute("""SELECT 1 FROM download_attempts a JOIN attempt_cookie_files c ON c.attempt_id=a.id
-                    WHERE a.download_id=? LIMIT 1""", (task_id,)) as cursor:
-                    if await cursor.fetchone():
-                        raise HTTPException(status_code=409, detail="Cookie ownership is retained; resolve recovery before deleting this history")
-
-                await db.execute("DELETE FROM downloads WHERE id = ?", (task_id,))
-                await db.commit()
-
-        # Remove from in-memory tracking
-        queue_manager.in_memory_progress.pop(task_id, None)
+        await queue_manager.delete_history(task_id)
         return {"message": f"History item {task_id} deleted"}
 
     @router.delete("/{task_id}")

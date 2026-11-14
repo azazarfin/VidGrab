@@ -16,6 +16,8 @@ from unittest.mock import patch
 import aiosqlite
 import httpx
 
+from backend.db.migrations import SCHEMA_VERSION
+
 from tests.support import OfflineTestCase
 
 NOW = "2026-11-14T00:00:00+00:00"
@@ -503,7 +505,7 @@ class CookieRecoveryTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
             db.execute("INSERT INTO downloads (id, url, status, created_at) VALUES ('history', 'fixture', 'complete', ?)", (NOW,))
         await init_db(selected)
         with closing(sqlite3.connect(selected.db_path)) as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 6,
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION,
                              "Cookie ownership needs an explicit transactional schema migration")
             self.assertEqual(db.execute("SELECT COUNT(*) FROM attempt_cookie_files").fetchone()[0], 0)
             self.assertEqual(db.execute("SELECT status, attempt_count FROM downloads").fetchall(), [("complete", 0)])

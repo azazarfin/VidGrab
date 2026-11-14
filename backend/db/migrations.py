@@ -16,7 +16,7 @@ import aiosqlite
 
 from backend.runtime import RuntimeCompatibilityError, RuntimeConfig
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 BASE_COLUMNS = {
     "id", "url", "title", "thumbnail_url", "status", "progress", "speed", "eta",
     "file_size", "file_path", "format_selected", "error_message", "created_at", "completed_at",
@@ -29,6 +29,13 @@ ATTEMPT_COLUMNS = {
     "current_attempt_id": "TEXT",
 }
 AUTH_COLUMNS = {"auth_required": "INTEGER NOT NULL DEFAULT 0 CHECK (auth_required IN (0, 1))"}
+PLAYLIST_COLUMNS = {
+    "job_kind": "TEXT NOT NULL DEFAULT 'media' CHECK (job_kind IN ('media', 'playlist'))",
+    "parent_id": "TEXT REFERENCES downloads(id) ON DELETE RESTRICT",
+    "playlist_index": "INTEGER CHECK ((parent_id IS NULL AND playlist_index IS NULL) OR "
+                      "(parent_id IS NOT NULL AND playlist_index IS NOT NULL AND typeof(playlist_index)='integer' "
+                      "AND playlist_index BETWEEN 1 AND 4096 AND job_kind='media'))",
+}
 OWNERSHIP_COLUMNS = {
     "owner_id": "TEXT REFERENCES runtime_owners(id)",
     "lease_expires_at": "REAL",
@@ -41,6 +48,7 @@ RELATED_COLUMNS = {
     "runtime_owners": {"id", "identity", "acquired_at", "heartbeat_at", "lease_expires_at", "released_at"},
     "attempt_cookie_files": {"attempt_id", "ownership", "ready"},
     "attempt_partials": {"attempt_id", "source_key", "record"},
+    "enqueue_receipts": {"key_hash", "request_hash", "job_id", "created_at"},
 }
 
 
@@ -141,13 +149,47 @@ async def _migration_six(db):
     )""")
 
 
+async def _migration_seven(db):
+    async with db.execute("PRAGMA table_info(downloads)") as cursor:
+        existing = {row[1] for row in await cursor.fetchall()}
+    for column, definition in PLAYLIST_COLUMNS.items():
+        if column not in existing:
+            await db.execute(f"ALTER TABLE downloads ADD COLUMN {column} {definition}")
+    await db.execute("""CREATE TABLE IF NOT EXISTS enqueue_receipts (
+        key_hash TEXT PRIMARY KEY NOT NULL CHECK (length(key_hash)=64),
+        request_hash TEXT NOT NULL CHECK (length(request_hash)=64),
+        job_id TEXT NOT NULL, created_at TEXT NOT NULL
+    )""")
+    await db.execute("CREATE UNIQUE INDEX IF NOT EXISTS playlist_positions ON downloads(parent_id, playlist_index) WHERE parent_id IS NOT NULL")
+    await db.execute("""CREATE TRIGGER IF NOT EXISTS playlist_parent_insert BEFORE INSERT ON downloads
+        WHEN NEW.parent_id IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM downloads WHERE id=NEW.parent_id AND job_kind='playlist' AND parent_id IS NULL)
+        BEGIN SELECT RAISE(ABORT, 'Invalid playlist parent'); END""")
+    await db.execute("""CREATE TRIGGER IF NOT EXISTS playlist_parent_update BEFORE UPDATE OF parent_id, job_kind ON downloads
+        WHEN (NEW.parent_id IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM downloads WHERE id=NEW.parent_id AND job_kind='playlist' AND parent_id IS NULL))
+        OR (NEW.job_kind<>'playlist' AND EXISTS (SELECT 1 FROM downloads WHERE parent_id=NEW.id))
+        BEGIN SELECT RAISE(ABORT, 'Invalid playlist parent'); END""")
+    async with db.execute("SELECT id, download_options FROM downloads WHERE status NOT IN ('complete', 'failed', 'cancelled') AND parent_id IS NULL") as cursor:
+        rows = await cursor.fetchall()
+    for job_id, raw in rows:
+        try:
+            options = json.loads(raw or "{}")
+            if not isinstance(options, dict):
+                raise ValueError("expected an object")
+        except (ValueError, TypeError) as error:
+            raise RuntimeCompatibilityError(f"Invalid download_options for job {job_id}") from error
+        if options.get("is_playlist") or options.get("playlist_items"):
+            await db.execute("UPDATE downloads SET job_kind='playlist' WHERE id=?", (job_id,))
+
+
 async def _validate_schema(db):
     async with db.execute("PRAGMA quick_check") as cursor:
         if await cursor.fetchall() != [("ok",)]:
             raise RuntimeCompatibilityError("Database integrity check failed")
     async with db.execute("PRAGMA table_info(downloads)") as cursor:
         columns = {row[1] for row in await cursor.fetchall()}
-    missing = (BASE_COLUMNS | EXTRA_COLUMNS.keys() | ATTEMPT_COLUMNS.keys() | AUTH_COLUMNS.keys()) - columns
+    missing = (BASE_COLUMNS | EXTRA_COLUMNS.keys() | ATTEMPT_COLUMNS.keys() | AUTH_COLUMNS.keys() | PLAYLIST_COLUMNS.keys()) - columns
     if missing:
         raise RuntimeCompatibilityError(f"Database is missing download columns: {', '.join(sorted(missing))}")
     async with db.execute("PRAGMA table_info(config)") as cursor:
@@ -162,6 +204,22 @@ async def _validate_schema(db):
     async with db.execute("PRAGMA foreign_key_check") as cursor:
         if await cursor.fetchone():
             raise RuntimeCompatibilityError("Database contains orphan attempt/artifact records")
+    async with db.execute("PRAGMA index_list(downloads)") as cursor:
+        indexes = await cursor.fetchall()
+    if not any(row[1] == "playlist_positions" and row[2] == 1 and row[4] == 1 for row in indexes):
+        raise RuntimeCompatibilityError("Database is missing its unique playlist position index")
+    async with db.execute("PRAGMA index_info(playlist_positions)") as cursor:
+        if [row[2] for row in await cursor.fetchall()] != ["parent_id", "playlist_index"]:
+            raise RuntimeCompatibilityError("Database has an invalid playlist position index")
+    async with db.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name IN ('playlist_parent_insert','playlist_parent_update')") as cursor:
+        if len(await cursor.fetchall()) != 2:
+            raise RuntimeCompatibilityError("Database is missing its playlist parent guards")
+    async with db.execute("""SELECT 1 FROM downloads c LEFT JOIN downloads p ON p.id=c.parent_id WHERE
+        (c.parent_id IS NULL AND c.playlist_index IS NOT NULL) OR
+        (c.parent_id IS NOT NULL AND (c.job_kind<>'media' OR c.playlist_index IS NULL OR
+         c.playlist_index NOT BETWEEN 1 AND 4096 OR p.job_kind<>'playlist' OR p.parent_id IS NOT NULL)) LIMIT 1""") as cursor:
+        if await cursor.fetchone():
+            raise RuntimeCompatibilityError("Database contains inconsistent playlist children")
     async with db.execute("PRAGMA index_list(download_attempts)") as cursor:
         indexes = await cursor.fetchall()
     if not any(row[1] == "one_running_attempt" and row[2] == 1 and row[4] == 1 for row in indexes):
@@ -215,7 +273,7 @@ async def migrate_database(runtime: RuntimeConfig, defaults: dict, validate_sett
                 version = (await cursor.fetchone())[0]
             _check_version(version)
             for target, migration in ((1, _migration_one), (2, _migration_two), (3, _migration_three),
-                                      (4, _migration_four), (5, _migration_five), (6, _migration_six)):
+                                      (4, _migration_four), (5, _migration_five), (6, _migration_six), (7, _migration_seven)):
                 if version < target:
                     await migration(db)
                     await db.execute(f"PRAGMA user_version = {target}")

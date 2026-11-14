@@ -49,8 +49,11 @@ def main():
             reply["message"] = "Fresh browser authentication is required"
         else:
             from backend.runtime import OutputPathError, RuntimeOwnershipError
+            from backend.services.playlists import PlaylistError
             if isinstance(error, (OutputPathError, RuntimeOwnershipError)):
                 reply["code"] = "OWNERSHIP_REJECTED"
+            elif isinstance(error, PlaylistError):
+                reply["code"] = "PLAYLIST_REJECTED"
         send_message(reply)
 
 

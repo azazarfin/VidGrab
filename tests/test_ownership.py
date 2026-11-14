@@ -15,6 +15,8 @@ from uuid import uuid4
 import aiosqlite
 
 from backend.config import init_db
+from backend.db.migrations import SCHEMA_VERSION
+
 from tests.support import OfflineTestCase
 from tests.test_migrations import legacy_database
 
@@ -468,7 +470,7 @@ class OwnershipMigrationTests(OfflineTestCase):
         self.schema_three(runtime, running=True)
         asyncio.run(init_db(runtime))
         with closing(sqlite3.connect(runtime.db_path)) as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 6)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
             self.assertEqual(db.execute("SELECT status, owner_id, lease_expires_at, worker_identity FROM download_attempts").fetchall(),
                              [("running", None, None, None)])
             self.assertEqual(db.execute("SELECT COUNT(*) FROM runtime_owners").fetchone()[0], 0)
