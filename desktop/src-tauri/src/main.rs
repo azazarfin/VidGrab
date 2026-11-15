@@ -38,6 +38,26 @@ fn command(config: &Config, operation: &str, params: serde_json::Map<String, Val
 }
 
 #[tauri::command]
+async fn protocol_request(state: State<'_, DesktopState>, request: Value) -> Result<Value, String> {
+    use vidgrab_supervisor::contract;
+    let config = state.config.clone();
+    let request_id = contract::request_id(&request).map(str::to_owned);
+    let failed_id = request_id.clone();
+    let mutation = contract::is_mutation(&request);
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let outer = protocol::Request { spike_version: 1, id: request_id.clone().unwrap_or_else(|| "invalid".into()),
+            op: "v1.request".into(), params: request.as_object().cloned().unwrap_or_default() };
+        if let Err(code) = outer.validate(false) { return contract::failure(request_id.as_deref(), code); }
+        match transport::call(&config, &outer) {
+            Ok(response) if response["ok"] == true && response["id"] == outer.id => response["data"].clone(),
+            Ok(response) => contract::failure(request_id.as_deref(), response["error"]["code"].as_str().unwrap_or("BAD_RESPONSE")),
+            Err(_) => contract::failure(request_id.as_deref(), if mutation { "REQUEST_OUTCOME_UNKNOWN" } else { "ENGINE_UNAVAILABLE" }),
+        }
+    }).await;
+    Ok(result.unwrap_or_else(|_| contract::failure(failed_id.as_deref(), if mutation { "REQUEST_OUTCOME_UNKNOWN" } else { "ENGINE_UNAVAILABLE" })))
+}
+
+#[tauri::command]
 async fn companion_status(state: State<'_, DesktopState>) -> Result<Value, String> {
     let config = state.config.clone();
     let tray = state.tray_available;
@@ -247,7 +267,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let maintenance = Arc::new(AtomicBool::new(false));
     let owner_maintenance = maintenance.clone();
     let application = tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![companion_status, set_browser_connection, install_appimage, remove_application, open_software_manager, download_fixture, quit_companion])
+        .invoke_handler(tauri::generate_handler![protocol_request, companion_status, set_browser_connection, install_appimage, remove_application, open_software_manager, download_fixture, quit_companion])
         .setup(move |app| {
             let mut tray_available = false;
             if tray_host_available() {

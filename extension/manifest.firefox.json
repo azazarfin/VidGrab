@@ -24,7 +24,7 @@
     "<all_urls>"
   ],
   "background": {
-    "scripts": ["lib/api.js", "lib/utils.js", "lib/native.js", "background/service-worker.js"]
+    "scripts": ["lib/protocol.js", "lib/api.js", "lib/utils.js", "lib/native.js", "background/service-worker.js"]
   },
   "content_scripts": [
     {

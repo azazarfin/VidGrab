@@ -30,10 +30,11 @@ def create_app(
 ) -> FastAPI:
     runtime = RuntimeConfig.from_env() if runtime is None else runtime
     runtime.validate()
-    settings = SettingsStore(runtime)
-    connections = ConnectionManager()
     owner = RuntimeOwner(runtime, clock)
+    settings = SettingsStore(runtime, owner)
+    connections = ConnectionManager()
     queue = QueueManager(runtime, settings, connections, download_runner, clock, open_folder, download_executor, owner=owner)
+    settings.on_change = queue.wakeup_event.set
     probes = ProbeService(runtime, runner=probe_runner, clock=clock, owner=owner)
 
     @asynccontextmanager

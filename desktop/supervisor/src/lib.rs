@@ -3,6 +3,7 @@
 compile_error!("The P02 native lifecycle spike supports Linux and Windows");
 
 mod engine;
+pub mod contract;
 #[cfg(target_os = "linux")]
 mod linux_process;
 #[cfg(windows)]
@@ -136,6 +137,8 @@ impl Owner {
                             protocol::success(&request, self.engine.snapshot())
                         } else if request.op == "status" && self.engine.state != "ready" {
                             protocol::success(&request, self.engine.snapshot())
+                        } else if request.op == "v1.request" && self.engine.state == "ready" && !self.engine.supports_protocol(1) {
+                            protocol::failure(Some(&request.id), "APP_INCOMPATIBLE")
                         } else {
                             match self.engine.request(&request.op, &request.params) {
                                 Ok(data) => protocol::success(&request, data),

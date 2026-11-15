@@ -18,7 +18,7 @@ import httpx
 
 from backend.db.migrations import SCHEMA_VERSION
 
-from tests.support import OfflineTestCase
+from tests.support import OfflineTestCase, drop_protocol_schema
 
 NOW = "2026-11-14T00:00:00+00:00"
 LATER = "2026-11-14T00:01:00+00:00"
@@ -498,6 +498,7 @@ class CookieRecoveryTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
         selected = self.runtime("old-cookie-schema")
         await init_db(selected)
         with closing(sqlite3.connect(selected.db_path)) as db, db:
+            drop_protocol_schema(db)
             db.execute("DROP TABLE IF EXISTS attempt_cookie_files")
             db.execute("DROP TABLE IF EXISTS attempt_partials")
             db.execute("ALTER TABLE downloads DROP COLUMN auth_required")
@@ -516,6 +517,7 @@ class CookieRecoveryTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
         selected = self.runtime("interrupted-cookie-schema")
         await init_db(selected)
         with closing(sqlite3.connect(selected.db_path)) as db, db:
+            drop_protocol_schema(db)
             db.execute("DROP TABLE IF EXISTS attempt_cookie_files")
             db.execute("DROP TABLE IF EXISTS attempt_partials")
             db.execute("ALTER TABLE downloads DROP COLUMN auth_required")

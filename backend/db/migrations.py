@@ -16,7 +16,7 @@ import aiosqlite
 
 from backend.runtime import RuntimeCompatibilityError, RuntimeConfig
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 BASE_COLUMNS = {
     "id", "url", "title", "thumbnail_url", "status", "progress", "speed", "eta",
     "file_size", "file_path", "format_selected", "error_message", "created_at", "completed_at",
@@ -41,6 +41,7 @@ REQUEST_COLUMNS = {
     "error_code": "TEXT CHECK (error_code IS NULL OR length(error_code) <= 64)",
     "request_count": "INTEGER NOT NULL DEFAULT 0 CHECK (typeof(request_count)='integer' AND request_count >= 0)",
 }
+PROTOCOL_COLUMNS = {"revision": "INTEGER NOT NULL DEFAULT 1 CHECK (typeof(revision)='integer' AND revision BETWEEN 1 AND 9007199254740991)"}
 OWNERSHIP_COLUMNS = {
     "owner_id": "TEXT REFERENCES runtime_owners(id)",
     "lease_expires_at": "REAL",
@@ -57,6 +58,9 @@ RELATED_COLUMNS = {
     "request_hosts": {"host_key", "retry_at"},
     "request_probes": {"id", "owner_id", "identity", "host_key", "request_count", "started_at"},
     "request_leases": {"id", "owner_id", "attempt_id", "probe_id", "identity", "host_key", "created_at"},
+    "protocol_state": {"id", "settings_revision"},
+    "protocol_events": {"sequence", "topic", "entity_id", "revision", "kind"},
+    "settings_receipts": {"key_hash", "request_hash", "snapshot"},
 }
 
 
@@ -216,13 +220,43 @@ async def _migration_eight(db):
     await db.execute("CREATE INDEX IF NOT EXISTS request_host_leases ON request_leases(host_key)")
 
 
+async def _migration_nine(db):
+    from backend.api.models import MAX_EVENT_HISTORY
+    await db.execute("ALTER TABLE downloads ADD COLUMN revision " + PROTOCOL_COLUMNS["revision"])
+    await db.execute("""CREATE TABLE protocol_state (
+        id INTEGER PRIMARY KEY CHECK (id=1), settings_revision INTEGER NOT NULL DEFAULT 0
+        CHECK (typeof(settings_revision)='integer' AND settings_revision BETWEEN 0 AND 9007199254740991))""")
+    await db.execute("INSERT INTO protocol_state(id) VALUES (1)")
+    await db.execute("""CREATE TABLE protocol_events (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT CHECK (sequence BETWEEN 1 AND 9007199254740991),
+        topic TEXT NOT NULL CHECK (topic IN ('downloads','settings')), entity_id TEXT,
+        revision INTEGER NOT NULL CHECK (typeof(revision)='integer' AND revision BETWEEN 0 AND 9007199254740991),
+        kind TEXT NOT NULL CHECK (kind IN ('changed','deleted')))""")
+    await db.execute("""CREATE TABLE settings_receipts (
+        key_hash TEXT PRIMARY KEY NOT NULL, request_hash TEXT NOT NULL,
+        snapshot TEXT NOT NULL CHECK (length(CAST(snapshot AS BLOB))<=65536))""")
+    await db.execute(f"""CREATE TRIGGER protocol_event_retention AFTER INSERT ON protocol_events BEGIN
+        DELETE FROM protocol_events WHERE sequence<=NEW.sequence-{MAX_EVENT_HISTORY}; END""")
+    await db.execute("""CREATE TRIGGER protocol_download_insert AFTER INSERT ON downloads BEGIN
+        INSERT INTO protocol_events(topic,entity_id,revision,kind) VALUES ('downloads',NEW.id,NEW.revision,'changed'); END""")
+    changed_columns = sorted(BASE_COLUMNS | EXTRA_COLUMNS.keys() | ATTEMPT_COLUMNS.keys() | AUTH_COLUMNS.keys()
+                             | PLAYLIST_COLUMNS.keys() | REQUEST_COLUMNS.keys())
+    changed = " OR ".join(f"NEW.{name} IS NOT OLD.{name}" for name in changed_columns)
+    await db.execute(f"""CREATE TRIGGER protocol_download_update AFTER UPDATE OF {','.join(changed_columns)} ON downloads
+        WHEN {changed} BEGIN
+        UPDATE downloads SET revision=OLD.revision+1 WHERE id=NEW.id;
+        INSERT INTO protocol_events(topic,entity_id,revision,kind) VALUES ('downloads',NEW.id,OLD.revision+1,'changed'); END""")
+    await db.execute("""CREATE TRIGGER protocol_download_delete AFTER DELETE ON downloads BEGIN
+        INSERT INTO protocol_events(topic,entity_id,revision,kind) VALUES ('downloads',OLD.id,OLD.revision+1,'deleted'); END""")
+
+
 async def _validate_schema(db):
     async with db.execute("PRAGMA quick_check") as cursor:
         if await cursor.fetchall() != [("ok",)]:
             raise RuntimeCompatibilityError("Database integrity check failed")
     async with db.execute("PRAGMA table_info(downloads)") as cursor:
         columns = {row[1] for row in await cursor.fetchall()}
-    missing = (BASE_COLUMNS | EXTRA_COLUMNS.keys() | ATTEMPT_COLUMNS.keys() | AUTH_COLUMNS.keys() | PLAYLIST_COLUMNS.keys() | REQUEST_COLUMNS.keys()) - columns
+    missing = (BASE_COLUMNS | EXTRA_COLUMNS.keys() | ATTEMPT_COLUMNS.keys() | AUTH_COLUMNS.keys() | PLAYLIST_COLUMNS.keys() | REQUEST_COLUMNS.keys() | PROTOCOL_COLUMNS.keys()) - columns
     if missing:
         raise RuntimeCompatibilityError(f"Database is missing download columns: {', '.join(sorted(missing))}")
     async with db.execute("PRAGMA table_info(config)") as cursor:
@@ -234,6 +268,14 @@ async def _validate_schema(db):
             columns = {row[1] for row in await cursor.fetchall()}
         if not required.issubset(columns):
             raise RuntimeCompatibilityError(f"Database is missing {table} columns")
+    async with db.execute("SELECT id,settings_revision FROM protocol_state") as cursor:
+        state = await cursor.fetchall()
+        if len(state) != 1 or state[0][0] != 1 or not isinstance(state[0][1], int) or not 0 <= state[0][1] <= 2**53 - 1:
+            raise RuntimeCompatibilityError("Database has an invalid settings revision")
+    async with db.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name IN "
+                          "('protocol_event_retention','protocol_download_insert','protocol_download_update','protocol_download_delete')") as cursor:
+        if len(await cursor.fetchall()) != 4:
+            raise RuntimeCompatibilityError("Database is missing its protocol event guards")
     async with db.execute("PRAGMA foreign_key_check") as cursor:
         if await cursor.fetchone():
             raise RuntimeCompatibilityError("Database contains orphan attempt/artifact records")
@@ -315,7 +357,7 @@ async def migrate_database(runtime: RuntimeConfig, defaults: dict, validate_sett
                 version = (await cursor.fetchone())[0]
             _check_version(version)
             for target, migration in ((1, _migration_one), (2, _migration_two), (3, _migration_three),
-                                      (4, _migration_four), (5, _migration_five), (6, _migration_six), (7, _migration_seven), (8, _migration_eight)):
+                                      (4, _migration_four), (5, _migration_five), (6, _migration_six), (7, _migration_seven), (8, _migration_eight), (9, _migration_nine)):
                 if version < target:
                     await migration(db)
                     await db.execute(f"PRAGMA user_version = {target}")

@@ -6,7 +6,7 @@ import sqlite3
 from contextlib import closing
 
 from backend.config import init_db
-from tests.support import OfflineTestCase
+from tests.support import OfflineTestCase, drop_protocol_schema
 
 
 class PlaylistMigrationTests(OfflineTestCase):
@@ -14,6 +14,7 @@ class PlaylistMigrationTests(OfflineTestCase):
         runtime = self.runtime()
         asyncio.run(init_db(runtime))
         with closing(sqlite3.connect(runtime.db_path)) as db, db:
+            drop_protocol_schema(db)
             db.execute("DROP TABLE enqueue_receipts")
             db.execute("DROP INDEX playlist_positions")
             db.execute("DROP TRIGGER playlist_parent_insert")

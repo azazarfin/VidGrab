@@ -29,12 +29,13 @@ pub(crate) struct Engine {
     pub state: &'static str,
     next_restart: Option<Instant>,
     components: Value,
+    protocol_range: Option<(u16, u16)>,
 }
 
 impl Engine {
     pub fn new() -> Self {
         Self { process: None, token: String::new(), port: 0, generation: 0,
-            state: "starting", next_restart: Some(Instant::now()), components: Value::Null }
+            state: "starting", next_restart: Some(Instant::now()), components: Value::Null, protocol_range: None }
     }
 
     fn launch(&mut self, config: &Config) -> io::Result<()> {
@@ -66,6 +67,15 @@ impl Engine {
             return Err(io::Error::other("Invalid engine readiness message"));
         }
         transport::engine_request(ready.port, &self.token, "GET", "/health", None)?;
+        // Preserve legacy readiness framing. An old engine remains usable for
+        // lifecycle fixtures, but cannot receive versioned control mutations.
+        self.protocol_range = transport::engine_request(ready.port, &self.token, "POST", "/v1/requests",
+            Some(json!({"protocol_version":1,"request_id":"engine-negotiation","operation":"capabilities.get","params":{}})))
+            .ok().filter(|reply| reply["ok"] == true).and_then(|reply| {
+                let minimum = u16::try_from(reply["data"]["protocol_min"].as_u64()?).ok()?;
+                let maximum = u16::try_from(reply["data"]["protocol_max"].as_u64()?).ok()?;
+                (minimum > 0 && minimum <= maximum).then_some((minimum, maximum))
+            });
         self.port = ready.port;
         self.components = ready.components;
         self.process = Some(owned);
@@ -100,7 +110,12 @@ impl Engine {
     pub fn snapshot(&self) -> Value {
         json!({"state": self.state, "supervisor_pid": std::process::id(),
             "engine_pid": self.process.as_ref().map(|process| process.id()),
-            "engine_generation": self.generation, "components": self.components})
+            "engine_generation": self.generation, "components": self.components,
+            "protocol_min": self.protocol_range.map(|range| range.0), "protocol_max": self.protocol_range.map(|range| range.1)})
+    }
+
+    pub fn supports_protocol(&self, version: u16) -> bool {
+        self.protocol_range.is_some_and(|(minimum, maximum)| (minimum..=maximum).contains(&version))
     }
 
     pub fn request(&self, operation: &str, params: &serde_json::Map<String, Value>) -> io::Result<Value> {
@@ -114,6 +129,7 @@ impl Engine {
                 Ok(snapshot)
             }
             "fixture.download" => transport::engine_request(self.port, &self.token, "POST", "/spike/fixture", Some(Value::Object(params.clone()))),
+            "v1.request" => transport::engine_request(self.port, &self.token, "POST", "/v1/requests", Some(Value::Object(params.clone()))),
             _ => Err(io::Error::other("Unsupported engine operation")),
         }
     }

@@ -63,20 +63,43 @@ class NativeLifecycleChecks(unittest.TestCase):
         self.config_path.write_text(json.dumps(self.config))
         self.host = self.root / 'vidgrab-native-host'
         self.host.symlink_to(self.bundle / 'vidgrab-native-host')
+        self.firefox_manifest = self.root / 'firefox-native-manifest.json'
+        self.firefox_manifest.write_text(json.dumps({
+            'name': 'com.vidgrab.companion', 'path': str(self.host), 'type': 'stdio',
+            'allowed_extensions': [self.config['firefox_id']],
+        }))
         # Explicit --config is for this isolated executable test, not browser payloads.
         self.environment = {**os.environ, 'PATH': '', 'PYTHONPATH': '', 'PYTHONHOME': ''}
         self.addCleanup(self.stop_owner)
 
     def invoke(self, op='status', params=None, *, origin=None, raw=None):
         message = {'spike_version': 1, 'id': 'বাংলা-request', 'op': op, 'params': params or {}}
+        caller = origin or self.config['chrome_origin']
+        browser_arguments = [str(self.firefox_manifest), caller] if caller == self.config['firefox_id'] else [caller]
         result = subprocess.run(
-            [str(self.host), '--config', str(self.config_path), origin or self.config['chrome_origin']],
+            [str(self.host), '--config', str(self.config_path), *browser_arguments],
             input=frame(message) if raw is None else raw,
             capture_output=True, env=self.environment, timeout=20,
         )
         response = unframe(result.stdout)
         self.assertNotIn('Bearer ', result.stderr.decode(errors='replace'))
         return response
+
+    def invoke_control(self, operation, params=None, *, request_id='control', key=None, origin=None, version=1):
+        request = {'protocol_version': version, 'request_id': request_id, 'operation': operation, 'params': params or {}}
+        if key is not None:
+            request['idempotency_key'] = key
+        return self.invoke(origin=origin, raw=frame({
+            'spike_version': 1, 'id': request_id, 'op': 'v1.request', 'params': request,
+        }))
+
+    def control(self, operation, params=None, **options):
+        response = self.invoke_control(operation, params, **options)
+        self.assertTrue(response['ok'], response)
+        result = response['data']
+        self.assertEqual(result['protocol_version'], 1)
+        self.assertEqual(result['request_id'], options.get('request_id', 'control'))
+        return result
 
     def local(self, op):
         with socket.socket(socket.AF_UNIX) as connection:
@@ -315,6 +338,77 @@ class NativeLifecycleChecks(unittest.TestCase):
         self.assertTrue(reopened['ok'], reopened)
         self.assertEqual(next(job for job in reopened['data']['jobs'] if job['id'] == task_id)['status'], 'complete')
         self.assertEqual(hashlib.sha256(output.read_bytes()).hexdigest(), checksum)
+
+    def test_versioned_control_replays_settings_and_downloads_after_owner_restart(self):
+        from tests.native_support import fixture_server
+        ready = self.ready()
+        self.assertEqual((ready['data']['protocol_min'], ready['data']['protocol_max']), (1, 1))
+        self.assertIs(self.control('capabilities.get')['data']['fixture_only'], True)
+        chrome = self.control('settings.get', request_id='chrome-settings')['data']
+        firefox = self.control('settings.get', request_id='firefox-settings', origin=self.config['firefox_id'])['data']
+        self.assertEqual(chrome, firefox)
+        updates = [
+            ({'expected_revision': chrome['revision'], 'patch': {'max_concurrent': 4}}, 'chrome-update', None),
+            ({'expected_revision': firefox['revision'], 'patch': {'max_concurrent': 5}}, 'firefox-update', self.config['firefox_id']),
+        ]
+        def update(selected):
+            params, key, origin = selected
+            return self.control('settings.patch', params, request_id=key, key=key, origin=origin)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as clients:
+            results = list(clients.map(update, updates))
+        self.assertEqual(sum(result['ok'] for result in results), 1, results)
+        winner = next(index for index, result in enumerate(results) if result['ok'])
+        conflict = results[1 - winner]
+        self.assertEqual(conflict['error']['code'], 'REVISION_CONFLICT')
+        original = results[winner]['data']
+        later = self.control('settings.patch', {'expected_revision': original['revision'], 'patch': {'max_concurrent': 7}},
+                             request_id='later-update', key='later-update')['data']
+        self.assertEqual(update(updates[winner])['data'], original)
+        self.assertEqual(self.control('settings.get')['data'], later)
+        before = self.control('events.read')['data']
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+        with fixture_server(gate) as url:
+            params = {'url': url, 'format_id': 'bestaudio/best', 'audio_only': True, 'title': 'বাংলা contract fixture'}
+            submitted = self.control('downloads.enqueue', params, request_id='chrome-enqueue', key='stable-download')['data']
+            replay = self.control('downloads.enqueue', params, request_id='firefox-enqueue', key='stable-download',
+                                  origin=self.config['firefox_id'])['data']
+            self.assertEqual(replay, submitted)
+            job_id = submitted['job_id']
+            self.wait_for(lambda response: any(job['id'] == job_id and job['status'] == 'downloading'
+                for job in response.get('data', {}).get('jobs', [])))
+            self.assertEqual(self.control('downloads.list')['data']['counts'], {'total': 1, 'unfinished': 1})
+            gate.set()
+            complete = self.wait_for(lambda response: any(job['id'] == job_id and job['status'] == 'complete'
+                for job in response.get('data', {}).get('jobs', [])))
+        job = next(job for job in complete['data']['jobs'] if job['id'] == job_id)
+        output = Path(job['file_path'])
+        self.assertTrue(output.is_file())
+        self.assertEqual(output.suffix, '.mp3')
+        checksum = hashlib.sha256(output.read_bytes()).hexdigest()
+        changes = self.control('events.read', {'instance_id': before['instance_id'], 'cursor': before['cursor']})['data']
+        self.assertFalse(changes['resnapshot'])
+        self.assertTrue(any(event['entity_id'] == job_id for event in changes['events']))
+        self.assertNotIn(url, json.dumps(changes['events']))
+        self.stop_owner()
+        reopened = self.ready()
+        snapshot = self.control('events.read', {'instance_id': changes['instance_id'], 'cursor': changes['cursor']})['data']
+        self.assertTrue(snapshot['resnapshot'])
+        self.assertNotEqual(snapshot['instance_id'], changes['instance_id'])
+        self.assertEqual(snapshot['snapshot']['settings'], later)
+        self.assertEqual(snapshot['snapshot']['counts'], {'total': 1, 'unfinished': 0})
+        self.assertEqual(self.control('downloads.enqueue', params, request_id='reopened-enqueue', key='stable-download')['data'], submitted)
+        self.assertEqual(update(updates[winner])['data'], original)
+        self.assertEqual(self.control('settings.get')['data'], later)
+        refused = self.invoke_control('settings.patch', {'expected_revision': later['revision'], 'patch': {'max_concurrent': 8}},
+                                      request_id='incompatible-update', key='incompatible-update', version=2)
+        self.assertFalse(refused['ok'])
+        self.assertEqual(refused['error']['code'], 'APP_INCOMPATIBLE')
+        self.assertEqual(self.control('settings.get')['data'], later)
+        self.assertEqual(hashlib.sha256(output.read_bytes()).hexdigest(), checksum)
+        print(json.dumps({'case': 'versioned-control', 'settings_revision': later['revision'], 'jobs': 1,
+                          'output_sha256': checksum, 'first_owner': ready['data']['supervisor_pid'],
+                          'reopened_owner': reopened['data']['supervisor_pid'], 'resnapshot': True}), flush=True)
 
     def test_removal_shutdown_waits_for_download_completion(self):
         from tests.native_support import fixture_server

@@ -1,6 +1,6 @@
 # Target architecture
 
-P03 backend durability is accepted for the selected controlled Linux/Windows fixtures on 2026-11-15; [ADR-024](DECISIONS.md#adr-024--scoped-p03-backend-acceptance) defines the scope. This document also describes later protocol/UI/release work. `/v1` and settings revisions remain P04.
+P03 backend durability is accepted for the selected controlled Linux/Windows fixtures on 2026-11-15; [ADR-024](DECISIONS.md#adr-024--scoped-p03-backend-acceptance) defines the scope. The P04 fixture-only v1/settings foundation is implemented under [ADR-025](DECISIONS.md#adr-025--p04-contract-and-settings-foundation); ordinary-media/auth operations, actual client migration and target validation remain open. This document also describes later UI/release work.
 
 Proposed design for the [plan](PLAN.md); paths and APIs in this document are future interfaces unless explicitly identified as current. User choices and recommendation status live in [DECISIONS.md](DECISIONS.md).
 
@@ -47,7 +47,7 @@ Keep moves incremental and reviewable. Do not duplicate queue/business logic in 
 
 P01 implements `backend/app.py`, `backend/runtime.py`, `backend/db/` and isolated `tests/`; `backend.main:app` is an import-safe adapter. Runtime paths and process-local service state are injected. Legacy URLs remain unversioned: `/config`, `/probe`, `/downloads`, `/ws/progress`, `/health` and `/status`. `/update-ytdlp` returns 409. See [DEVELOPMENT.md](DEVELOPMENT.md) for commands.
 
-The 2026-11-04 Linux P02 spike adds the Tauri connection window, `desktop/supervisor`, `native-host` and a frozen `backend.engine` service. This is a narrow feasibility implementation, while per-job worker processes, the full manager, installers and `/v1` remain proposed:
+The 2026-11-04 Linux P02 spike adds the Tauri connection window, `desktop/supervisor`, `native-host` and a frozen `backend.engine` service. This historical feasibility boundary predates the accepted P03 workers and P04 foundation below; the full manager and release updates remain later work:
 
 - One Rust owner holds a private `0700` IPC directory, `0600` lock/socket, and an engine process group. Same-user peer credentials are checked. Quit terminates and reaps that group before releasing ownership; engine crashes allow at most three restarts after the initial launch.
 - The frozen engine receives a fresh credential over stdin, binds an ephemeral `127.0.0.1` port and reports authenticated readiness. Only authenticated `GET /health`, `GET /spike/status` and `POST /spike/fixture` are exposed. Host/Origin/body limits run before routing; legacy routes and WebSockets remain hidden. Python's audit guard blocks external connections in this fixture-only process.
@@ -90,7 +90,9 @@ For environments where native-host registration is unavailable, evaluate a manua
 
 ### Versioned operations
 
-Proposed REST adapters under `/v1` and equivalent native-message operations:
+The current foundation implements `capabilities.get`, `settings.get`, `settings.patch`, `downloads.list`, `downloads.enqueue` and `events.read` through authenticated `/v1/requests` plus the corresponding REST adapters. Numeric loopback WAV fixtures are the only executable media lane. The remaining operations below are proposed. Native `v1.request` wraps the same request/response inside P02 framing; authenticated capability negotiation preserves legacy readiness and rejects old engines before mutations. Both browser backgrounds load the classic generated client; the desktop module/Tauri adapter is available. Existing popup/options and desktop screens are not yet migrated.
+
+Current and proposed REST adapters under `/v1` and equivalent native-message operations:
 
 | Operation | Contract |
 | --- | --- |
@@ -101,11 +103,16 @@ Proposed REST adapters under `/v1` and equivalent native-message operations:
 | `GET /downloads` | Filtered/paginated jobs and aggregate counts; no unbounded history fetch for a badge |
 | `POST /downloads/{id}/actions` | Validated retry/pause/resume/cancel commands with explicit current-state results |
 | `GET/PATCH /settings` | Partial updates with a settings revision; stale revisions receive a conflict and current revision |
-| `events.subscribe` / `WS /events` | Server instance, cursor, snapshot, task revisions and coalesced progress; gap requires resnapshot |
+| `GET /events` / `events.read` | Implemented bounded invalidations with instance/cursor/job revisions; gaps and engine changes return a consistent paginated snapshot |
+| `events.subscribe` / `WS /events` | Planned live transport/coalesced progress; packaged WebSockets remain blocked |
 
 Use stable error fields: `code`, `message`, `retryable`, `retry_at`, `request_id`, and actionable details. Examples: `AUTH_REQUIRED`, `RATE_LIMITED`, `FORMAT_EXPIRED`, `UNSUPPORTED_MEDIA`, `DISK_FULL`, `COMPONENT_MISSING`, `APP_INCOMPATIBLE`. An upstream HTTP failure and a local admission-limit response must have distinct provenance.
 
-Pydantic models are the service contract source; generate checked-in versioned schema/client outputs without starting the app. Native transport wraps the same models. Each client handshake advertises supported protocol versions; the installer and extension releases declare their compatibility range. A staged legacy adapter may exist during migration, but the packaged app must not expose unrestricted old endpoints.
+`backend/api/models.py` is the import-safe Pydantic contract source; `packages/protocol/generate.py` produces the checked schema, module/classic/TypeScript clients, Rust operation table and extension mirror without starting the app. The schema validators enforce strict types, bounds, IDs and supported operations; clients reject mismatched response/error IDs and never automatically replay a mutation. Frames stay at 65,536 bytes, v1 payloads at 64,512, and persisted settings snapshots at 63,488. Versioned integers are browser-exact; wider legacy speed values receive a repair error.
+
+Schema 9 adds owner-fenced settings revisions and receipts, durable job revisions and 512 retained invalidations to the P03 state. Settings/revision/event/receipt writes commit together and notifications stay joined through cancellation. Replays/no-ops do not wake execution; accepted enqueue records remain unchanged when client intent is replayed after defaults change. Events carry IDs/revisions without URLs or cookies. Read transactions bind settings, bounded job pages/counts and cursor to one owner/snapshot; cursor gaps, future cursors and instance changes require resnapshot. The event-read limit also bounds its first snapshot page, capped at 25 jobs. There is no streaming subscription or paired browser-loopback route in this foundation.
+
+Generate checked-in versioned outputs without starting the app. Native transport wraps the same models. Each client handshake advertises supported protocol versions; the installer and extension releases declare their compatibility range. A staged legacy adapter may exist during migration, but the packaged app must not expose unrestricted old endpoints.
 
 ## 5. Media discovery and request reliability
 

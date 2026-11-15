@@ -7,8 +7,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.responses import JSONResponse
 
 from backend.app import create_app
+from backend.api.control import create_control_router, failure
+from backend.api.limits import MAX_PAYLOAD_BYTES
 from backend.engine.execution import ProcessDownloadExecutor
 from backend.runtime import RuntimeConfig
+from backend.services.control import ControlService
 
 
 class FixtureRequest(BaseModel):
@@ -32,7 +35,9 @@ class FixtureRequest(BaseModel):
 class EngineAccess:
     """Authenticate before exposing the three narrow spike operations."""
 
-    allowed = {("GET", "/health"), ("GET", "/spike/status"), ("POST", "/spike/fixture")}
+    allowed = {("GET", "/health"), ("GET", "/spike/status"), ("POST", "/spike/fixture"),
+               ("POST", "/v1/requests"), ("GET", "/v1/capabilities"), ("GET", "/v1/settings"),
+               ("PATCH", "/v1/settings"), ("GET", "/v1/downloads"), ("POST", "/v1/downloads"), ("GET", "/v1/events")}
 
     def __init__(self, app, token, port):
         self.app = app
@@ -45,18 +50,22 @@ class EngineAccess:
         if scope["type"] == "websocket":
             return await send({"type": "websocket.close", "code": 1008})
         headers = scope.get("headers", [])
+        def reject(code, status):
+            if scope["path"].startswith("/v1/"):
+                return failure(None, code, status, "The authenticated control request was rejected")
+            return JSONResponse({"code": code}, status_code=status)
         credentials = [value for key, value in headers if key.lower() == b"authorization"]
         hosts = [value for key, value in headers if key.lower() == b"host"]
         error = None
         if len(credentials) != 1 or not secrets.compare_digest(credentials[0], self.credential):
-            error = JSONResponse({"code": "UNAUTHORIZED"}, status_code=401)
+            error = reject("UNAUTHORIZED", 401)
         elif hosts != [self.host] or any(key.lower() == b"origin" for key, _ in headers):
-            error = JSONResponse({"code": "ORIGIN_REJECTED"}, status_code=403)
+            error = reject("ORIGIN_REJECTED", 403)
         elif (scope["method"], scope["path"]) not in self.allowed:
-            error = JSONResponse({"code": "UNSUPPORTED_OPERATION"}, status_code=404)
+            error = reject("UNSUPPORTED_OPERATION", 404)
         if error:
             return await error(scope, receive, send)
-        if scope["method"] == "POST":
+        if scope["method"] in {"POST", "PATCH"}:
             # Enforce the limit even when Content-Length is absent/chunked.
             body = bytearray()
             while True:
@@ -64,8 +73,9 @@ class EngineAccess:
                 if message["type"] == "http.disconnect":
                     return
                 body.extend(message.get("body", b""))
-                if len(body) > 4096:
-                    return await JSONResponse({"code": "MESSAGE_TOO_LARGE"}, status_code=413)(scope, receive, send)
+                limit = MAX_PAYLOAD_BYTES if scope["path"].startswith("/v1/") else 4096
+                if len(body) > limit:
+                    return await reject("MESSAGE_TOO_LARGE", 413)(scope, receive, send)
                 if not message.get("more_body", False):
                     break
             async def replay():
@@ -75,16 +85,21 @@ class EngineAccess:
 
 
 def create_engine_app(runtime: RuntimeConfig, *, token: str, port: int, components: dict,
-                      start_queue: bool = True):
+                      start_queue: bool = True, component_versions: dict | None = None):
     """Reuse P01 state/queue while keeping the legacy API behind an allowlist.
 
-    The spike is fixture-only. The versioned public contract remains P04 work.
+    The packaged execution lane stays fixture-only while the v1 control seam is
+    introduced. Legacy routes remain inaccessible through this wrapper.
     Resolving paths or creating this factory does not execute component checks.
     """
     if not re.fullmatch(r"[0-9a-f]{64}", token) or not 1 <= port <= 65535:
         raise ValueError("An app-generated credential and bound port are required")
     executor = ProcessDownloadExecutor(components=dict(components), fixture_only=True)
     app = create_app(runtime, start_queue=start_queue, download_executor=executor)
+    service = ControlService(app.state.settings, app.state.queue, app.state.owner,
+                             fixture_validator=FixtureRequest.model_validate, component_versions=component_versions)
+    app.state.control = service
+    app.include_router(create_control_router(service))
 
     @app.get("/spike/status")
     async def status():

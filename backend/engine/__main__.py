@@ -49,7 +49,8 @@ def main():
     logging.basicConfig(level=logging.INFO, stream=sys.stderr)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))
-        app = create_engine_app(runtime, token=bootstrap.token, port=listener.getsockname()[1], components=paths)
+        app = create_engine_app(runtime, token=bootstrap.token, port=listener.getsockname()[1], components=paths,
+                                component_versions=versions)
         server = ReadyServer(uvicorn.Config(
             app, host="127.0.0.1", log_config=None, access_log=False,
             loop="asyncio", lifespan="on", timeout_graceful_shutdown=1,

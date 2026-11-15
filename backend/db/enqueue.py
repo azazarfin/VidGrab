@@ -12,7 +12,7 @@ MAX_RECEIPTS = 10000
 MAX_REQUEST_BYTES = 65536
 
 
-def request_identity(key, record):
+def request_identity(key, record, *, intent=None):
     if key is not None and (not isinstance(key, str) or re.fullmatch(r"[!-~]{1,128}", key) is None):
         raise HTTPException(400, "Idempotency-Key must contain 1–128 visible ASCII characters")
     semantic = {name: record[name] for name in
@@ -27,6 +27,16 @@ def request_identity(key, record):
         raise HTTPException(400, "Enqueue options must contain finite JSON values") from error
     if len(encoded) > MAX_REQUEST_BYTES:
         raise HTTPException(400, "Enqueue identity exceeds its 64 KiB limit")
+    if intent is not None:
+        # Validate the full durable record above even when v1 binds logical
+        # intent, so this seam cannot weaken P03's finite JSON/size limits.
+        try:
+            encoded = json.dumps({"control_intent": intent}, sort_keys=True, ensure_ascii=False,
+                                 allow_nan=False, separators=(",", ":")).encode("utf-8")
+        except (ValueError, TypeError) as error:
+            raise HTTPException(400, "Control intent must contain finite JSON values") from error
+        if len(encoded) > MAX_REQUEST_BYTES:
+            raise HTTPException(400, "Control intent exceeds its 64 KiB limit")
     if key is None:
         return None
     return hashlib.sha256(key.encode("ascii")).hexdigest(), hashlib.sha256(encoded).hexdigest()
@@ -43,8 +53,8 @@ class EnqueueStore:
         self.runtime = runtime
         self.owner = owner
 
-    async def admit(self, record, key=None):
-        identity = request_identity(key, record)
+    async def admit(self, record, key=None, *, intent=None):
+        identity = request_identity(key, record, intent=intent)
         async with transaction(self.runtime) as db:
             await require_owner(db, self.owner)
             if identity is not None:

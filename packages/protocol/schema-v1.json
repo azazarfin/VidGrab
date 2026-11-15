@@ -1,0 +1,2010 @@
+{
+  "max_message_bytes": 65536,
+  "max_payload_bytes": 64512,
+  "operations": {
+    "capabilities.get": {
+      "mutation": false,
+      "params": {
+        "additionalProperties": false,
+        "properties": {},
+        "title": "Empty",
+        "type": "object"
+      },
+      "result": {
+        "additionalProperties": false,
+        "properties": {
+          "component_versions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Component Versions",
+            "type": "object"
+          },
+          "features": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "fixture_only": {
+            "title": "Fixture Only",
+            "type": "boolean"
+          },
+          "max_message_bytes": {
+            "const": 65536,
+            "default": 65536,
+            "title": "Max Message Bytes",
+            "type": "integer"
+          },
+          "max_payload_bytes": {
+            "const": 64512,
+            "default": 64512,
+            "title": "Max Payload Bytes",
+            "type": "integer"
+          },
+          "paired_loopback": {
+            "const": false,
+            "default": false,
+            "title": "Paired Loopback",
+            "type": "boolean"
+          },
+          "protocol_max": {
+            "default": 1,
+            "maximum": 65535,
+            "minimum": 1,
+            "title": "Protocol Max",
+            "type": "integer"
+          },
+          "protocol_min": {
+            "default": 1,
+            "maximum": 65535,
+            "minimum": 1,
+            "title": "Protocol Min",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "protocol_min",
+          "protocol_max",
+          "max_message_bytes",
+          "max_payload_bytes",
+          "fixture_only",
+          "paired_loopback",
+          "features",
+          "component_versions"
+        ],
+        "title": "Capabilities",
+        "type": "object"
+      }
+    },
+    "downloads.enqueue": {
+      "mutation": true,
+      "params": {
+        "additionalProperties": false,
+        "properties": {
+          "audio_format": {
+            "default": "mp3",
+            "enum": [
+              "mp3",
+              "m4a",
+              "opus",
+              "wav",
+              "flac"
+            ],
+            "title": "Audio Format",
+            "type": "string"
+          },
+          "audio_only": {
+            "default": false,
+            "title": "Audio Only",
+            "type": "boolean"
+          },
+          "format_id": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Format Id"
+          },
+          "thumbnail_url": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Thumbnail Url"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          },
+          "url": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "DownloadParams",
+        "type": "object"
+      },
+      "result": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "title": "Enqueued",
+        "type": "object"
+      }
+    },
+    "downloads.list": {
+      "mutation": false,
+      "params": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "After"
+          },
+          "limit": {
+            "default": 25,
+            "maximum": 50,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "title": "DownloadPageParams",
+        "type": "object"
+      },
+      "result": {
+        "$defs": {
+          "Counts": {
+            "additionalProperties": false,
+            "properties": {
+              "total": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Total",
+                "type": "integer"
+              },
+              "unfinished": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Unfinished",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "unfinished"
+            ],
+            "title": "Counts",
+            "type": "object"
+          },
+          "Job": {
+            "additionalProperties": false,
+            "properties": {
+              "error_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Error Code"
+              },
+              "file_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "File Path"
+              },
+              "id": {
+                "title": "Id",
+                "type": "string"
+              },
+              "parent_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Parent Id"
+              },
+              "progress": {
+                "maximum": 100,
+                "minimum": 0,
+                "title": "Progress",
+                "type": "number"
+              },
+              "retry_at": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Retry At"
+              },
+              "revision": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Revision",
+                "type": "integer"
+              },
+              "status": {
+                "title": "Status",
+                "type": "string"
+              },
+              "title": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Title"
+              }
+            },
+            "required": [
+              "id",
+              "revision",
+              "title",
+              "status",
+              "progress",
+              "file_path",
+              "error_code",
+              "retry_at",
+              "parent_id"
+            ],
+            "title": "Job",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "counts": {
+            "$ref": "#/$defs/Counts"
+          },
+          "jobs": {
+            "items": {
+              "$ref": "#/$defs/Job"
+            },
+            "title": "Jobs",
+            "type": "array"
+          },
+          "next_after": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next After"
+          }
+        },
+        "required": [
+          "jobs",
+          "next_after",
+          "counts"
+        ],
+        "title": "DownloadPage",
+        "type": "object"
+      }
+    },
+    "events.read": {
+      "mutation": false,
+      "params": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Cursor",
+            "type": "integer"
+          },
+          "instance_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Instance Id"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "title": "EventParams",
+        "type": "object"
+      },
+      "result": {
+        "$defs": {
+          "Counts": {
+            "additionalProperties": false,
+            "properties": {
+              "total": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Total",
+                "type": "integer"
+              },
+              "unfinished": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Unfinished",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "unfinished"
+            ],
+            "title": "Counts",
+            "type": "object"
+          },
+          "Event": {
+            "additionalProperties": false,
+            "properties": {
+              "entity_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Entity Id"
+              },
+              "kind": {
+                "enum": [
+                  "changed",
+                  "deleted"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "revision": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Revision",
+                "type": "integer"
+              },
+              "sequence": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Sequence",
+                "type": "integer"
+              },
+              "topic": {
+                "enum": [
+                  "downloads",
+                  "settings"
+                ],
+                "title": "Topic",
+                "type": "string"
+              }
+            },
+            "required": [
+              "sequence",
+              "topic",
+              "entity_id",
+              "revision",
+              "kind"
+            ],
+            "title": "Event",
+            "type": "object"
+          },
+          "Job": {
+            "additionalProperties": false,
+            "properties": {
+              "error_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Error Code"
+              },
+              "file_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "File Path"
+              },
+              "id": {
+                "title": "Id",
+                "type": "string"
+              },
+              "parent_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Parent Id"
+              },
+              "progress": {
+                "maximum": 100,
+                "minimum": 0,
+                "title": "Progress",
+                "type": "number"
+              },
+              "retry_at": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Retry At"
+              },
+              "revision": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Revision",
+                "type": "integer"
+              },
+              "status": {
+                "title": "Status",
+                "type": "string"
+              },
+              "title": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Title"
+              }
+            },
+            "required": [
+              "id",
+              "revision",
+              "title",
+              "status",
+              "progress",
+              "file_path",
+              "error_code",
+              "retry_at",
+              "parent_id"
+            ],
+            "title": "Job",
+            "type": "object"
+          },
+          "SettingsSnapshot": {
+            "additionalProperties": false,
+            "properties": {
+              "revision": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Revision",
+                "type": "integer"
+              },
+              "values": {
+                "$ref": "#/$defs/SettingsValues"
+              }
+            },
+            "required": [
+              "revision",
+              "values"
+            ],
+            "title": "SettingsSnapshot",
+            "type": "object"
+          },
+          "SettingsValues": {
+            "additionalProperties": false,
+            "properties": {
+              "auto_update_ytdlp": {
+                "default": false,
+                "title": "Auto Update Ytdlp",
+                "type": "boolean"
+              },
+              "custom_ytdlp_args": {
+                "default": "",
+                "title": "Custom Ytdlp Args",
+                "type": "string"
+              },
+              "default_format": {
+                "default": "bestvideo+bestaudio/best",
+                "title": "Default Format",
+                "type": "string"
+              },
+              "default_quality": {
+                "default": "1080",
+                "title": "Default Quality",
+                "type": "string"
+              },
+              "download_dir": {
+                "minLength": 1,
+                "title": "Download Dir",
+                "type": "string"
+              },
+              "download_threads": {
+                "default": 4,
+                "maximum": 32,
+                "minimum": 1,
+                "title": "Download Threads",
+                "type": "integer"
+              },
+              "filename_template": {
+                "default": "%(title)s.%(ext)s",
+                "title": "Filename Template",
+                "type": "string"
+              },
+              "gpu_accelerated_conversion": {
+                "default": false,
+                "title": "Gpu Accelerated Conversion",
+                "type": "boolean"
+              },
+              "max_concurrent": {
+                "default": 3,
+                "maximum": 10,
+                "minimum": 1,
+                "title": "Max Concurrent",
+                "type": "integer"
+              },
+              "max_retries": {
+                "default": 3,
+                "maximum": 10,
+                "minimum": 0,
+                "title": "Max Retries",
+                "type": "integer"
+              },
+              "postprocess_codec": {
+                "default": "none",
+                "title": "Postprocess Codec",
+                "type": "string"
+              },
+              "postprocess_normalize_audio": {
+                "default": false,
+                "title": "Postprocess Normalize Audio",
+                "type": "boolean"
+              },
+              "speed_limit": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Speed Limit",
+                "type": "integer"
+              },
+              "sponsorblock_categories": {
+                "default": [
+                  "sponsor",
+                  "intro",
+                  "outro",
+                  "selfpromo",
+                  "interaction",
+                  "music_offtopic"
+                ],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Sponsorblock Categories",
+                "type": "array"
+              },
+              "sponsorblock_enabled": {
+                "default": false,
+                "title": "Sponsorblock Enabled",
+                "type": "boolean"
+              },
+              "sponsorblock_mode": {
+                "default": "remove",
+                "title": "Sponsorblock Mode",
+                "type": "string"
+              }
+            },
+            "required": [
+              "download_dir",
+              "max_concurrent",
+              "default_format",
+              "default_quality",
+              "filename_template",
+              "speed_limit",
+              "auto_update_ytdlp",
+              "sponsorblock_enabled",
+              "sponsorblock_categories",
+              "sponsorblock_mode",
+              "postprocess_codec",
+              "postprocess_normalize_audio",
+              "custom_ytdlp_args",
+              "download_threads",
+              "gpu_accelerated_conversion",
+              "max_retries"
+            ],
+            "title": "SettingsValues",
+            "type": "object"
+          },
+          "Snapshot": {
+            "additionalProperties": false,
+            "properties": {
+              "counts": {
+                "$ref": "#/$defs/Counts"
+              },
+              "cursor": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Cursor",
+                "type": "integer"
+              },
+              "instance_id": {
+                "title": "Instance Id",
+                "type": "string"
+              },
+              "jobs": {
+                "items": {
+                  "$ref": "#/$defs/Job"
+                },
+                "title": "Jobs",
+                "type": "array"
+              },
+              "next_after": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Next After"
+              },
+              "settings": {
+                "$ref": "#/$defs/SettingsSnapshot"
+              }
+            },
+            "required": [
+              "jobs",
+              "next_after",
+              "counts",
+              "instance_id",
+              "cursor",
+              "settings"
+            ],
+            "title": "Snapshot",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Cursor",
+            "type": "integer"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/$defs/Event"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "resnapshot": {
+            "title": "Resnapshot",
+            "type": "boolean"
+          },
+          "snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Snapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "instance_id",
+          "cursor",
+          "resnapshot",
+          "has_more",
+          "snapshot",
+          "events"
+        ],
+        "title": "EventBatch",
+        "type": "object"
+      }
+    },
+    "settings.get": {
+      "mutation": false,
+      "params": {
+        "additionalProperties": false,
+        "properties": {},
+        "title": "Empty",
+        "type": "object"
+      },
+      "result": {
+        "$defs": {
+          "SettingsValues": {
+            "additionalProperties": false,
+            "properties": {
+              "auto_update_ytdlp": {
+                "default": false,
+                "title": "Auto Update Ytdlp",
+                "type": "boolean"
+              },
+              "custom_ytdlp_args": {
+                "default": "",
+                "title": "Custom Ytdlp Args",
+                "type": "string"
+              },
+              "default_format": {
+                "default": "bestvideo+bestaudio/best",
+                "title": "Default Format",
+                "type": "string"
+              },
+              "default_quality": {
+                "default": "1080",
+                "title": "Default Quality",
+                "type": "string"
+              },
+              "download_dir": {
+                "minLength": 1,
+                "title": "Download Dir",
+                "type": "string"
+              },
+              "download_threads": {
+                "default": 4,
+                "maximum": 32,
+                "minimum": 1,
+                "title": "Download Threads",
+                "type": "integer"
+              },
+              "filename_template": {
+                "default": "%(title)s.%(ext)s",
+                "title": "Filename Template",
+                "type": "string"
+              },
+              "gpu_accelerated_conversion": {
+                "default": false,
+                "title": "Gpu Accelerated Conversion",
+                "type": "boolean"
+              },
+              "max_concurrent": {
+                "default": 3,
+                "maximum": 10,
+                "minimum": 1,
+                "title": "Max Concurrent",
+                "type": "integer"
+              },
+              "max_retries": {
+                "default": 3,
+                "maximum": 10,
+                "minimum": 0,
+                "title": "Max Retries",
+                "type": "integer"
+              },
+              "postprocess_codec": {
+                "default": "none",
+                "title": "Postprocess Codec",
+                "type": "string"
+              },
+              "postprocess_normalize_audio": {
+                "default": false,
+                "title": "Postprocess Normalize Audio",
+                "type": "boolean"
+              },
+              "speed_limit": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Speed Limit",
+                "type": "integer"
+              },
+              "sponsorblock_categories": {
+                "default": [
+                  "sponsor",
+                  "intro",
+                  "outro",
+                  "selfpromo",
+                  "interaction",
+                  "music_offtopic"
+                ],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Sponsorblock Categories",
+                "type": "array"
+              },
+              "sponsorblock_enabled": {
+                "default": false,
+                "title": "Sponsorblock Enabled",
+                "type": "boolean"
+              },
+              "sponsorblock_mode": {
+                "default": "remove",
+                "title": "Sponsorblock Mode",
+                "type": "string"
+              }
+            },
+            "required": [
+              "download_dir",
+              "max_concurrent",
+              "default_format",
+              "default_quality",
+              "filename_template",
+              "speed_limit",
+              "auto_update_ytdlp",
+              "sponsorblock_enabled",
+              "sponsorblock_categories",
+              "sponsorblock_mode",
+              "postprocess_codec",
+              "postprocess_normalize_audio",
+              "custom_ytdlp_args",
+              "download_threads",
+              "gpu_accelerated_conversion",
+              "max_retries"
+            ],
+            "title": "SettingsValues",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "revision": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "values": {
+            "$ref": "#/$defs/SettingsValues"
+          }
+        },
+        "required": [
+          "revision",
+          "values"
+        ],
+        "title": "SettingsSnapshot",
+        "type": "object"
+      }
+    },
+    "settings.patch": {
+      "mutation": true,
+      "params": {
+        "$defs": {
+          "SettingsPatch": {
+            "additionalProperties": false,
+            "properties": {
+              "auto_update_ytdlp": {
+                "default": false,
+                "title": "Auto Update Ytdlp",
+                "type": "boolean"
+              },
+              "custom_ytdlp_args": {
+                "default": "",
+                "title": "Custom Ytdlp Args",
+                "type": "string"
+              },
+              "default_format": {
+                "default": "bestvideo+bestaudio/best",
+                "title": "Default Format",
+                "type": "string"
+              },
+              "default_quality": {
+                "default": "1080",
+                "title": "Default Quality",
+                "type": "string"
+              },
+              "download_dir": {
+                "minLength": 1,
+                "title": "Download Dir",
+                "type": "string"
+              },
+              "download_threads": {
+                "default": 4,
+                "maximum": 32,
+                "minimum": 1,
+                "title": "Download Threads",
+                "type": "integer"
+              },
+              "filename_template": {
+                "default": "%(title)s.%(ext)s",
+                "title": "Filename Template",
+                "type": "string"
+              },
+              "gpu_accelerated_conversion": {
+                "default": false,
+                "title": "Gpu Accelerated Conversion",
+                "type": "boolean"
+              },
+              "max_concurrent": {
+                "default": 3,
+                "maximum": 10,
+                "minimum": 1,
+                "title": "Max Concurrent",
+                "type": "integer"
+              },
+              "max_retries": {
+                "default": 3,
+                "maximum": 10,
+                "minimum": 0,
+                "title": "Max Retries",
+                "type": "integer"
+              },
+              "postprocess_codec": {
+                "default": "none",
+                "title": "Postprocess Codec",
+                "type": "string"
+              },
+              "postprocess_normalize_audio": {
+                "default": false,
+                "title": "Postprocess Normalize Audio",
+                "type": "boolean"
+              },
+              "speed_limit": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Speed Limit",
+                "type": "integer"
+              },
+              "sponsorblock_categories": {
+                "default": [
+                  "sponsor",
+                  "intro",
+                  "outro",
+                  "selfpromo",
+                  "interaction",
+                  "music_offtopic"
+                ],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Sponsorblock Categories",
+                "type": "array"
+              },
+              "sponsorblock_enabled": {
+                "default": false,
+                "title": "Sponsorblock Enabled",
+                "type": "boolean"
+              },
+              "sponsorblock_mode": {
+                "default": "remove",
+                "title": "Sponsorblock Mode",
+                "type": "string"
+              }
+            },
+            "title": "SettingsPatch",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "patch": {
+            "$ref": "#/$defs/SettingsPatch"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "patch"
+        ],
+        "title": "SettingsUpdate",
+        "type": "object"
+      },
+      "result": {
+        "$defs": {
+          "SettingsValues": {
+            "additionalProperties": false,
+            "properties": {
+              "auto_update_ytdlp": {
+                "default": false,
+                "title": "Auto Update Ytdlp",
+                "type": "boolean"
+              },
+              "custom_ytdlp_args": {
+                "default": "",
+                "title": "Custom Ytdlp Args",
+                "type": "string"
+              },
+              "default_format": {
+                "default": "bestvideo+bestaudio/best",
+                "title": "Default Format",
+                "type": "string"
+              },
+              "default_quality": {
+                "default": "1080",
+                "title": "Default Quality",
+                "type": "string"
+              },
+              "download_dir": {
+                "minLength": 1,
+                "title": "Download Dir",
+                "type": "string"
+              },
+              "download_threads": {
+                "default": 4,
+                "maximum": 32,
+                "minimum": 1,
+                "title": "Download Threads",
+                "type": "integer"
+              },
+              "filename_template": {
+                "default": "%(title)s.%(ext)s",
+                "title": "Filename Template",
+                "type": "string"
+              },
+              "gpu_accelerated_conversion": {
+                "default": false,
+                "title": "Gpu Accelerated Conversion",
+                "type": "boolean"
+              },
+              "max_concurrent": {
+                "default": 3,
+                "maximum": 10,
+                "minimum": 1,
+                "title": "Max Concurrent",
+                "type": "integer"
+              },
+              "max_retries": {
+                "default": 3,
+                "maximum": 10,
+                "minimum": 0,
+                "title": "Max Retries",
+                "type": "integer"
+              },
+              "postprocess_codec": {
+                "default": "none",
+                "title": "Postprocess Codec",
+                "type": "string"
+              },
+              "postprocess_normalize_audio": {
+                "default": false,
+                "title": "Postprocess Normalize Audio",
+                "type": "boolean"
+              },
+              "speed_limit": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Speed Limit",
+                "type": "integer"
+              },
+              "sponsorblock_categories": {
+                "default": [
+                  "sponsor",
+                  "intro",
+                  "outro",
+                  "selfpromo",
+                  "interaction",
+                  "music_offtopic"
+                ],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Sponsorblock Categories",
+                "type": "array"
+              },
+              "sponsorblock_enabled": {
+                "default": false,
+                "title": "Sponsorblock Enabled",
+                "type": "boolean"
+              },
+              "sponsorblock_mode": {
+                "default": "remove",
+                "title": "Sponsorblock Mode",
+                "type": "string"
+              }
+            },
+            "required": [
+              "download_dir",
+              "max_concurrent",
+              "default_format",
+              "default_quality",
+              "filename_template",
+              "speed_limit",
+              "auto_update_ytdlp",
+              "sponsorblock_enabled",
+              "sponsorblock_categories",
+              "sponsorblock_mode",
+              "postprocess_codec",
+              "postprocess_normalize_audio",
+              "custom_ytdlp_args",
+              "download_threads",
+              "gpu_accelerated_conversion",
+              "max_retries"
+            ],
+            "title": "SettingsValues",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "revision": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "values": {
+            "$ref": "#/$defs/SettingsValues"
+          }
+        },
+        "required": [
+          "revision",
+          "values"
+        ],
+        "title": "SettingsSnapshot",
+        "type": "object"
+      }
+    }
+  },
+  "protocol_version": 1,
+  "request": {
+    "$defs": {
+      "JsonValue": {}
+    },
+    "additionalProperties": false,
+    "properties": {
+      "idempotency_key": {
+        "anyOf": [
+          {
+            "pattern": "^[!-~]{1,128}$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Idempotency Key"
+      },
+      "operation": {
+        "maxLength": 64,
+        "minLength": 1,
+        "title": "Operation",
+        "type": "string"
+      },
+      "params": {
+        "additionalProperties": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "title": "Params",
+        "type": "object"
+      },
+      "protocol_version": {
+        "maximum": 65535,
+        "minimum": 0,
+        "title": "Protocol Version",
+        "type": "integer"
+      },
+      "request_id": {
+        "pattern": "^[!-~]{1,128}$",
+        "title": "Request Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "protocol_version",
+      "request_id",
+      "operation",
+      "params"
+    ],
+    "title": "Request",
+    "type": "object"
+  },
+  "response": {
+    "$defs": {
+      "Capabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "component_versions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Component Versions",
+            "type": "object"
+          },
+          "features": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "fixture_only": {
+            "title": "Fixture Only",
+            "type": "boolean"
+          },
+          "max_message_bytes": {
+            "const": 65536,
+            "default": 65536,
+            "title": "Max Message Bytes",
+            "type": "integer"
+          },
+          "max_payload_bytes": {
+            "const": 64512,
+            "default": 64512,
+            "title": "Max Payload Bytes",
+            "type": "integer"
+          },
+          "paired_loopback": {
+            "const": false,
+            "default": false,
+            "title": "Paired Loopback",
+            "type": "boolean"
+          },
+          "protocol_max": {
+            "default": 1,
+            "maximum": 65535,
+            "minimum": 1,
+            "title": "Protocol Max",
+            "type": "integer"
+          },
+          "protocol_min": {
+            "default": 1,
+            "maximum": 65535,
+            "minimum": 1,
+            "title": "Protocol Min",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "protocol_min",
+          "protocol_max",
+          "max_message_bytes",
+          "max_payload_bytes",
+          "fixture_only",
+          "paired_loopback",
+          "features",
+          "component_versions"
+        ],
+        "title": "Capabilities",
+        "type": "object"
+      },
+      "Counts": {
+        "additionalProperties": false,
+        "properties": {
+          "total": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "unfinished": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Unfinished",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "unfinished"
+        ],
+        "title": "Counts",
+        "type": "object"
+      },
+      "DownloadPage": {
+        "additionalProperties": false,
+        "properties": {
+          "counts": {
+            "$ref": "#/$defs/Counts"
+          },
+          "jobs": {
+            "items": {
+              "$ref": "#/$defs/Job"
+            },
+            "title": "Jobs",
+            "type": "array"
+          },
+          "next_after": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next After"
+          }
+        },
+        "required": [
+          "jobs",
+          "next_after",
+          "counts"
+        ],
+        "title": "DownloadPage",
+        "type": "object"
+      },
+      "Enqueued": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "title": "Enqueued",
+        "type": "object"
+      },
+      "Error": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "BAD_REQUEST",
+              "BAD_RESPONSE",
+              "APP_INCOMPATIBLE",
+              "UNAUTHORIZED",
+              "ORIGIN_REJECTED",
+              "UNSUPPORTED_OPERATION",
+              "UNSUPPORTED_OPTION",
+              "ENGINE_UNAVAILABLE",
+              "APP_MISSING",
+              "APP_UNAVAILABLE",
+              "BROWSER_DISCONNECTED",
+              "BROWSER_CONNECTION_UNAVAILABLE",
+              "REQUEST_OUTCOME_UNKNOWN",
+              "REVISION_CONFLICT",
+              "IDEMPOTENCY_CONFLICT",
+              "RECEIPT_EXPIRED",
+              "CAPACITY_EXCEEDED",
+              "MESSAGE_TOO_LARGE",
+              "INTERNAL_ERROR",
+              "AUTH_REQUIRED",
+              "RATE_LIMITED",
+              "UNSUPPORTED_MEDIA"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "details": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "title": "Details",
+            "type": "object"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "provenance": {
+            "default": "local",
+            "enum": [
+              "local",
+              "engine",
+              "upstream"
+            ],
+            "title": "Provenance",
+            "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "pattern": "^[!-~]{1,128}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "retry_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retry At"
+          },
+          "retryable": {
+            "default": false,
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "retry_at",
+          "request_id",
+          "provenance",
+          "details"
+        ],
+        "title": "Error",
+        "type": "object"
+      },
+      "Event": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entity Id"
+          },
+          "kind": {
+            "enum": [
+              "changed",
+              "deleted"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "revision": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "sequence": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "topic": {
+            "enum": [
+              "downloads",
+              "settings"
+            ],
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sequence",
+          "topic",
+          "entity_id",
+          "revision",
+          "kind"
+        ],
+        "title": "Event",
+        "type": "object"
+      },
+      "EventBatch": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Cursor",
+            "type": "integer"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/$defs/Event"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "resnapshot": {
+            "title": "Resnapshot",
+            "type": "boolean"
+          },
+          "snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Snapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "instance_id",
+          "cursor",
+          "resnapshot",
+          "has_more",
+          "snapshot",
+          "events"
+        ],
+        "title": "EventBatch",
+        "type": "object"
+      },
+      "Failure": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/$defs/Error"
+          },
+          "ok": {
+            "const": false,
+            "default": false,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "protocol_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Protocol Version",
+            "type": "integer"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "pattern": "^[!-~]{1,128}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          }
+        },
+        "required": [
+          "protocol_version",
+          "request_id",
+          "ok",
+          "error"
+        ],
+        "title": "Failure",
+        "type": "object"
+      },
+      "Job": {
+        "additionalProperties": false,
+        "properties": {
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "file_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Path"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "progress": {
+            "maximum": 100,
+            "minimum": 0,
+            "title": "Progress",
+            "type": "number"
+          },
+          "retry_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retry At"
+          },
+          "revision": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "title",
+          "status",
+          "progress",
+          "file_path",
+          "error_code",
+          "retry_at",
+          "parent_id"
+        ],
+        "title": "Job",
+        "type": "object"
+      },
+      "JsonValue": {},
+      "SettingsSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "revision": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "values": {
+            "$ref": "#/$defs/SettingsValues"
+          }
+        },
+        "required": [
+          "revision",
+          "values"
+        ],
+        "title": "SettingsSnapshot",
+        "type": "object"
+      },
+      "SettingsValues": {
+        "additionalProperties": false,
+        "properties": {
+          "auto_update_ytdlp": {
+            "default": false,
+            "title": "Auto Update Ytdlp",
+            "type": "boolean"
+          },
+          "custom_ytdlp_args": {
+            "default": "",
+            "title": "Custom Ytdlp Args",
+            "type": "string"
+          },
+          "default_format": {
+            "default": "bestvideo+bestaudio/best",
+            "title": "Default Format",
+            "type": "string"
+          },
+          "default_quality": {
+            "default": "1080",
+            "title": "Default Quality",
+            "type": "string"
+          },
+          "download_dir": {
+            "minLength": 1,
+            "title": "Download Dir",
+            "type": "string"
+          },
+          "download_threads": {
+            "default": 4,
+            "maximum": 32,
+            "minimum": 1,
+            "title": "Download Threads",
+            "type": "integer"
+          },
+          "filename_template": {
+            "default": "%(title)s.%(ext)s",
+            "title": "Filename Template",
+            "type": "string"
+          },
+          "gpu_accelerated_conversion": {
+            "default": false,
+            "title": "Gpu Accelerated Conversion",
+            "type": "boolean"
+          },
+          "max_concurrent": {
+            "default": 3,
+            "maximum": 10,
+            "minimum": 1,
+            "title": "Max Concurrent",
+            "type": "integer"
+          },
+          "max_retries": {
+            "default": 3,
+            "maximum": 10,
+            "minimum": 0,
+            "title": "Max Retries",
+            "type": "integer"
+          },
+          "postprocess_codec": {
+            "default": "none",
+            "title": "Postprocess Codec",
+            "type": "string"
+          },
+          "postprocess_normalize_audio": {
+            "default": false,
+            "title": "Postprocess Normalize Audio",
+            "type": "boolean"
+          },
+          "speed_limit": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Speed Limit",
+            "type": "integer"
+          },
+          "sponsorblock_categories": {
+            "default": [
+              "sponsor",
+              "intro",
+              "outro",
+              "selfpromo",
+              "interaction",
+              "music_offtopic"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Sponsorblock Categories",
+            "type": "array"
+          },
+          "sponsorblock_enabled": {
+            "default": false,
+            "title": "Sponsorblock Enabled",
+            "type": "boolean"
+          },
+          "sponsorblock_mode": {
+            "default": "remove",
+            "title": "Sponsorblock Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "download_dir",
+          "max_concurrent",
+          "default_format",
+          "default_quality",
+          "filename_template",
+          "speed_limit",
+          "auto_update_ytdlp",
+          "sponsorblock_enabled",
+          "sponsorblock_categories",
+          "sponsorblock_mode",
+          "postprocess_codec",
+          "postprocess_normalize_audio",
+          "custom_ytdlp_args",
+          "download_threads",
+          "gpu_accelerated_conversion",
+          "max_retries"
+        ],
+        "title": "SettingsValues",
+        "type": "object"
+      },
+      "Snapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "counts": {
+            "$ref": "#/$defs/Counts"
+          },
+          "cursor": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Cursor",
+            "type": "integer"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "jobs": {
+            "items": {
+              "$ref": "#/$defs/Job"
+            },
+            "title": "Jobs",
+            "type": "array"
+          },
+          "next_after": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next After"
+          },
+          "settings": {
+            "$ref": "#/$defs/SettingsSnapshot"
+          }
+        },
+        "required": [
+          "jobs",
+          "next_after",
+          "counts",
+          "instance_id",
+          "cursor",
+          "settings"
+        ],
+        "title": "Snapshot",
+        "type": "object"
+      },
+      "Success": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Capabilities"
+              },
+              {
+                "$ref": "#/$defs/SettingsSnapshot"
+              },
+              {
+                "$ref": "#/$defs/DownloadPage"
+              },
+              {
+                "$ref": "#/$defs/Enqueued"
+              },
+              {
+                "$ref": "#/$defs/EventBatch"
+              }
+            ],
+            "title": "Data"
+          },
+          "ok": {
+            "const": true,
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "protocol_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Protocol Version",
+            "type": "integer"
+          },
+          "request_id": {
+            "pattern": "^[!-~]{1,128}$",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol_version",
+          "request_id",
+          "ok",
+          "data"
+        ],
+        "title": "Success",
+        "type": "object"
+      }
+    },
+    "anyOf": [
+      {
+        "$ref": "#/$defs/Success"
+      },
+      {
+        "$ref": "#/$defs/Failure"
+      }
+    ]
+  }
+}

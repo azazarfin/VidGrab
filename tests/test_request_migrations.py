@@ -5,7 +5,7 @@ from contextlib import closing
 import sqlite3
 
 from backend.config import init_db
-from tests.support import OfflineTestCase
+from tests.support import OfflineTestCase, drop_protocol_schema
 
 
 class RequestMigrationTests(OfflineTestCase):
@@ -13,6 +13,7 @@ class RequestMigrationTests(OfflineTestCase):
         runtime = self.runtime()
         asyncio.run(init_db(runtime))
         with closing(sqlite3.connect(runtime.db_path)) as db, db:
+            drop_protocol_schema(db)
             for table in ("request_leases", "request_probes", "request_hosts"):
                 db.execute(f"DROP TABLE {table}")
             db.execute("DROP INDEX retry_deadlines")

@@ -44,6 +44,7 @@ pub fn call_socket(path: &Path, request: &protocol::Request) -> io::Result<Value
 }
 
 pub fn engine_request(port: u16, token: &str, method: &str, path: &str, body: Option<Value>) -> io::Result<Value> {
+    let expected_id = body.as_ref().and_then(|value| value.get("request_id")).cloned();
     let address = format!("127.0.0.1:{port}").parse().unwrap();
     let mut connection = TcpStream::connect_timeout(&address, Duration::from_secs(2))?;
     connection.set_read_timeout(Some(Duration::from_secs(2)))?;
@@ -55,7 +56,12 @@ pub fn engine_request(port: u16, token: &str, method: &str, path: &str, body: Op
     let separator = response.windows(4).position(|part| part == b"\r\n\r\n")
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid engine HTTP response"))?;
     let headers = std::str::from_utf8(&response[..separator]).map_err(io::Error::other)?;
-    if !headers.lines().next().unwrap_or_default().starts_with("HTTP/1.1 200 ") {
+    if !headers.lines().next().unwrap_or_default().starts_with("HTTP/1.1 ") {
+        return Err(io::Error::other("Invalid engine HTTP version"));
+    }
+    let status = headers.lines().next().unwrap_or_default().split_whitespace().nth(1)
+        .and_then(|value| value.parse::<u16>().ok()).ok_or_else(|| io::Error::other("Invalid engine HTTP status"))?;
+    if path != "/v1/requests" && status != 200 {
         return Err(io::Error::other("Engine rejected the request"));
     }
     let payload = &response[separator + 4..];
@@ -69,5 +75,49 @@ pub fn engine_request(port: u16, token: &str, method: &str, path: &str, body: Op
     if expected != Some(payload.len()) {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "Incomplete engine response"));
     }
-    serde_json::from_slice(payload).map_err(io::Error::other)
+    let value: Value = serde_json::from_slice(payload).map_err(io::Error::other)?;
+    if path == "/v1/requests" {
+        let successful = (200..300).contains(&status);
+        if !crate::contract::validate_response(&value) || value["ok"] != successful
+            || value.get("request_id") != expected_id.as_ref() {
+            return Err(io::Error::other("Invalid versioned engine response"));
+        }
+    }
+    Ok(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn versioned_http_conflicts_keep_their_typed_payload() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            let mut request = Vec::new();
+            loop {
+                let mut part = [0u8; 1024];
+                let received = stream.read(&mut part).unwrap();
+                assert!(received > 0 && request.len() + received <= 8192);
+                request.extend_from_slice(&part[..received]);
+                if let Some(separator) = request.windows(4).position(|part| part == b"\r\n\r\n") {
+                    let headers = std::str::from_utf8(&request[..separator]).unwrap();
+                    let length = headers.lines().find_map(|line| line.strip_prefix("Content-Length: ")).unwrap().parse::<usize>().unwrap();
+                    if request.len() >= separator + 4 + length { break; }
+                }
+            }
+            let body = serde_json::json!({"protocol_version":1,"request_id":"contract","ok":false,
+                "error":{"code":"REVISION_CONFLICT","request_id":"contract","message":"Reload settings",
+                    "retryable":false,"retry_at":null,"provenance":"local","details":{}}}).to_string();
+            write!(stream, "HTTP/1.1 409 Conflict\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+        });
+        let response = engine_request(port, "fixture-token", "POST", "/v1/requests",
+            Some(serde_json::json!({"protocol_version":1,"request_id":"contract","operation":"settings.get","params":{}})));
+        server.join().unwrap();
+        assert!(response.is_ok(), "A settings conflict must retain its typed result: {response:?}");
+        assert_eq!(response.unwrap()["error"]["code"], "REVISION_CONFLICT");
+    }
 }

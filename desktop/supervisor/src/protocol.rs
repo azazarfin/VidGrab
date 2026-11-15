@@ -35,6 +35,12 @@ impl Request {
                 }
                 Ok(())
             }
+            "v1.request" => {
+                let value = Value::Object(self.params.clone());
+                crate::contract::validate_request(&value)?;
+                if value["request_id"] != self.id { return Err("BAD_REQUEST"); }
+                Ok(())
+            }
             "status" | "activate" | "quit" | "quit_if_idle" => Err("BAD_REQUEST"),
             _ => Err("UNSUPPORTED_OPERATION"),
         }
@@ -74,6 +80,8 @@ pub fn failure(id: Option<&str>, code: &str) -> Value {
     let message = match code {
         "ORIGIN_REJECTED" => "This browser extension is not allowed to connect",
         "INCOMPATIBLE_VERSION" => "The companion and extension spike versions differ",
+        "APP_INCOMPATIBLE" => "Update VidGrab and the browser extension to compatible versions",
+        "BAD_REQUEST" => "The request does not match the supported companion contract",
         "UNSUPPORTED_OPERATION" => "This operation is unavailable in the lifecycle spike",
         "APP_MISSING" => "The installed companion could not be launched",
         "APP_UNAVAILABLE" => "The companion did not become ready before the deadline",
@@ -103,5 +111,37 @@ mod tests {
     fn active_downloads_have_an_actionable_removal_error() {
         assert_eq!(failure(Some("remove"), "DOWNLOADS_ACTIVE")["error"]["message"],
             "Finish active downloads before removing VidGrab");
+    }
+
+    #[test]
+    fn versioned_control_is_available_to_browser_and_desktop() {
+        let request = Request { spike_version: 1, id: "contract".into(), op: "v1.request".into(),
+            params: json!({"protocol_version":1,"request_id":"contract","operation":"settings.get","params":{}}).as_object().unwrap().clone() };
+        assert_eq!(request.validate(true), Ok(()));
+        assert_eq!(request.validate(false), Ok(()));
+    }
+
+    #[test]
+    fn versioned_settings_validate_before_owner_activation() {
+        let request = Request { spike_version: 1, id: "contract".into(), op: "v1.request".into(),
+            params: json!({"protocol_version":1,"request_id":"contract","operation":"settings.patch","idempotency_key":"stable",
+                "params":{"expected_revision":true,"patch":{"max_concurrent":4}}}).as_object().unwrap().clone() };
+        assert_eq!(request.validate(true), Err("BAD_REQUEST"));
+    }
+
+    #[test]
+    fn versioned_incompatibility_has_an_upgrade_message() {
+        let request = Request { spike_version: 1, id: "contract".into(), op: "v1.request".into(),
+            params: json!({"protocol_version":2,"request_id":"contract","operation":"settings.get","params":{}}).as_object().unwrap().clone() };
+        assert_eq!(request.validate(true), Err("APP_INCOMPATIBLE"));
+        assert!(failure(Some("contract"), "APP_INCOMPATIBLE")["error"]["message"].as_str().unwrap().contains("Update"));
+    }
+
+    #[test]
+    fn versioned_payload_reserves_space_for_native_compatibility_framing() {
+        let request = Request { spike_version: 1, id: "contract".into(), op: "v1.request".into(),
+            params: json!({"protocol_version":1,"request_id":"contract","operation":"settings.patch","idempotency_key":"stable",
+                "params":{"expected_revision":0,"patch":{"default_format":"a".repeat(64900)}}}).as_object().unwrap().clone() };
+        assert_eq!(request.validate(true), Err("MESSAGE_TOO_LARGE"));
     }
 }

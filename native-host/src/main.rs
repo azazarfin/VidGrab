@@ -48,8 +48,12 @@ fn bridge(config: &HostConfig, path: &PathBuf, request: &protocol::Request) -> s
     let Some(mut response) = connected else { return protocol::failure(Some(&request.id), "APP_UNAVAILABLE"); };
     response["id"] = serde_json::json!(request.id);
     if request.op == "status" || response["ok"] != true { return response; }
-    if response["data"]["state"] != "ready" && request.op == "fixture.download" {
+    if response["data"]["state"] != "ready" && (request.op == "fixture.download" || request.op == "v1.request") {
         return protocol::failure(Some(&request.id), "ENGINE_UNAVAILABLE");
+    }
+    if request.op == "v1.request" && !(response["data"]["protocol_min"].as_u64().is_some_and(|minimum| minimum <= 1)
+        && response["data"]["protocol_max"].as_u64().is_some_and(|maximum| maximum >= 1)) {
+        return protocol::failure(Some(&request.id), "APP_INCOMPATIBLE");
     }
     // After forwarding a mutation, its outcome can be unknown. Never replay it.
     transport::call_socket(&config.socket_path(), request).unwrap_or_else(|_| protocol::failure(Some(&request.id), "REQUEST_OUTCOME_UNKNOWN"))
@@ -97,6 +101,35 @@ mod tests {
     use super::*;
     use serde_json::json;
     use vidgrab_supervisor::installation::{CHROME_ORIGIN, FIREFOX_ID};
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_old_engine_is_rejected_before_forwarding_a_versioned_mutation() {
+        use std::os::unix::net::UnixListener;
+        let root = std::env::temp_dir().join(format!("vidgrab-v1-old-engine-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("state/ipc")).unwrap();
+        let config: HostConfig = serde_json::from_value(json!({
+            "app":root.join("must-not-launch"),"engine":root.join("missing-engine"),"data_dir":root.join("state"),
+            "download_dir":root.join("media"),"chrome_origin":CHROME_ORIGIN,"firefox_id":FIREFOX_ID})).unwrap();
+        let listener = UnixListener::bind(config.socket_path()).unwrap();
+        let serving = listener.try_clone().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = serving.accept().unwrap();
+            let handshake: protocol::Request = protocol::read_message(&mut stream).unwrap().unwrap();
+            protocol::write_message(&mut stream, &protocol::success(&handshake, json!({"state":"ready"}))).unwrap();
+        });
+        let request = protocol::Request { spike_version:1,id:"old-engine".into(),op:"v1.request".into(),
+            params:json!({"protocol_version":1,"request_id":"old-engine","operation":"settings.patch","idempotency_key":"stable",
+                "params":{"expected_revision":0,"patch":{"max_concurrent":4}}}).as_object().unwrap().clone() };
+        let response = bridge(&config, &root.join("host-config.json"), &request);
+        server.join().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let forwarded = listener.accept().is_ok();
+        drop(listener);
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(response["error"]["code"], "APP_INCOMPATIBLE");
+        assert!(!forwarded, "An old engine must receive no versioned mutation");
+    }
 
     #[cfg(windows)]
     #[test]

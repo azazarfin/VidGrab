@@ -1,6 +1,6 @@
 // Import the API client and utilities
 if (typeof importScripts === "function") {
-  importScripts("../lib/api.js", "../lib/utils.js", "../lib/native.js");
+  importScripts("../lib/protocol.js", "../lib/api.js", "../lib/utils.js", "../lib/native.js");
 }
 
 const DEFAULT_SETTINGS = {

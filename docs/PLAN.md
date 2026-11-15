@@ -1,6 +1,6 @@
 # VidGrab desktop-companion plan
 
-Status: P01 and P02 are complete for the selected Ubuntu 24.04/GNOME x86_64 and Windows 11 x64 preview baselines. Both platform reviews, packaged lifecycle/browser gates and measured size/startup results pass on 2026-11-10. Windows missing-WebView2 behavior uses reversible SDK discovery unavailability and an actual offline per-user install/render journey; physical runtime absence is not claimed. ADR-001 is accepted for this feasibility scope. P03 started on 2026-11-11 and its scoped backend acceptance passes on 2026-11-15. P04 is next; generated `/v1`, browser authentication UI, wider compatibility and final release remain separate gates.
+Status: P01 and P02 are complete for the selected Ubuntu 24.04/GNOME x86_64 and Windows 11 x64 preview baselines. Both platform reviews, packaged lifecycle/browser gates and measured size/startup results pass on 2026-11-10. Windows missing-WebView2 behavior uses reversible SDK discovery unavailability and an actual offline per-user install/render journey; physical runtime absence is not claimed. ADR-001 is accepted for this feasibility scope. P03 started on 2026-11-11 and its scoped backend acceptance passes on 2026-11-15. P04 is in progress: its generated fixture-only v1/settings foundation passes selected Fedora source/fresh-frozen checks. Normal-media/auth operations, actual client migration, wider target compatibility and final release remain separate gates.
 
 ## Approach
 
@@ -75,11 +75,15 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 
 ### [ ] P04 — Version the app/extension contract and synchronize settings
 
-- Add `/v1` models and generated clients in `packages/protocol/`; introduce request IDs, idempotency keys, typed errors, settings revisions, capabilities, and reconnectable event snapshots.
-- Implement the native bridge and authenticated internal API from the P02 spike. Keep native messaging separate from the long-lived download owner; add pairing/revocation for the optional loopback transport.
-- Replace extension-side authoritative download defaults with app-owned settings. Synchronize browser preferences while reporting actual browser-granted permissions separately.
-- Acceptance: two clients see consistent queue/settings state; stale updates conflict explicitly; reconnects do not duplicate jobs; incompatible versions produce an upgrade message.
-- Suggested commit: `feat(protocol): unify desktop and extension control`.
+**Foundation implemented on 2026-11-15; P04 remains open.** [ADR-025](DECISIONS.md#adr-025--p04-contract-and-settings-foundation) and [the validation checkpoint](VALIDATION.md#p04-contractsettings-foundation--2026-11-15) define its fixture-only scope. All 396 guarded Fedora cases, generated clients, Rust/renderer checks and selected source/fresh-frozen native journeys pass; changed Ubuntu/Windows/browser/GUI inputs are not certified.
+
+- [x] Add import-safe `/v1` models/schema and generated module/classic/TypeScript clients plus Rust validation inputs; implement IDs, stable mutation keys, typed errors, schema-9 revisions/receipts, capabilities and bounded reconnect snapshots.
+- [x] Carry six fixture-only operations through compatible native framing and the authenticated internal API. Negotiate capabilities before versioned mutations, retain independent ownership and hide packaged legacy routes/WebSockets.
+- [ ] Add normal-media probe/actions/fresh-auth operations and explicit safe per-job/auth-context models before enabling normal native execution.
+- [ ] Migrate extension/desktop callers and authoritative download defaults to the app. Synchronize browser preferences while reporting actual granted permissions separately.
+- [ ] Validate changed source/frozen/native and actual client behavior on both selected target baselines. Pairing/revocation remains an unimplemented optional transport; advertise it as disabled.
+- Acceptance remains: both actual clients see consistent queue/settings state; stale updates conflict explicitly; reconnects do not duplicate jobs; incompatible versions give an upgrade message.
+- Foundation commit: `feat(protocol): add versioned control and settings revisions`.
 
 ### [ ] P05 — Expand detection and make failures actionable
 

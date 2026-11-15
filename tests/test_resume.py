@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from backend.db.migrations import SCHEMA_VERSION
 
-from tests.support import OfflineTestCase
+from tests.support import OfflineTestCase, drop_protocol_schema
 
 NOW = "2026-11-14T00:00:00+00:00"
 
@@ -186,6 +186,7 @@ class ResumeTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
         selected = self.runtime("schema-five")
         await init_db(selected)
         with closing(sqlite3.connect(selected.db_path)) as db, db:
+            drop_protocol_schema(db)
             db.execute("DROP TABLE attempt_partials")
             db.execute("ALTER TABLE downloads DROP COLUMN auth_required")
             db.execute("PRAGMA user_version=5")
@@ -202,6 +203,7 @@ class ResumeTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
         selected = self.runtime("schema-six-rollback")
         await init_db(selected)
         with closing(sqlite3.connect(selected.db_path)) as db, db:
+            drop_protocol_schema(db)
             db.execute("DROP TABLE attempt_partials")
             db.execute("ALTER TABLE downloads DROP COLUMN auth_required")
             db.execute("PRAGMA user_version=5")

@@ -257,6 +257,7 @@ class QueueManager:
         download_dir: Optional[str] = None,
         user_agent: Optional[str] = None,
         idempotency_key: Optional[str] = None,
+        idempotency_intent: Optional[dict] = None,
     ) -> str:
         config = await self.settings.get_all()
         try:
@@ -313,13 +314,16 @@ class QueueManager:
             "auth_required": int(bool(cookies)),
             "job_kind": "playlist" if is_playlist or playlist_items else "media",
         }
-        operation = asyncio.create_task(self._admit(record, cookies, idempotency_key))
+        operation = asyncio.create_task(self._admit(record, cookies, idempotency_key, idempotency_intent))
         return await join_owned_task(operation)
 
-    async def _admit(self, record, cookies, idempotency_key):
+    async def _admit(self, record, cookies, idempotency_key, idempotency_intent=None):
         if self.stopping:
             raise HTTPException(503, "Engine is stopping")
-        record, created = await self.enqueues.admit(record, idempotency_key)
+        if idempotency_intent is None:
+            record, created = await self.enqueues.admit(record, idempotency_key)
+        else:
+            record, created = await self.enqueues.admit(record, idempotency_key, intent=idempotency_intent)
         task_id = record["id"]
         if not created:
             return task_id

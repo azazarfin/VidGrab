@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -5,9 +6,11 @@ from typing import Any, Dict, List
 
 import aiosqlite
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from backend.runtime import OutputPathError, RuntimeConfig
+from backend.db.settings import SettingsRepository
+from backend.engine.execution import join_owned_task
 
 logger = logging.getLogger("vidgrab.config")
 DEFAULT_CONFIG = {
@@ -31,7 +34,7 @@ DEFAULT_CONFIG = {
 
 
 class ConfigModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
     download_dir: str = Field(default=DEFAULT_CONFIG["download_dir"], min_length=1)
     max_concurrent: int = Field(default=DEFAULT_CONFIG["max_concurrent"], strict=True, ge=1, le=10)
@@ -61,8 +64,11 @@ def validate_stored_settings(values: dict) -> ConfigModel:
 
 
 class SettingsStore:
-    def __init__(self, runtime: RuntimeConfig):
+    def __init__(self, runtime: RuntimeConfig, owner=None):
         self.runtime = runtime
+        self.owner = owner
+        self.repository = SettingsRepository(runtime, owner)
+        self.on_change = None
 
     async def initialize(self):
         from backend.db.migrations import migrate_database
@@ -80,32 +86,35 @@ class SettingsStore:
 
     async def patch(self, settings: dict) -> ConfigModel:
         supplied = ConfigModel.model_validate(settings).model_dump(exclude_unset=True)
-        if not supplied:
-            return validate_stored_settings(await self.get_all())
-        async with aiosqlite.connect(self.runtime.db_path) as db:
-            await db.execute("BEGIN IMMEDIATE")
-            try:
-                async with db.execute("SELECT key, value FROM config") as cursor:
-                    current = {key: json.loads(value) for key, value in await cursor.fetchall()}
-                updated = self.validate_settings({**current, **supplied})
-                if "download_dir" in supplied:
-                    download_path = Path(updated.download_dir).expanduser().resolve()
-                    download_path.mkdir(parents=True, exist_ok=True)
-                    supplied["download_dir"] = updated.download_dir = str(download_path)
-                for key, value in supplied.items():
-                    await db.execute(
-                        "INSERT INTO config (key, value) VALUES (?, ?) "
-                        "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, json.dumps(value)),
-                    )
-                await db.commit()
-            except (OSError, OutputPathError) as error:
-                await db.rollback()
-                detail = str(error) if isinstance(error, OutputPathError) else "Choose a writable download directory"
-                raise HTTPException(status_code=400, detail=detail) from error
-            except BaseException:
-                await db.rollback()
-                raise
-        return updated
+        try:
+            result = await join_owned_task(asyncio.create_task(self._patch(supplied)))
+        except (OSError, OutputPathError) as error:
+            detail = str(error) if isinstance(error, OutputPathError) else "Choose a writable download directory"
+            raise HTTPException(status_code=400, detail=detail) from error
+        return ConfigModel.model_validate(result["values"])
+
+    async def patch_revision(self, supplied, expected_revision, key):
+        if self.owner is None:
+            from backend.runtime import RuntimeOwnershipError
+            raise RuntimeOwnershipError("Versioned settings require the active runtime owner")
+        return await join_owned_task(asyncio.create_task(self._patch(supplied, expected_revision=expected_revision, key=key)))
+
+    async def _patch(self, supplied, *, expected_revision=None, key=None):
+        result = await self.repository.patch(supplied, self.validate_settings, expected_revision=expected_revision, key=key,
+                                             validate_result=self.validate_wire if expected_revision is not None else None)
+        if result.changed and self.on_change is not None:
+            self.on_change()
+        return result.snapshot
+
+    def validate_wire(self, values):
+        from backend.api.models import SettingsValues
+        from backend.services.control_errors import ControlError
+        try:
+            return SettingsValues.model_validate(values)
+        except ValidationError as error:
+            fields = sorted({str(issue["loc"][0]) for issue in error.errors(include_input=False, include_context=False)})
+            raise ControlError("UNSUPPORTED_OPTION", 409, "Update the reported legacy settings to values this client can represent exactly",
+                               details={"fields": fields}) from error
 
 
 async def init_db(runtime: RuntimeConfig):

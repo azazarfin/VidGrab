@@ -160,10 +160,12 @@ class EnqueueIdentityTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
 
     async def test_nonfinite_or_oversized_requests_fail_before_admission_without_a_key(self):
         for arguments in ({"invalid": float("nan")}, {"oversized": "a" * 65536}):
-            with self.subTest(arguments=list(arguments)):
-                with self.assertRaises(HTTPException) as caught:
-                    await self.queue.enqueue("https://fixture.invalid/media", "best", extra_args=arguments)
-                self.assertEqual(caught.exception.status_code, 400)
+            for intent in (None, {"protocol_version": 1, "params": {"url": "https://fixture.invalid/media"}}):
+                with self.subTest(arguments=list(arguments), control_intent=intent is not None):
+                    with self.assertRaises(HTTPException) as caught:
+                        await self.queue.enqueue("https://fixture.invalid/media", "best", extra_args=arguments,
+                                                 idempotency_intent=intent)
+                    self.assertEqual(caught.exception.status_code, 400)
         self.assertEqual(self.query("SELECT COUNT(*) FROM downloads"), [(0,)])
 
 

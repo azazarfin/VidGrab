@@ -10,6 +10,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 
+def drop_protocol_schema(database):
+    """Return a current fixture to its pre-v9 protocol boundary before downgrade."""
+    for name in ("protocol_download_insert", "protocol_download_update", "protocol_download_delete", "protocol_event_retention"):
+        database.execute(f"DROP TRIGGER {name}")
+    for name in ("settings_receipts", "protocol_events", "protocol_state"):
+        database.execute(f"DROP TABLE {name}")
+    database.execute("ALTER TABLE downloads DROP COLUMN revision")
+
+
 class OfflineTestCase(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="vidgrab-test-")
