@@ -21,6 +21,7 @@ from backend.sanitizer import sanitize_text
 from backend.engine.execution import ProcessDownloadExecutor, ThreadDownloadExecutor, join_owned_task
 from backend.db.jobs import AttemptStore
 from backend.db.enqueue import EnqueueStore
+from backend.db.control_actions import ControlActionStore
 from backend.db.playlists import PlaylistStore, sync_parent
 from backend.services.playlists import PlaylistError, parse_selection, validate_playlist_result
 from backend.services.artifacts import completed_artifacts, prepare_workspace
@@ -29,6 +30,7 @@ from backend.services.job_state import RUNNABLE, TERMINAL, accepts_progress
 from backend.services.resume import FreshAuthRequired
 from backend.services.auth_context import validate_fresh_cookies
 from backend.services.retry_policy import decide
+from backend.services.control_errors import ControlError
 from backend.db.ownership import require_owner
 
 logger = logging.getLogger("vidgrab.queue_manager")
@@ -124,6 +126,7 @@ class QueueManager:
         self.active_tasks: Dict[str, asyncio.Task] = {}
         self.attempts = AttemptStore(runtime, owner)
         self.enqueues = EnqueueStore(runtime, owner)
+        self.control_actions = ControlActionStore()
         self.active_attempts = {}
         self.cancelled_tasks: set = set()
         self.in_memory_progress: Dict[str, Dict[str, Any]] = {}
@@ -133,6 +136,8 @@ class QueueManager:
         self.wakeup_event = asyncio.Event()
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.task_cookies: Dict[str, List[Dict[str, Any]]] = {}
+        self.task_headers = {}
+        self.allow_legacy_options = True
         self.cancel_locks: Dict[str, asyncio.Lock] = {}
         self.state_locks: Dict[str, asyncio.Lock] = {}
         self.stopping = False
@@ -229,6 +234,7 @@ class QueueManager:
         await self._recover()
         self.active_tasks.clear()
         self.task_cookies.clear()
+        self.task_headers.clear()
         logger.info("Queue manager loops and active execution stopped.")
 
     def is_cancelled(self, task_id: str) -> bool:
@@ -258,6 +264,9 @@ class QueueManager:
         user_agent: Optional[str] = None,
         idempotency_key: Optional[str] = None,
         idempotency_intent: Optional[dict] = None,
+        credential_loader=None,
+        requires_auth=False,
+        fixture_only=False,
     ) -> str:
         config = await self.settings.get_all()
         try:
@@ -290,6 +299,8 @@ class QueueManager:
             "download_dir": download_dir,
             "user_agent": user_agent
         }
+        if fixture_only:
+            options["fixture_only"] = True
         options_json = json.dumps(options)
         if is_playlist or playlist_items:
             try:
@@ -311,22 +322,33 @@ class QueueManager:
             "created_at": created_at,
             "download_options": options_json,
             "scheduled_at": scheduled_at,
-            "auth_required": int(bool(cookies)),
+            "auth_required": int(bool(cookies) or requires_auth),
             "job_kind": "playlist" if is_playlist or playlist_items else "media",
         }
-        operation = asyncio.create_task(self._admit(record, cookies, idempotency_key, idempotency_intent))
+        operation = asyncio.create_task(self._admit(record, cookies, idempotency_key, idempotency_intent, credential_loader))
         return await join_owned_task(operation)
 
-    async def _admit(self, record, cookies, idempotency_key, idempotency_intent=None):
+    async def _admit(self, record, cookies, idempotency_key, idempotency_intent=None, credential_loader=None):
         if self.stopping:
             raise HTTPException(503, "Engine is stopping")
-        if idempotency_intent is None:
+        auth = None
+        def prepare_credentials():
+            nonlocal auth
+            auth = credential_loader()
+        if credential_loader is not None:
+            record, created = await self.enqueues.admit(record, idempotency_key, intent=idempotency_intent,
+                                                       before_insert=prepare_credentials)
+        elif idempotency_intent is None:
             record, created = await self.enqueues.admit(record, idempotency_key)
         else:
             record, created = await self.enqueues.admit(record, idempotency_key, intent=idempotency_intent)
         task_id = record["id"]
         if not created:
             return task_id
+        if auth is not None:
+            cookies = auth["cookies"]
+            self.task_headers[task_id] = {name: auth[name] for name in ("user_agent", "referer") if auth.get(name)}
+            self.task_headers[task_id]["credential_url"] = auth["scope_url"]
         if cookies:
             self.task_cookies[task_id] = cookies
         self.in_memory_progress[task_id] = record
@@ -342,15 +364,27 @@ class QueueManager:
             self.wakeup_event.set()
         return task_id
 
-    async def cancel(self, task_id: str):
-        operation = asyncio.create_task(self._cancel(task_id))
-        await join_owned_task(operation)
+    async def cancel(self, task_id: str, *, control_action=None):
+        operation = asyncio.create_task(self._cancel(task_id, control_action=control_action))
+        return await join_owned_task(operation)
 
-    async def _cancel(self, task_id: str):
+    async def _cancel(self, task_id: str, *, control_action=None):
+        accepted = None
         async with self.cancel_locks.setdefault(task_id, asyncio.Lock()):
             async with self._state_lock(task_id):
                 async with self.attempts.transaction() as db:
                     await require_owner(db, self.owner)
+                    if control_action is not None:
+                        replay = await self.control_actions.replay(db, control_action)
+                        if replay is not None:
+                            return replay
+                        async with db.execute("SELECT * FROM downloads WHERE id=?", (task_id,)) as cursor:
+                            current = await cursor.fetchone()
+                        await self.control_actions.validate(db, control_action, current)
+                        if current["status"] == "cancelled":
+                            return await self.control_actions.record(db, control_action, task_id)
+                        if current["status"] in ("complete", "failed"):
+                            raise ControlError("STATE_CONFLICT", 409, "This download can no longer be cancelled")
                     cursor = await db.execute(
                         "UPDATE downloads SET status='cancelling' WHERE id=? AND status NOT IN ('complete', 'failed', 'cancelled')",
                         (task_id,),
@@ -363,6 +397,8 @@ class QueueManager:
                         AND status NOT IN ('complete', 'failed', 'cancelled')""", (task_id,))
                     async with db.execute("SELECT id FROM downloads WHERE parent_id=? AND status='cancelling'", (task_id,)) as cursor:
                         children = [row[0] for row in await cursor.fetchall()]
+                    if control_action is not None:
+                        accepted = await self.control_actions.record(db, control_action, task_id)
                 self.cancelled_tasks.add(task_id)
                 self.cancelled_tasks.update(children)
                 if task_id in self.in_memory_progress:
@@ -380,29 +416,51 @@ class QueueManager:
             await self._finish(task_id, "cancelled", attempt_id=attempt_id)
             await self._refresh_playlist(task_id)
             self.task_cookies.pop(task_id, None)
+            self.task_headers.pop(task_id, None)
             self.cancelled_tasks.discard(task_id)
+            return accepted
 
-    async def retry(self, task_id, cookies=None, user_agent=None, *, expected_status=None):
-        operation = asyncio.create_task(self._retry(task_id, cookies, user_agent, expected_status=expected_status))
-        await join_owned_task(operation)
+    async def retry(self, task_id, cookies=None, user_agent=None, *, expected_status=None, control_action=None, credential_loader=None):
+        operation = asyncio.create_task(self._retry(task_id, cookies, user_agent, expected_status=expected_status,
+                                                    control_action=control_action, credential_loader=credential_loader))
+        return await join_owned_task(operation)
 
-    async def _retry(self, task_id, cookies=None, user_agent=None, *, expected_status=None):
+    async def _retry(self, task_id, cookies=None, user_agent=None, *, expected_status=None, control_action=None, credential_loader=None):
         messages = []
+        accepted = None
+        headers = None
         async with self._state_lock(task_id):
             async with self.attempts.transaction() as db:
                 await require_owner(db, self.owner)
+                if control_action is not None:
+                    replay = await self.control_actions.replay(db, control_action)
+                    if replay is not None:
+                        return replay
                 async with db.execute("SELECT * FROM downloads WHERE id=?", (task_id,)) as cursor:
                     row = await cursor.fetchone()
+                if control_action is not None:
+                    await self.control_actions.validate(db, control_action, row)
                 if row is None:
                     raise HTTPException(status_code=404, detail="Download task not found")
                 if expected_status is not None and row["status"] != expected_status:
+                    if control_action is not None:
+                        raise ControlError("STATE_CONFLICT", 409, "This download no longer waits for browser authentication")
                     raise HTTPException(status_code=400, detail="Download no longer waits for browser authentication")
                 if row["status"] not in ("failed", "cancelled", "waiting_for_auth"):
+                    if control_action is not None:
+                        raise ControlError("STATE_CONFLICT", 409, "This download is still active or waiting for its retry deadline")
                     raise HTTPException(status_code=400, detail="Only failed, cancelled or authentication-waiting downloads can be retried")
+                if credential_loader is not None:
+                    context = credential_loader(row["url"], row["id"])
+                    cookies = context["cookies"]
+                    headers = {name: context[name] for name in ("user_agent", "referer") if context.get(name)}
+                    headers["credential_url"] = context["scope_url"]
                 if row["status"] == "waiting_for_auth" or row["auth_required"]:
                     try:
                         validate_fresh_cookies(row["url"], cookies, self.clock())
                     except ValueError as error:
+                        if control_action is not None:
+                            raise ControlError("AUTH_REQUIRED", 401, "Share fresh browser cookies before retrying this download") from error
                         raise HTTPException(status_code=400, detail=str(error)) from error
                 options = json.loads(row["download_options"] or "{}")
                 async with db.execute("SELECT * FROM downloads WHERE parent_id=? ORDER BY playlist_index", (task_id,)) as cursor:
@@ -422,19 +480,33 @@ class QueueManager:
                     current.update(status="queued", error_message=None, progress=0.0, speed=0.0,
                                    eta=None, completed_at=None, error_code=None, retry_at=None, download_options=options_json,
                                    auth_required=int(bool(cookies) or row["auth_required"]))
+                if control_action is not None:
+                    accepted = await self.control_actions.record(db, control_action, task_id)
+                    async with db.execute("SELECT * FROM downloads WHERE id=?", (task_id,)) as cursor:
+                        current = dict(await cursor.fetchone())
             if children:
                 for child, scoped in selected:
                     if scoped:
                         self.task_cookies[child["id"]] = cookies
+                        if headers is not None:
+                            self.task_headers[child["id"]] = dict(headers)
+                        else:
+                            self.task_headers.pop(child["id"], None)
                     else:
                         self.task_cookies.pop(child["id"], None)
+                        self.task_headers.pop(child["id"], None)
                     self.cancelled_tasks.discard(child["id"])
                     self.in_memory_progress[child["id"]] = child
                     messages.append({"event": "task_" + child["status"], "data": child})
             elif cookies:
                 self.task_cookies[task_id] = cookies
+                if headers is not None:
+                    self.task_headers[task_id] = dict(headers)
+                else:
+                    self.task_headers.pop(task_id, None)
             else:
                 self.task_cookies.pop(task_id, None)
+                self.task_headers.pop(task_id, None)
             self.cancelled_tasks.discard(task_id)
             self.in_memory_progress[task_id] = current
         self.wakeup_event.set()
@@ -442,6 +514,7 @@ class QueueManager:
             await self.connections.broadcast(message)
         await self.connections.broadcast({"event": "task_" + current["status"], "data": current})
         await self._refresh_playlist(task_id)
+        return accepted
 
     async def _retry_children(self, db, parent, children, cookies, user_agent):
         if any(child["status"] not in TERMINAL and child["status"] != "waiting_for_auth" for child in children):
@@ -495,6 +568,7 @@ class QueueManager:
             for job_id in removed:
                 self.in_memory_progress.pop(job_id, None)
                 self.task_cookies.pop(job_id, None)
+                self.task_headers.pop(job_id, None)
             return removed
         return await join_owned_task(asyncio.create_task(remove()))
 
@@ -683,6 +757,7 @@ class QueueManager:
             prepare_workspace(self.runtime, attempt)
             workspace_ready = True
             cookies = self.task_cookies.pop(task_id, None)
+            headers = self.task_headers.pop(task_id, {})
             if cookies:
                 creation = asyncio.create_task(asyncio.to_thread(create_cookie_file, cookies, self.runtime, attempt))
                 cookies_file_path = await join_owned_task(creation)
@@ -702,9 +777,13 @@ class QueueManager:
                 is_playlist=row[2] == "playlist", sponsorblock_enabled=config.get("sponsorblock_enabled", False),
                 sponsorblock_categories=config.get("sponsorblock_categories", []), sponsorblock_mode=config.get("sponsorblock_mode", "remove"),
                 postprocess_codec=config.get("postprocess_codec", "none"), postprocess_normalize_audio=config.get("postprocess_normalize_audio", False),
-                custom_args_str=config.get("custom_ytdlp_args", ""), download_threads=config.get("download_threads", 4),
-                gpu_accelerated_conversion=config.get("gpu_accelerated_conversion", False), extra_args=options.get("extra_args"),
-                user_agent=options.get("user_agent"),
+                custom_args_str=config.get("custom_ytdlp_args", "") if self.allow_legacy_options else "",
+                download_threads=config.get("download_threads", 4),
+                gpu_accelerated_conversion=config.get("gpu_accelerated_conversion", False),
+                extra_args=options.get("extra_args") if self.allow_legacy_options else None,
+                user_agent=headers.get("user_agent", options.get("user_agent")), referer=headers.get("referer"),
+                credential_url=headers.get("credential_url"),
+                fixture_only=options.get("fixture_only", False),
             )
             if self.is_cancelled(task_id):
                 raise asyncio.CancelledError

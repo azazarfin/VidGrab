@@ -2,6 +2,175 @@
   "max_message_bytes": 65536,
   "max_payload_bytes": 64512,
   "operations": {
+    "auth.create": {
+      "mutation": true,
+      "params": {
+        "$defs": {
+          "BrowserCookie": {
+            "additionalProperties": false,
+            "properties": {
+              "domain": {
+                "maxLength": 253,
+                "minLength": 1,
+                "title": "Domain",
+                "type": "string"
+              },
+              "expirationDate": {
+                "anyOf": [
+                  {
+                    "maximum": 253402300799,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Expirationdate"
+              },
+              "name": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "title": "Name",
+                "type": "string"
+              },
+              "path": {
+                "default": "/",
+                "maxLength": 1024,
+                "minLength": 1,
+                "title": "Path",
+                "type": "string"
+              },
+              "secure": {
+                "default": false,
+                "title": "Secure",
+                "type": "boolean"
+              },
+              "value": {
+                "maxLength": 16384,
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "domain",
+              "name",
+              "value"
+            ],
+            "title": "BrowserCookie",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "cookies": {
+            "items": {
+              "$ref": "#/$defs/BrowserCookie"
+            },
+            "maxItems": 128,
+            "minItems": 1,
+            "title": "Cookies",
+            "type": "array"
+          },
+          "instance_id": {
+            "pattern": "^[!-~]{1,128}$",
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Job Id"
+          },
+          "referer": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Referer"
+          },
+          "ttl_seconds": {
+            "default": 300,
+            "maximum": 900,
+            "minimum": 30,
+            "title": "Ttl Seconds",
+            "type": "integer"
+          },
+          "url": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          },
+          "user_agent": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "User Agent"
+          }
+        },
+        "required": [
+          "instance_id",
+          "url",
+          "cookies"
+        ],
+        "title": "AuthParams",
+        "type": "object"
+      },
+      "result": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "maximum": 253402300799,
+            "minimum": 0,
+            "title": "Expires At",
+            "type": "number"
+          },
+          "instance_id": {
+            "pattern": "^[!-~]{1,128}$",
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "reference": {
+            "pattern": "^[!-~]{1,128}$",
+            "title": "Reference",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reference",
+          "instance_id",
+          "expires_at"
+        ],
+        "title": "AuthReference",
+        "type": "object"
+      }
+    },
     "capabilities.get": {
       "mutation": false,
       "params": {
@@ -30,6 +199,11 @@
           "fixture_only": {
             "title": "Fixture Only",
             "type": "boolean"
+          },
+          "instance_id": {
+            "pattern": "^[!-~]{1,128}$",
+            "title": "Instance Id",
+            "type": "string"
           },
           "max_message_bytes": {
             "const": 65536,
@@ -70,6 +244,7 @@
           "max_message_bytes",
           "max_payload_bytes",
           "fixture_only",
+          "instance_id",
           "paired_loopback",
           "features",
           "component_versions"
@@ -78,9 +253,233 @@
         "type": "object"
       }
     },
+    "downloads.action": {
+      "mutation": true,
+      "params": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "cancel",
+              "retry"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "auth_ref": {
+            "anyOf": [
+              {
+                "pattern": "^[!-~]{1,128}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Auth Ref"
+          },
+          "expected_revision": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "job_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "expected_revision",
+          "action"
+        ],
+        "title": "ActionParams",
+        "type": "object"
+      },
+      "result": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted_revision": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Accepted Revision",
+            "type": "integer"
+          },
+          "accepted_status": {
+            "title": "Accepted Status",
+            "type": "string"
+          },
+          "action": {
+            "enum": [
+              "cancel",
+              "retry",
+              "authenticate"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "action",
+          "accepted_status",
+          "accepted_revision"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    "downloads.authenticate": {
+      "mutation": true,
+      "params": {
+        "additionalProperties": false,
+        "properties": {
+          "auth_ref": {
+            "pattern": "^[!-~]{1,128}$",
+            "title": "Auth Ref",
+            "type": "string"
+          },
+          "expected_revision": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "job_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "expected_revision",
+          "auth_ref"
+        ],
+        "title": "AuthenticationParams",
+        "type": "object"
+      },
+      "result": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted_revision": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Accepted Revision",
+            "type": "integer"
+          },
+          "accepted_status": {
+            "title": "Accepted Status",
+            "type": "string"
+          },
+          "action": {
+            "enum": [
+              "cancel",
+              "retry",
+              "authenticate"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "action",
+          "accepted_status",
+          "accepted_revision"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      }
+    },
     "downloads.enqueue": {
       "mutation": true,
       "params": {
+        "$defs": {
+          "DownloadOptions": {
+            "additionalProperties": false,
+            "properties": {
+              "download_subtitles": {
+                "default": false,
+                "title": "Download Subtitles",
+                "type": "boolean"
+              },
+              "embed_subtitles": {
+                "default": false,
+                "title": "Embed Subtitles",
+                "type": "boolean"
+              },
+              "embed_thumbnail": {
+                "default": false,
+                "title": "Embed Thumbnail",
+                "type": "boolean"
+              },
+              "is_playlist": {
+                "default": false,
+                "title": "Is Playlist",
+                "type": "boolean"
+              },
+              "playlist_items": {
+                "anyOf": [
+                  {
+                    "maxLength": 1024,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Playlist Items"
+              },
+              "subtitle_format": {
+                "default": "srt",
+                "enum": [
+                  "srt",
+                  "vtt",
+                  "ass",
+                  "ttml",
+                  "best"
+                ],
+                "title": "Subtitle Format",
+                "type": "string"
+              },
+              "subtitle_langs": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 16,
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Subtitle Langs"
+              }
+            },
+            "title": "DownloadOptions",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "properties": {
           "audio_format": {
@@ -100,6 +499,19 @@
             "title": "Audio Only",
             "type": "boolean"
           },
+          "auth_ref": {
+            "anyOf": [
+              {
+                "pattern": "^[!-~]{1,128}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Auth Ref"
+          },
           "format_id": {
             "anyOf": [
               {
@@ -112,6 +524,9 @@
             ],
             "default": null,
             "title": "Format Id"
+          },
+          "options": {
+            "$ref": "#/$defs/DownloadOptions"
           },
           "thumbnail_url": {
             "anyOf": [
@@ -800,6 +1215,431 @@
         "type": "object"
       }
     },
+    "probes.create": {
+      "mutation": false,
+      "params": {
+        "additionalProperties": false,
+        "properties": {
+          "auth_ref": {
+            "anyOf": [
+              {
+                "pattern": "^[!-~]{1,128}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Auth Ref"
+          },
+          "entry_limit": {
+            "default": 25,
+            "maximum": 128,
+            "minimum": 1,
+            "title": "Entry Limit",
+            "type": "integer"
+          },
+          "format_limit": {
+            "default": 50,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Format Limit",
+            "type": "integer"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Job Id"
+          },
+          "url": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "ProbeParams",
+        "type": "object"
+      },
+      "result": {
+        "$defs": {
+          "ProbeEntry": {
+            "additionalProperties": false,
+            "properties": {
+              "duration": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Duration"
+              },
+              "id": {
+                "maxLength": 256,
+                "title": "Id",
+                "type": "string"
+              },
+              "thumbnail": {
+                "anyOf": [
+                  {
+                    "maxLength": 16384,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Thumbnail"
+              },
+              "title": {
+                "maxLength": 512,
+                "title": "Title",
+                "type": "string"
+              },
+              "url": {
+                "maxLength": 16384,
+                "title": "Url",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "duration",
+              "thumbnail",
+              "url"
+            ],
+            "title": "ProbeEntry",
+            "type": "object"
+          },
+          "ProbeFormat": {
+            "additionalProperties": false,
+            "properties": {
+              "acodec": {
+                "anyOf": [
+                  {
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Acodec"
+              },
+              "container": {
+                "anyOf": [
+                  {
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Container"
+              },
+              "ext": {
+                "maxLength": 32,
+                "title": "Ext",
+                "type": "string"
+              },
+              "filesize": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Filesize"
+              },
+              "filesize_approx": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Filesize Approx"
+              },
+              "format_id": {
+                "maxLength": 1024,
+                "title": "Format Id",
+                "type": "string"
+              },
+              "fps": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Fps"
+              },
+              "resolution": {
+                "anyOf": [
+                  {
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Resolution"
+              },
+              "tbr": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Tbr"
+              },
+              "vcodec": {
+                "anyOf": [
+                  {
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Vcodec"
+              }
+            },
+            "required": [
+              "format_id",
+              "ext",
+              "resolution",
+              "filesize",
+              "filesize_approx",
+              "vcodec",
+              "acodec",
+              "fps",
+              "tbr",
+              "container"
+            ],
+            "title": "ProbeFormat",
+            "type": "object"
+          },
+          "ProbeSubtitle": {
+            "additionalProperties": false,
+            "properties": {
+              "ext": {
+                "maxLength": 32,
+                "title": "Ext",
+                "type": "string"
+              },
+              "name": {
+                "maxLength": 128,
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ext",
+              "name"
+            ],
+            "title": "ProbeSubtitle",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "duration": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Duration"
+          },
+          "entries": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/ProbeEntry"
+                },
+                "maxItems": 128,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Entries"
+          },
+          "entries_truncated": {
+            "title": "Entries Truncated",
+            "type": "boolean"
+          },
+          "entry_count": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Entry Count",
+            "type": "integer"
+          },
+          "format_count": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Format Count",
+            "type": "integer"
+          },
+          "formats": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/ProbeFormat"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Formats"
+          },
+          "formats_truncated": {
+            "title": "Formats Truncated",
+            "type": "boolean"
+          },
+          "is_playlist": {
+            "title": "Is Playlist",
+            "type": "boolean"
+          },
+          "probe_id": {
+            "pattern": "^[!-~]{1,128}$",
+            "title": "Probe Id",
+            "type": "string"
+          },
+          "subtitles": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/$defs/ProbeSubtitle"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Subtitles"
+          },
+          "thumbnail": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Thumbnail"
+          },
+          "title": {
+            "maxLength": 512,
+            "title": "Title",
+            "type": "string"
+          },
+          "uploader": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Uploader"
+          },
+          "url": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "probe_id",
+          "url",
+          "title",
+          "thumbnail",
+          "duration",
+          "uploader",
+          "is_playlist",
+          "entries",
+          "formats",
+          "subtitles",
+          "format_count",
+          "entry_count",
+          "formats_truncated",
+          "entries_truncated"
+        ],
+        "title": "ProbeResult",
+        "type": "object"
+      }
+    },
     "settings.get": {
       "mutation": false,
       "params": {
@@ -1286,6 +2126,70 @@
   },
   "response": {
     "$defs": {
+      "ActionResult": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted_revision": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Accepted Revision",
+            "type": "integer"
+          },
+          "accepted_status": {
+            "title": "Accepted Status",
+            "type": "string"
+          },
+          "action": {
+            "enum": [
+              "cancel",
+              "retry",
+              "authenticate"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "action",
+          "accepted_status",
+          "accepted_revision"
+        ],
+        "title": "ActionResult",
+        "type": "object"
+      },
+      "AuthReference": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "maximum": 253402300799,
+            "minimum": 0,
+            "title": "Expires At",
+            "type": "number"
+          },
+          "instance_id": {
+            "pattern": "^[!-~]{1,128}$",
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "reference": {
+            "pattern": "^[!-~]{1,128}$",
+            "title": "Reference",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reference",
+          "instance_id",
+          "expires_at"
+        ],
+        "title": "AuthReference",
+        "type": "object"
+      },
       "Capabilities": {
         "additionalProperties": false,
         "properties": {
@@ -1306,6 +2210,11 @@
           "fixture_only": {
             "title": "Fixture Only",
             "type": "boolean"
+          },
+          "instance_id": {
+            "pattern": "^[!-~]{1,128}$",
+            "title": "Instance Id",
+            "type": "string"
           },
           "max_message_bytes": {
             "const": 65536,
@@ -1346,6 +2255,7 @@
           "max_message_bytes",
           "max_payload_bytes",
           "fixture_only",
+          "instance_id",
           "paired_loopback",
           "features",
           "component_versions"
@@ -1449,7 +2359,14 @@
               "INTERNAL_ERROR",
               "AUTH_REQUIRED",
               "RATE_LIMITED",
-              "UNSUPPORTED_MEDIA"
+              "UNSUPPORTED_MEDIA",
+              "AUTH_CONTEXT_EXPIRED",
+              "AUTH_CONTEXT_SCOPE",
+              "STATE_CONFLICT",
+              "NOT_FOUND",
+              "REQUEST_BUDGET_EXHAUSTED",
+              "NETWORK_ERROR",
+              "HTTP_ERROR"
             ],
             "title": "Code",
             "type": "string"
@@ -1755,6 +2672,369 @@
         "type": "object"
       },
       "JsonValue": {},
+      "ProbeEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "duration": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Duration"
+          },
+          "id": {
+            "maxLength": 256,
+            "title": "Id",
+            "type": "string"
+          },
+          "thumbnail": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Thumbnail"
+          },
+          "title": {
+            "maxLength": 512,
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "maxLength": 16384,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "duration",
+          "thumbnail",
+          "url"
+        ],
+        "title": "ProbeEntry",
+        "type": "object"
+      },
+      "ProbeFormat": {
+        "additionalProperties": false,
+        "properties": {
+          "acodec": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Acodec"
+          },
+          "container": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Container"
+          },
+          "ext": {
+            "maxLength": 32,
+            "title": "Ext",
+            "type": "string"
+          },
+          "filesize": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Filesize"
+          },
+          "filesize_approx": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Filesize Approx"
+          },
+          "format_id": {
+            "maxLength": 1024,
+            "title": "Format Id",
+            "type": "string"
+          },
+          "fps": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fps"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resolution"
+          },
+          "tbr": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tbr"
+          },
+          "vcodec": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Vcodec"
+          }
+        },
+        "required": [
+          "format_id",
+          "ext",
+          "resolution",
+          "filesize",
+          "filesize_approx",
+          "vcodec",
+          "acodec",
+          "fps",
+          "tbr",
+          "container"
+        ],
+        "title": "ProbeFormat",
+        "type": "object"
+      },
+      "ProbeResult": {
+        "additionalProperties": false,
+        "properties": {
+          "duration": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Duration"
+          },
+          "entries": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/ProbeEntry"
+                },
+                "maxItems": 128,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Entries"
+          },
+          "entries_truncated": {
+            "title": "Entries Truncated",
+            "type": "boolean"
+          },
+          "entry_count": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Entry Count",
+            "type": "integer"
+          },
+          "format_count": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Format Count",
+            "type": "integer"
+          },
+          "formats": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/ProbeFormat"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Formats"
+          },
+          "formats_truncated": {
+            "title": "Formats Truncated",
+            "type": "boolean"
+          },
+          "is_playlist": {
+            "title": "Is Playlist",
+            "type": "boolean"
+          },
+          "probe_id": {
+            "pattern": "^[!-~]{1,128}$",
+            "title": "Probe Id",
+            "type": "string"
+          },
+          "subtitles": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "$ref": "#/$defs/ProbeSubtitle"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Subtitles"
+          },
+          "thumbnail": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Thumbnail"
+          },
+          "title": {
+            "maxLength": 512,
+            "title": "Title",
+            "type": "string"
+          },
+          "uploader": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Uploader"
+          },
+          "url": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "probe_id",
+          "url",
+          "title",
+          "thumbnail",
+          "duration",
+          "uploader",
+          "is_playlist",
+          "entries",
+          "formats",
+          "subtitles",
+          "format_count",
+          "entry_count",
+          "formats_truncated",
+          "entries_truncated"
+        ],
+        "title": "ProbeResult",
+        "type": "object"
+      },
+      "ProbeSubtitle": {
+        "additionalProperties": false,
+        "properties": {
+          "ext": {
+            "maxLength": 32,
+            "title": "Ext",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 128,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ext",
+          "name"
+        ],
+        "title": "ProbeSubtitle",
+        "type": "object"
+      },
       "SettingsSnapshot": {
         "additionalProperties": false,
         "properties": {
@@ -1966,6 +3246,15 @@
               },
               {
                 "$ref": "#/$defs/EventBatch"
+              },
+              {
+                "$ref": "#/$defs/ProbeResult"
+              },
+              {
+                "$ref": "#/$defs/AuthReference"
+              },
+              {
+                "$ref": "#/$defs/ActionResult"
               }
             ],
             "title": "Data"

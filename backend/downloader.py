@@ -180,7 +180,9 @@ def run_download(
     user_agent: Optional[str] = None,
     components: Optional[Dict[str, str]] = None,
     attempt_dir: Optional[str] = None,
-    resume_attempt: Optional[Dict[str, Any]] = None
+    resume_attempt: Optional[Dict[str, Any]] = None,
+    referer: Optional[str] = None,
+    credential_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Synchronous yt-dlp attempt, normally run inside an owned worker process."""
     
@@ -253,6 +255,9 @@ def run_download(
         # App-owned paths win over legacy custom options and host PATH discovery.
         ydl_opts['ffmpeg_location'] = str(Path(components['ffmpeg']).parent)
         ydl_opts['js_runtimes'] = {'deno': {'path': components['deno']}}
+    for name, value in (("User-Agent", user_agent), ("Referer", referer)):
+        if value:
+            ydl_opts.setdefault('http_headers', {})[name] = value
 
     if download_threads > 1:
         ydl_opts['concurrent_fragment_downloads'] = download_threads
@@ -361,7 +366,7 @@ def run_download(
         if resume_attempt is not None:
             from backend.services.request_network import install_request_budget
             budget = install_request_budget(ydl, runtime, {"owner_id": resume_attempt["owner_id"],
-                "attempt_id": resume_attempt["id"]}, is_cancelled_cb or (lambda: False))
+                "attempt_id": resume_attempt["id"]}, is_cancelled_cb or (lambda: False), credential_url=credential_url)
             cleanup.callback(budget.close)
         if is_playlist or playlist_items:
             from backend.services.playlists import extract_playlist

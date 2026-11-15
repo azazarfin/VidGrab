@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 def drop_protocol_schema(database):
     """Return a current fixture to its pre-v9 protocol boundary before downgrade."""
+    database.execute("DROP TABLE IF EXISTS control_action_receipts")
     for name in ("protocol_download_insert", "protocol_download_update", "protocol_download_delete", "protocol_event_retention"):
         database.execute(f"DROP TRIGGER {name}")
     for name in ("settings_receipts", "protocol_events", "protocol_state"):

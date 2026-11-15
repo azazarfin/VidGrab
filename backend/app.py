@@ -62,6 +62,10 @@ def create_app(
                     raise
                 else:
                     await owner.stop()
+                finally:
+                    control = getattr(app.state, "control", None)
+                    if control is not None:
+                        control.close()
             await join_owned_task(asyncio.create_task(cleanup()))
 
     app = FastAPI(

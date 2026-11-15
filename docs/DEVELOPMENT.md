@@ -1,12 +1,12 @@
 # VidGrab development
 
-The P02 fixture desktop/engine/native bridge is accepted for the selected Ubuntu/GNOME and Windows 11 preview baselines. P03 backend durability is accepted for the selected controlled fixtures. P04 has an implemented fixture-only v1/settings foundation; ordinary-media/auth operations, actual client migration and target checks remain open. Full release acceptance and the migrated download UI remain pending. The ASGI development adapter is `backend.main:app`; it resolves user paths without initializing SQLite or starting workers during import.
+The P02 fixture desktop/engine/native bridge is accepted for the selected Ubuntu/GNOME and Windows 11 preview baselines. P03 backend durability is accepted for the selected controlled fixtures. P04 implements ten v1 operations, schema-10 action receipts and ordinary media with volatile scoped authentication, validated on Fedora source/fresh-frozen inputs; actual client migration and changed target checks remain open. Full release acceptance and the migrated download UI remain pending. The ASGI development adapter is `backend.main:app`; it resolves user paths without initializing SQLite or starting workers during import.
 
 ## Locked setup and deterministic checks
 
 Run from the repository root with Python 3.11+ and uv. `pyproject.toml` pins the selected direct dependencies; `uv.lock` locks their transitive dependencies and artifacts.
 
-The project baseline is >=3.11; `yt-dlp==2026.6.9` itself declares >=3.10. Existing platform evidence uses Fedora Python 3.14.8, Ubuntu userspace 3.12.3 and Windows 11 3.12.16; Python 3.11 remains unexecuted. All 396 current guarded cases pass on Fedora in eight exact disjoint groups. Earlier P03 Windows/Ubuntu results cover 361 cases, including nine Windows POSIX skips; the P04 additions/changed runtime have not run on those targets. Read [VALIDATION.md](VALIDATION.md) for each checkpoint and its limits.
+The project baseline is >=3.11; `yt-dlp==2026.6.9` itself declares >=3.10. Existing platform evidence uses Fedora Python 3.14.8, Ubuntu userspace 3.12.3 and Windows 11 3.12.16; Python 3.11 remains unexecuted. All 432 current guarded cases pass on Fedora in one complete discovery run. Earlier P03 Windows/Ubuntu results cover 361 cases, including nine Windows POSIX skips; the P04 additions/changed runtime have not run on those targets. Read [VALIDATION.md](VALIDATION.md) for each checkpoint and its limits.
 
 ```sh
 uv sync --frozen
@@ -439,8 +439,26 @@ node tests/check_extension_bootstrap.mjs
 cargo test --release --locked --offline
 ```
 
-`packages/protocol/README.md` describes the six operations, framing, mutation keys and snapshot rules. Edit Pydantic models or `client-runtime.js`, then regenerate all checked outputs/mirrors. Desktop `npm run build` includes TypeScript checking. Locked offline `cargo check --release -p vidgrab-desktop` additionally needs the target GTK/WebKit development metadata; it is a compile check, without a GUI/package acceptance claim. The Fedora checkpoint uses private pkg-config metadata backed by verified installed libraries, recorded in `local-sdk.json`. Do not reuse it on another target. GdkPixbuf RPM `2.44.6^really2.44.4` has exported ABI 2.44.4.
+`packages/protocol/README.md` describes the ten operations, framing, mutation keys, scoped authentication and snapshot rules. Edit Pydantic models or `client-runtime.js`, then regenerate all checked outputs/mirrors. Desktop `npm run build` includes TypeScript checking. Locked offline `cargo check --release -p vidgrab-desktop` additionally needs the target GTK/WebKit development metadata; it is a compile check, without a GUI/package acceptance claim. The Fedora checkpoint uses private pkg-config metadata backed by verified installed libraries, recorded in `local-sdk.json`. Do not reuse it on another target. GdkPixbuf RPM `2.44.6^really2.44.4` has exported ABI 2.44.4.
 
 `tests/check_native_lifecycle.py --bundle <fresh-staged-bundle> --case NativeLifecycleChecks.test_versioned_control_replays_settings_and_downloads_after_owner_restart` is opt-in. Run it with private bwrap network/PID/home state; native children use empty PATH/PYTHONPATH/PYTHONHOME. It drives separate Chrome-shaped and Firefox-shaped CLI callers with numeric-loopback fixture media and temporary state, without registering a real host or launching a browser. The accepted whole frozen suite has twelve cases. The source variant injects an explicitly verified tool directory into an owned executable shim; this is source instrumentation, not a shipped entrypoint. `process-inputs-2.json`, `native-source-final.json` and `native-frozen-final.json` retain exact commands and paths. Use fresh staging; preserve old bundles and failure receipts.
 
 Current evidence is ignored `packaging/out/p04-contract-_czh9xwn/`, via `p04-contract-current.json`. The fresh Fedora freeze keeps locked components/dependencies and has the retained optional absent-`curl_cffi` collection warning. It does not establish Ubuntu/Windows or installed-browser/UI/release compatibility. Native ordinary-media execution, probes/actions/auth refresh, browser preferences/permissions and full generated-client migration remain P04 follow-up work.
+
+## P04 ordinary-media and authentication checks
+
+The current packaged entrypoint enables ordinary HTTP(S) under P03 request/attempt authority. The factory retains explicit `media_mode="ordinary"` selection and a fixture default. `/spike/fixture` keeps its per-job guard; legacy routes/WebSockets stay hidden and pairing stays disabled. Importing the factory does not select/start a runtime.
+
+```sh
+.venv/bin/python -B -m packages.protocol.generate --check
+.venv/bin/python -B -m unittest tests.test_control_media -v
+.venv/bin/python -B -m unittest discover -s tests -v
+node tests/check_protocol_client.mjs
+node tests/check_extension_bootstrap.mjs
+```
+
+The 36 media cases include strict options, context TTL/capacity/scope, actual loopback redirect credential stripping, typed HTTP/admission deadlines, owner/receipt rollback, joined cancellation and schema-9 upgrade/restart replay. All 432 guarded cases pass on Fedora. The existing guard class remains unchanged; the cancellation observer now forwards the optional action argument and the fixture-guard test imports its owning module.
+
+After a fresh locked freeze/native build, run `tests/check_native_lifecycle.py --bundle <fresh-staged-bundle>` in the documented private bwrap network/PID/home environment. The suite has thirteen cases; `NativeLifecycleChecks.test_ordinary_probe_cookie_actions_and_auth_replay_after_owner_restart` is the new focused journey. It uses generated loopback WAVs on ordinary/protected paths, two native caller shapes, owned workers/bundled FFmpeg, fresh auth/cancel/retry and owner restart. It verifies real outputs, volatile headers and empty durable cookie ownership. Native children keep empty PATH/PYTHONPATH/PYTHONHOME; source mode injects verified tools via a diagnostic shim. No browser/GUI/registration or public media is involved.
+
+Current evidence is `packaging/out/p04-media-wo0l0rm5/`, via `p04-media-current.json`. `runtime-inputs-final.json` binds 61 inputs; `process-inputs-final.json` records verified tools and unused state/media paths; `bundle-frozen/` is a fresh Fedora freeze. `bundle-source-final/` uses the current freshly rebuilt native binaries; `native-source-current.json`, `native-frozen-final.json` and the final guarded receipt retain exact commands/current executed tests. Earlier source bundles/logs remain preserved. Preserve the earlier foundation bundles and every failed feature/redirect/REST/mode/adapter/generator/hardlink receipt, plus the original native SQLite warning and rejected audit. Final native checks close read/fixture connections explicitly; this opt-in-only fix retains every assertion and leaves the guarded/runtime/frozen inputs unchanged. The optional absent-`curl_cffi` collection warning remains; installed SDK metadata was hash-verified for this Fedora host. Windows/Ubuntu changed-byte checks and actual client migration are the next P04 work.

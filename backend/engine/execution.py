@@ -41,6 +41,7 @@ class ThreadDownloadExecutor:
 
     async def run(self, **options):
         options.pop("ownership", None)
+        options.pop("fixture_only", None)
         execution = asyncio.create_task(asyncio.to_thread(self.runner, **options))
         return await join_owned_task(execution)
 
@@ -54,7 +55,10 @@ class ProcessDownloadExecutor:
         runtime = options.pop("runtime")
         callback = options.pop("progress_callback")
         options.pop("is_cancelled_cb", None)
-        bootstrap = {"options": options, "components": self.components, "fixture_only": self.fixture_only,
+        fixture_only = options.pop("fixture_only", False)
+        if type(fixture_only) is not bool:
+            raise ValueError("Invalid internal fixture mode")
+        bootstrap = {"options": options, "components": self.components, "fixture_only": self.fixture_only or fixture_only,
                      "runtime": {key: str(getattr(runtime, key)) for key in
                                  ("data_dir", "download_dir", "logs_dir", "temp_dir")}}
         encoded = (json.dumps(bootstrap, ensure_ascii=False) + "\n").encode("utf-8")

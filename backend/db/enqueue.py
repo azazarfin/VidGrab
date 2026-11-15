@@ -53,7 +53,7 @@ class EnqueueStore:
         self.runtime = runtime
         self.owner = owner
 
-    async def admit(self, record, key=None, *, intent=None):
+    async def admit(self, record, key=None, *, intent=None, before_insert=None):
         identity = request_identity(key, record, intent=intent)
         async with transaction(self.runtime) as db:
             await require_owner(db, self.owner)
@@ -72,6 +72,8 @@ class EnqueueStore:
                 async with db.execute("SELECT COUNT(*) FROM enqueue_receipts") as cursor:
                     if (await cursor.fetchone())[0] >= MAX_RECEIPTS:
                         raise HTTPException(409, "Persistent enqueue receipt capacity has been reached")
+            if before_insert is not None:
+                before_insert()
             await insert_download(db, record)
             if identity is not None:
                 await db.execute("INSERT INTO enqueue_receipts (key_hash, request_hash, job_id, created_at) VALUES (?, ?, ?, ?)",

@@ -6,5 +6,9 @@ pub const OPERATIONS: &[(&str, bool)] = &[
     ("downloads.list", false),
     ("downloads.enqueue", true),
     ("events.read", false),
+    ("probes.create", false),
+    ("auth.create", true),
+    ("downloads.action", true),
+    ("downloads.authenticate", true),
 ];
 pub const VERSION: u64 = 1;

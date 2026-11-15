@@ -256,10 +256,10 @@ class PlaylistJobTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
         cancellation = None
         marked = asyncio.Event()
         original_cancel = queue._cancel
-        async def observed_cancel(task_id):
+        async def observed_cancel(task_id, **options):
             if task_id == child["id"]:
                 marked.set()
-            await original_cancel(task_id)
+            await original_cancel(task_id, **options)
         guard = patch.object(queue, "_cancel", observed_cancel)
         guard.start()
         try:

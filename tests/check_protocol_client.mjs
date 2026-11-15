@@ -51,4 +51,63 @@ mode = 'lost';
 await assert.rejects(extension.request('settings.patch', { expected_revision: 0, patch: { max_concurrent: 5 } },
   { request_id: 'lost', idempotency_key: 'stable-key' }), error => error.code === 'REQUEST_OUTCOME_UNKNOWN');
 assert.equal(calls.length, before + 1, 'Lost mutations must never be retried automatically');
-console.log('Generated module/classic clients: two callers, strict schemas, response identity/version, typed conflict and no mutation replay passed');
+
+const mediaUrl = 'https://fixture.invalid/media.mp4';
+const authParams = { instance_id: 'engine', url: mediaUrl,
+  cookies: [{ domain: '.fixture.invalid', name: 'session', value: 'private-context', expirationDate: 1900000000 }] };
+const mediaCases = [
+  ['probes.create', { url: mediaUrl, format_limit: 1 }, { probe_id: 'probe', url: mediaUrl, title: 'Fixture',
+    thumbnail: null, duration: 12, uploader: null, is_playlist: false, entries: null, formats: [], subtitles: null,
+    format_count: 0, entry_count: 0, formats_truncated: false, entries_truncated: false }],
+  ['auth.create', authParams, { reference: 'reference', instance_id: 'engine', expires_at: 1900000000 }],
+  ['downloads.action', { job_id: 'job', expected_revision: 2, action: 'retry', auth_ref: 'reference' },
+    { job_id: 'job', action: 'retry', accepted_status: 'queued', accepted_revision: 3 }],
+  ['downloads.authenticate', { job_id: 'job', expected_revision: 2, auth_ref: 'reference' },
+    { job_id: 'job', action: 'authenticate', accepted_status: 'queued', accepted_revision: 3 }],
+  ['downloads.enqueue', { url: mediaUrl, auth_ref: 'reference',
+    options: { download_subtitles: true, subtitle_langs: ['en', 'pt-BR'], embed_thumbnail: true } }, { job_id: 'job' }],
+];
+for (const create of [createModuleClient, createClient]) {
+  let mediaCalls = 0;
+  let replyMode = 'success';
+  let result;
+  const client = create(async request => {
+    mediaCalls++;
+    if (replyMode === 'lost') throw new Error('connection closed');
+    if (replyMode === 'error') return { protocol_version: 1, request_id: request.request_id, ok: false,
+      error: { code: 'AUTH_CONTEXT_EXPIRED', message: 'Share fresh authentication', retryable: false,
+        retry_at: null, request_id: request.request_id, provenance: 'local', details: {} } };
+    return { protocol_version: 1, request_id: request.request_id, ok: true, data: result };
+  });
+  for (const [operation, params, expected] of mediaCases) {
+    result = expected;
+    const actual = await client.request(operation, params, { request_id: 'media', idempotency_key: 'stable-media' });
+    assert.equal(JSON.stringify(actual), JSON.stringify(expected));
+  }
+  const acceptedCalls = mediaCalls;
+  for (const [operation, params] of [
+    ['probes.create', { url: mediaUrl, format_limit: 101 }],
+    ['probes.create', { url: mediaUrl, entry_limit: 129 }],
+    ['auth.create', { ...authParams, ttl_seconds: 901 }],
+    ['auth.create', { ...authParams, cookies: Array(129).fill(authParams.cookies[0]) }],
+    ['auth.create', { ...authParams, headers: { Authorization: 'private-context' } }],
+    ['downloads.action', { job_id: 'job', expected_revision: 2, action: 'execute' }],
+    ['downloads.authenticate', { job_id: 'job', expected_revision: '2', auth_ref: 'reference' }],
+    ['downloads.enqueue', { url: mediaUrl, options: { extra_args: { exec: 'command' } } }],
+  ]) {
+    await assert.rejects(client.request(operation, params, { request_id: 'invalid-media', idempotency_key: 'invalid-media' }),
+      error => error.code === 'BAD_REQUEST');
+  }
+  assert.equal(mediaCalls, acceptedCalls, 'Unsupported options and bounds must fail before transport');
+  replyMode = 'error';
+  await assert.rejects(client.request('downloads.authenticate', mediaCases[3][1],
+    { request_id: 'expired-context', idempotency_key: 'expired-context' }), error => error.code === 'AUTH_CONTEXT_EXPIRED');
+  replyMode = 'lost';
+  for (const [operation, params] of mediaCases.filter(([operation]) => operation !== 'probes.create')) {
+    const sent = mediaCalls;
+    await assert.rejects(client.request(operation, params, { request_id: 'lost-media', idempotency_key: 'lost-media' }),
+      error => error.code === 'REQUEST_OUTCOME_UNKNOWN');
+    assert.equal(mediaCalls, sent + 1, `${operation} must be forwarded exactly once after a lost reply`);
+  }
+}
+console.log('Generated module/classic clients: strict settings/media contracts, typed errors, bounded options and no mutation replay passed');

@@ -13,7 +13,6 @@ from pydantic import BaseModel, ConfigDict, Field
 import uvicorn
 
 from backend.engine import create_engine_app
-from backend.engine.network_guard import fixture_network_guard
 from backend.engine.resources import check_components
 from backend.runtime import RuntimeConfig
 
@@ -36,7 +35,7 @@ class ReadyServer(uvicorn.Server):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="VidGrab packaged fixture engine")
+    parser = argparse.ArgumentParser(description="VidGrab packaged media engine")
     parser.add_argument("--self-check", action="store_true")
     arguments = parser.parse_args()
     paths, versions = check_components()
@@ -45,12 +44,11 @@ def main():
         return
     bootstrap = Bootstrap.model_validate_json(sys.stdin.buffer.readline(16385))
     runtime = RuntimeConfig(Path(bootstrap.data_dir), Path(bootstrap.download_dir))
-    sys.addaudithook(fixture_network_guard)
     logging.basicConfig(level=logging.INFO, stream=sys.stderr)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))
         app = create_engine_app(runtime, token=bootstrap.token, port=listener.getsockname()[1], components=paths,
-                                component_versions=versions)
+                                component_versions=versions, media_mode="ordinary")
         server = ReadyServer(uvicorn.Config(
             app, host="127.0.0.1", log_config=None, access_log=False,
             loop="asyncio", lifespan="on", timeout_graceful_shutdown=1,

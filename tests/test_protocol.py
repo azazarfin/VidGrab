@@ -378,7 +378,7 @@ class ProtocolTests(OfflineTestCase):
         app = self.app(other)
         with TestClient(app):
             with closing(sqlite3.connect(other.db_path)) as database:
-                self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 9)
+                self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], migrations.SCHEMA_VERSION)
                 self.assertEqual(database.execute("SELECT status,revision FROM downloads WHERE id='legacy'").fetchone(), ("complete", 1))
                 self.assertEqual(database.execute("SELECT COUNT(*) FROM download_attempts").fetchone()[0], 0)
         snapshots = list(other.backups_dir.glob("schema-v8-*.sqlite3"))

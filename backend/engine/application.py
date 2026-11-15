@@ -1,5 +1,6 @@
 import re
 import secrets
+import time
 from urllib.parse import urlsplit
 
 import aiosqlite
@@ -33,11 +34,12 @@ class FixtureRequest(BaseModel):
 
 
 class EngineAccess:
-    """Authenticate before exposing the three narrow spike operations."""
+    """Authenticate before exposing the explicit spike and versioned routes."""
 
     allowed = {("GET", "/health"), ("GET", "/spike/status"), ("POST", "/spike/fixture"),
                ("POST", "/v1/requests"), ("GET", "/v1/capabilities"), ("GET", "/v1/settings"),
-               ("PATCH", "/v1/settings"), ("GET", "/v1/downloads"), ("POST", "/v1/downloads"), ("GET", "/v1/events")}
+               ("PATCH", "/v1/settings"), ("GET", "/v1/downloads"), ("POST", "/v1/downloads"), ("GET", "/v1/events"),
+               ("POST", "/v1/probes"), ("POST", "/v1/auth/contexts")}
 
     def __init__(self, app, token, port):
         self.app = app
@@ -62,7 +64,9 @@ class EngineAccess:
         elif hosts != [self.host] or any(key.lower() == b"origin" for key, _ in headers):
             error = reject("ORIGIN_REJECTED", 403)
         elif (scope["method"], scope["path"]) not in self.allowed:
-            error = reject("UNSUPPORTED_OPERATION", 404)
+            action_path = re.fullmatch(r"/v1/downloads/[^/]{1,256}/(?:actions|authentication)", scope["path"])
+            if not (scope["method"] == "POST" and action_path):
+                error = reject("UNSUPPORTED_OPERATION", 404)
         if error:
             return await error(scope, receive, send)
         if scope["method"] in {"POST", "PATCH"}:
@@ -85,19 +89,25 @@ class EngineAccess:
 
 
 def create_engine_app(runtime: RuntimeConfig, *, token: str, port: int, components: dict,
-                      start_queue: bool = True, component_versions: dict | None = None):
+                      start_queue: bool = True, component_versions: dict | None = None,
+                      media_mode: str = "fixture", probe_runner=None, clock=time.time):
     """Reuse P01 state/queue while keeping the legacy API behind an allowlist.
 
-    The packaged execution lane stays fixture-only while the v1 control seam is
-    introduced. Legacy routes remain inaccessible through this wrapper.
+    Ordinary media requires its explicit mode and the versioned allowlist.
+    Legacy routes remain inaccessible through this wrapper.
     Resolving paths or creating this factory does not execute component checks.
     """
     if not re.fullmatch(r"[0-9a-f]{64}", token) or not 1 <= port <= 65535:
         raise ValueError("An app-generated credential and bound port are required")
-    executor = ProcessDownloadExecutor(components=dict(components), fixture_only=True)
-    app = create_app(runtime, start_queue=start_queue, download_executor=executor)
+    if media_mode not in {"fixture", "ordinary"}:
+        raise ValueError("Choose the explicit fixture or ordinary media mode")
+    executor = ProcessDownloadExecutor(components=dict(components), fixture_only=media_mode == "fixture")
+    app = create_app(runtime, start_queue=start_queue, download_executor=executor, probe_runner=probe_runner, clock=clock)
+    app.state.queue.allow_legacy_options = False
+    app.state.probes.components = dict(components)
     service = ControlService(app.state.settings, app.state.queue, app.state.owner,
-                             fixture_validator=FixtureRequest.model_validate, component_versions=component_versions)
+                             fixture_validator=FixtureRequest.model_validate if media_mode == "fixture" else None,
+                             component_versions=component_versions, probes=app.state.probes)
     app.state.control = service
     app.include_router(create_control_router(service))
 
@@ -123,6 +133,7 @@ def create_engine_app(runtime: RuntimeConfig, *, token: str, port: int, componen
             url=request.url, format_id="best", title="VidGrab test audio",
             audio_only=True, audio_format="mp3",
             output_template="fixture-%(id)s.%(ext)s",
+            fixture_only=True,
         )
         return {"task_id": task_id}
 

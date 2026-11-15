@@ -14,7 +14,7 @@ from tests.support import OfflineTestCase
 
 class PackagedEngineTests(OfflineTestCase):
     def test_fixture_network_guard_enforces_loopback_without_unix_socket_support(self):
-        from backend.engine.__main__ import fixture_network_guard
+        from backend.engine.network_guard import fixture_network_guard
 
         with socket.socket(socket.AF_INET) as connection:
             with patch.object(socket, "AF_UNIX", create=True):

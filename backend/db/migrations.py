@@ -16,7 +16,7 @@ import aiosqlite
 
 from backend.runtime import RuntimeCompatibilityError, RuntimeConfig
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 BASE_COLUMNS = {
     "id", "url", "title", "thumbnail_url", "status", "progress", "speed", "eta",
     "file_size", "file_path", "format_selected", "error_message", "created_at", "completed_at",
@@ -61,6 +61,7 @@ RELATED_COLUMNS = {
     "protocol_state": {"id", "settings_revision"},
     "protocol_events": {"sequence", "topic", "entity_id", "revision", "kind"},
     "settings_receipts": {"key_hash", "request_hash", "snapshot"},
+    "control_action_receipts": {"key_hash", "request_hash", "result"},
 }
 
 
@@ -250,6 +251,12 @@ async def _migration_nine(db):
         INSERT INTO protocol_events(topic,entity_id,revision,kind) VALUES ('downloads',OLD.id,OLD.revision+1,'deleted'); END""")
 
 
+async def _migration_ten(db):
+    await db.execute("""CREATE TABLE control_action_receipts (
+        key_hash TEXT PRIMARY KEY NOT NULL, request_hash TEXT NOT NULL,
+        result TEXT NOT NULL CHECK (length(CAST(result AS BLOB))<=65536))""")
+
+
 async def _validate_schema(db):
     async with db.execute("PRAGMA quick_check") as cursor:
         if await cursor.fetchall() != [("ok",)]:
@@ -357,7 +364,7 @@ async def migrate_database(runtime: RuntimeConfig, defaults: dict, validate_sett
                 version = (await cursor.fetchone())[0]
             _check_version(version)
             for target, migration in ((1, _migration_one), (2, _migration_two), (3, _migration_three),
-                                      (4, _migration_four), (5, _migration_five), (6, _migration_six), (7, _migration_seven), (8, _migration_eight), (9, _migration_nine)):
+                                      (4, _migration_four), (5, _migration_five), (6, _migration_six), (7, _migration_seven), (8, _migration_eight), (9, _migration_nine), (10, _migration_ten)):
                 if version < target:
                     await migration(db)
                     await db.execute(f"PRAGMA user_version = {target}")

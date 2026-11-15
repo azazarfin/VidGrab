@@ -115,3 +115,54 @@ pub fn failure(id: Option<&str>, code: &str) -> Value {
     json!({"protocol_version":1,"request_id":id,"ok":false,"error":{"code":code,"message":message,
         "request_id":id,"retryable":false,"retry_at":null,"provenance":"local","details":{}}})
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(operation: &str, params: Value) -> Value {
+        json!({"protocol_version":1,"request_id":"media","operation":operation,
+            "params":params,"idempotency_key":"stable-media"})
+    }
+
+    #[test]
+    fn generated_media_operations_preserve_mutation_and_option_contracts() {
+        let cases = [
+            ("probes.create", json!({"url":"https://fixture.invalid/media","format_limit":100}), false),
+            ("auth.create", json!({"instance_id":"engine","url":"https://fixture.invalid/media",
+                "cookies":[{"domain":".fixture.invalid","name":"session","value":"private"}],"ttl_seconds":900}), true),
+            ("downloads.action", json!({"job_id":"job","expected_revision":2,"action":"retry","auth_ref":"reference"}), true),
+            ("downloads.authenticate", json!({"job_id":"job","expected_revision":2,"auth_ref":"reference"}), true),
+            ("downloads.enqueue", json!({"url":"https://fixture.invalid/media","auth_ref":"reference",
+                "options":{"download_subtitles":true,"subtitle_langs":["en","pt-BR"],"embed_thumbnail":true}}), true),
+        ];
+        for (operation, params, mutation) in cases {
+            let value = request(operation, params);
+            assert_eq!(validate_request(&value), Ok(()), "{operation}");
+            assert_eq!(is_mutation(&value), mutation, "{operation}");
+            if mutation {
+                let mut without_key = value;
+                without_key.as_object_mut().unwrap().remove("idempotency_key");
+                assert_eq!(validate_request(&without_key), Err("BAD_REQUEST"), "{operation}");
+            }
+        }
+    }
+
+    #[test]
+    fn generated_media_bounds_reject_unsafe_options_and_unbounded_contexts() {
+        let cases = [
+            ("probes.create", json!({"url":"https://fixture.invalid/media","format_limit":101})),
+            ("probes.create", json!({"url":"https://fixture.invalid/media","entry_limit":129})),
+            ("auth.create", json!({"instance_id":"engine","url":"https://fixture.invalid/media",
+                "cookies":vec![json!({"domain":".fixture.invalid","name":"session","value":"private"});129]})),
+            ("auth.create", json!({"instance_id":"engine","url":"https://fixture.invalid/media",
+                "cookies":[{"domain":".fixture.invalid","name":"session","value":"private"}],"headers":{"Authorization":"private"}})),
+            ("downloads.action", json!({"job_id":"job","expected_revision":2,"action":"execute"})),
+            ("downloads.authenticate", json!({"job_id":"job","expected_revision":"2","auth_ref":"reference"})),
+            ("downloads.enqueue", json!({"url":"https://fixture.invalid/media","options":{"extra_args":{"exec":"command"}}})),
+        ];
+        for (operation, params) in cases {
+            assert_eq!(validate_request(&request(operation, params)), Err("BAD_REQUEST"), "{operation}");
+        }
+    }
+}

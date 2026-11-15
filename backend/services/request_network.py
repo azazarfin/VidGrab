@@ -4,6 +4,7 @@ import threading
 import time
 import urllib.request
 from http.client import IncompleteRead
+from urllib.parse import urlsplit
 
 from yt_dlp.downloader import get_suitable_downloader
 from yt_dlp.networking._urllib import HTTPHandler
@@ -20,11 +21,20 @@ def constrain_network_options(options):
 
 
 class BudgetedRequests:
-    def __init__(self, coordinator, cancelled, *, clock=time.time):
+    def __init__(self, coordinator, cancelled, *, clock=time.time, credential_url=None):
         self.coordinator, self.cancelled, self.clock = coordinator, cancelled, clock
         self.failure = None
         self.responses = {}
         self.lock = threading.RLock()
+        self.credential_origin = self._origin(credential_url) if credential_url is not None else None
+
+    @staticmethod
+    def _origin(url):
+        try:
+            parsed = urlsplit(url)
+            return parsed.scheme, parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80)
+        except ValueError:
+            return None
 
     def check(self):
         if self.cancelled():
@@ -34,6 +44,12 @@ class BudgetedRequests:
 
     def open(self, send, request):
         self.check()
+        if self.credential_origin is not None and self._origin(request.full_url) != self.credential_origin:
+            # This runs after urllib's cookie processor and before each wire
+            # request, including redirects. Cookie domains alone do not fence
+            # ports, scheme downgrades or overly broad parent domains.
+            request.remove_header("Cookie")
+            request.remove_header("Referer")
         lease = None
         try:
             lease = self.coordinator.acquire(request.full_url, self.clock())
@@ -158,8 +174,8 @@ def close_generic_header_responses(ydl):
     generic._real_extract = extract_generic
 
 
-def install_request_budget(ydl, runtime, context, cancelled, *, clock=time.time):
-    gate = BudgetedRequests(RequestCoordinator(runtime, context), cancelled, clock=clock)
+def install_request_budget(ydl, runtime, context, cancelled, *, clock=time.time, credential_url=None):
+    gate = BudgetedRequests(RequestCoordinator(runtime, context), cancelled, clock=clock, credential_url=credential_url)
     director = ydl._request_director
     urllib_handler = director.handlers.get("Urllib")
     if urllib_handler is None:

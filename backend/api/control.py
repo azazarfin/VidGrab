@@ -16,9 +16,10 @@ logger = logging.getLogger("vidgrab.control")
 identifier_adapter = TypeAdapter(Identifier)
 
 
-def failure(request_id, code, status, message, *, details=None):
+def failure(request_id, code, status, message, *, details=None, retryable=False, retry_at=None, provenance="local"):
     result = Failure(request_id=request_id, error=Error(
-        code=code, request_id=request_id, message=message, details=details or {})).model_dump()
+        code=code, request_id=request_id, message=message, details=details or {},
+        retryable=retryable, retry_at=retry_at, provenance=provenance)).model_dump()
     if len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > MAX_PAYLOAD_BYTES:
         settings = result["error"]["details"].get("settings", {})
         result["error"]["details"] = {"resnapshot_required": True, "settings_revision": settings.get("revision")}
@@ -44,7 +45,8 @@ async def dispatch(service, raw, ready):
             raise ControlError("MESSAGE_TOO_LARGE", 413, "Request a smaller page to fit the control message limit")
         return JSONResponse(payload)
     except ControlError as error:
-        return failure(request_id, error.code, error.status, str(error), details=error.details)
+        return failure(request_id, error.code, error.status, str(error), details=error.details,
+                       retryable=error.retryable, retry_at=error.retry_at, provenance=error.provenance)
     except ValidationError:
         return failure(request_id, "BAD_REQUEST", 422, "The request does not match the supported contract")
     except RuntimeOwnershipError:
@@ -120,5 +122,27 @@ def create_control_router(service):
             if name in params:
                 params[name] = integer_literal(params[name], 16)
         return await rest(http, "events.read", params)
+
+    @router.post("/probes")
+    async def probe(http: HttpRequest):
+        return await rest(http, "probes.create", await payload(http))
+
+    @router.post("/auth/contexts")
+    async def authentication_context(http: HttpRequest):
+        return await rest(http, "auth.create", await payload(http))
+
+    @router.post("/downloads/{job_id}/actions")
+    async def action(job_id: str, http: HttpRequest):
+        params = await payload(http)
+        if isinstance(params, dict):
+            params = None if "job_id" in params and params["job_id"] != job_id else {**params, "job_id": job_id}
+        return await rest(http, "downloads.action", params)
+
+    @router.post("/downloads/{job_id}/authentication")
+    async def authenticate(job_id: str, http: HttpRequest):
+        params = await payload(http)
+        if isinstance(params, dict):
+            params = None if "job_id" in params and params["job_id"] != job_id else {**params, "job_id": job_id}
+        return await rest(http, "downloads.authenticate", params)
 
     return router
