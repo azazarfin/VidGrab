@@ -2,11 +2,13 @@
 use std::io;
 use std::path::PathBuf;
 use std::ptr::{null, null_mut};
+use std::sync::{Mutex, MutexGuard};
 use vidgrab_supervisor::{
     installation::{self, Layout, ManifestState, UserDirs},
     windows,
 };
 use windows_sys::Win32::{Foundation::ERROR_FILE_NOT_FOUND, System::Registry::*};
+static REGISTRATION_LOCK: Mutex<()> = Mutex::new(());
 fn key(browser: &str) -> String {
     format!(r"Software\{browser}\NativeMessagingHosts\com.vidgrab.companion")
 }
@@ -67,9 +69,12 @@ struct Fixture {
     root: PathBuf,
     dirs: UserDirs,
     layout: Layout,
+    _registration_guard: MutexGuard<'static, ()>,
 }
 impl Fixture {
     fn new() -> Self {
+        // Both fixtures use the same production keys; keep cleanup inside the lock.
+        let registration_guard = REGISTRATION_LOCK.lock().unwrap();
         // These exact production keys must be empty before this VM-only test.
         for browser in [r"Google\Chrome", "Mozilla"] {
             for view in [KEY_WOW64_32KEY, KEY_WOW64_64KEY] {
@@ -106,7 +111,12 @@ impl Fixture {
             data_home: root.join("local"),
             config_home: root.join("config"),
         };
-        Self { root, dirs, layout }
+        Self {
+            root,
+            dirs,
+            layout,
+            _registration_guard: registration_guard,
+        }
     }
 }
 impl Drop for Fixture {

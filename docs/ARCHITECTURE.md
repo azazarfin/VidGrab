@@ -1,6 +1,6 @@
 # Target architecture
 
-P03 backend durability is accepted for the selected controlled Linux/Windows fixtures on 2026-11-15; [ADR-024](DECISIONS.md#adr-024--scoped-p03-backend-acceptance) defines the scope. The P04 fixture-only v1/settings foundation is implemented under [ADR-025](DECISIONS.md#adr-025--p04-contract-and-settings-foundation); ordinary-media/auth operations, actual client migration and target validation remain open. This document also describes later UI/release work.
+P03 backend durability is accepted for the selected controlled Linux/Windows fixtures on 2026-11-15; [ADR-024](DECISIONS.md#adr-024--scoped-p03-backend-acceptance) defines the scope. P04 implements ten v1 operations, settings/action receipts and ordinary media with scoped volatile authentication under [ADR-025](DECISIONS.md#adr-025--p04-contract-and-settings-foundation) and [ADR-026](DECISIONS.md#adr-026--p04-ordinary-media-and-scoped-authentication). Selected Fedora/Ubuntu-userspace/Windows source/fresh-frozen/native runtime checks pass; actual client/default/revision/event/permission migration and client/GUI/browser acceptance remain open. This document also describes later UI/release work.
 
 Proposed design for the [plan](PLAN.md); paths and APIs in this document are future interfaces unless explicitly identified as current. User choices and recommendation status live in [DECISIONS.md](DECISIONS.md).
 
@@ -226,7 +226,7 @@ Publish signatures/checksums and notices for the exact FFmpeg, yt-dlp and relate
 | Automatic failures requeue immediately with no deadline/backoff | Typed failures, persisted retry schedule and shared request budget |
 | `format_probe.py` accepts only a URL; caches by URL; starts independent threads for misses | Shared auth context, bounded/coalesced probes and context-aware cache |
 | Baseline `main.py` updated through pip at startup and `/status` contacted PyPI | P01 implements local health/status and disables runtime updates; signed component updates remain P07 |
-| Baseline settings lived beside source and PATCH wrote all defaults | P01 implements injected paths, migrations and partial updates; settings revisions remain P04 |
+| Baseline settings lived beside source and PATCH wrote all defaults | P01 implements injected paths, migrations and partial updates; schema 9/10 add fenced revisions/receipts, while actual client migration remains P04 |
 | Browser quick-download defaults in storage can diverge from backend settings | One authoritative settings model and explicit browser-local fields |
 | Firefox manifest uses background scripts while shared code assumes `importScripts` and `chrome.alarms`; Firefox lacks `alarms` permission | Browser-specific bootstrap and permission/lifecycle tests in P02 |
 | `test_gpu.py` imports a missing module; the sanity script is network-dependent | Controlled integration fixtures and capability tests |

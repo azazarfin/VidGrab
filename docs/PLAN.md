@@ -75,15 +75,16 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 
 ### [ ] P04 — Version the app/extension contract and synchronize settings
 
-**Foundation and ordinary-media control implemented on 2026-11-15; P04 remains open.** [ADR-026](DECISIONS.md#adr-026--p04-ordinary-media-and-scoped-authentication) and [the media checkpoint](VALIDATION.md#p04-ordinary-media-actions-and-authentication--2026-11-15) extend [ADR-025](DECISIONS.md#adr-025--p04-contract-and-settings-foundation). All 432 guarded Fedora cases, generated clients, Rust/renderer checks and thirteen source/fresh-frozen native lifecycle cases pass; changed Ubuntu/Windows/browser/GUI inputs are not certified.
+**Foundation and ordinary-media runtime control validated on 2026-11-15; P04 remains open.** [ADR-026](DECISIONS.md#adr-026--p04-ordinary-media-and-scoped-authentication), [the media checkpoint](VALIDATION.md#p04-ordinary-media-actions-and-authentication--2026-11-15) and [target validation](VALIDATION.md#p04-target-runtime-validation--2026-11-15) extend [ADR-025](DECISIONS.md#adr-025--p04-contract-and-settings-foundation). Current guarded/generated/source/fresh-frozen/native checks pass on Fedora, selected Ubuntu userspace and Windows; all 61 production inputs are unchanged. Actual clients/defaults/revisions/events/permissions and their target/GUI/browser acceptance remain open.
 
 - [x] Add import-safe `/v1` models/schema and generated module/classic/TypeScript clients plus Rust validation inputs; implement IDs, stable mutation keys, typed errors, schema-9 revisions/receipts, capabilities and bounded reconnect snapshots.
-- [x] Carry six fixture-only operations through compatible native framing and the authenticated internal API. Negotiate capabilities before versioned mutations, retain independent ownership and hide packaged legacy routes/WebSockets.
+- [x] Carry versioned operations through compatible native framing and the authenticated internal API. Negotiate capabilities before versioned mutations, retain independent ownership and hide packaged legacy routes/WebSockets.
 - [x] Add ordinary-media probe/actions/fresh-auth operations, schema-10 action receipts and explicit safe per-job/volatile scoped auth-context models; enable ordinary native execution while retaining the guarded fixture endpoint.
 - [ ] Migrate extension/desktop callers and authoritative download defaults to the app. Synchronize browser preferences while reporting actual granted permissions separately.
-- [ ] Validate changed source/frozen/native and actual client behavior on both selected target baselines. Pairing/revocation remains an unimplemented optional transport; advertise it as disabled.
+- [x] Validate the current schema-10 source/fresh-frozen/native runtime on selected Ubuntu 24.04 userspace and Windows baselines: 432-case discovery on each (nine Windows POSIX skips), thirteen Linux/eight Windows native cases per mode and thirteen Windows junction/DACL cases.
+- [ ] Validate actual client behavior on both selected target baselines. Pairing/revocation remains an unimplemented optional transport; advertise it as disabled.
 - Acceptance remains: both actual clients see consistent queue/settings state; stale updates conflict explicitly; reconnects do not duplicate jobs; incompatible versions give an upgrade message.
-- Foundation commit: `feat(protocol): add versioned control and settings revisions`. Media-control commit: `feat(protocol): add ordinary media and scoped authentication`.
+- Foundation commit: `feat(protocol): add versioned control and settings revisions`. Media-control commit: `feat(protocol): add ordinary media and scoped authentication`. Target checkpoint: `test(protocol): validate media controls on Ubuntu and Windows`.
 
 ### [ ] P05 — Expand detection and make failures actionable
 

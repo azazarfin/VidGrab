@@ -1,4 +1,4 @@
-"""Opt-in frozen Windows lifecycle checks in the selected disposable VM.
+"""Opt-in source/frozen Windows lifecycle checks in the selected disposable VM.
 
 Run with --bundle and --report. Only temporary state and generated loopback WAV
 media are selected. No browser registration or real runtime is installed.
@@ -22,6 +22,10 @@ import time
 import unittest
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tests.native_control_checks import NativeControlChecks
 
 
 def frame(value):
@@ -79,7 +83,7 @@ class ProcessHandle:
             self.handle = None
 
 
-class WindowsNativeChecks(unittest.TestCase):
+class WindowsNativeChecks(NativeControlChecks, unittest.TestCase):
     bundle = None
     native_override = None
     evidence = None
@@ -119,11 +123,18 @@ class WindowsNativeChecks(unittest.TestCase):
         }
         self.config_path = self.root / "host-config.json"
         self.config_path.write_text(json.dumps(self.config), encoding="utf-8")
+        self.firefox_manifest = self.root / "firefox-native-manifest.json"
+        self.firefox_manifest.write_text(json.dumps({
+            "name": "com.vidgrab.companion", "path": str(self.host), "type": "stdio",
+            "allowed_extensions": [self.config["firefox_id"]],
+        }), encoding="utf-8")
         self.environment = {**os.environ, "PATH": "", "PYTHONPATH": "", "PYTHONHOME": "", "PYTHONUTF8": "1"}
 
     def invoke(self, op="status", params=None, origin=None, raw=None):
         request = {"spike_version": 1, "id": "বাংলা-request", "op": op, "params": params or {}}
-        native = subprocess.Popen([str(self.host), "--config", str(self.config_path), origin or self.config["chrome_origin"]],
+        caller = origin or self.config["chrome_origin"]
+        browser_arguments = [str(self.firefox_manifest), caller] if caller == self.config["firefox_id"] else [caller]
+        native = subprocess.Popen([str(self.host), "--config", str(self.config_path), *browser_arguments],
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                   env=self.environment, creationflags=subprocess.CREATE_NO_WINDOW)
         try:
