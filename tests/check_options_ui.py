@@ -50,6 +50,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--screenshots", type=Path, required=True)
     parser.add_argument("--baseline", action="store_true", help="Record current findings without failing")
+    parser.add_argument("--chrome", type=Path, default=Path("/opt/google/chrome/chrome"),
+                        help="Explicit Chrome executable for the selected validation target")
     args = parser.parse_args()
     args.screenshots.mkdir(parents=True, exist_ok=False)
     findings, blocked, errors, measurements = [], [], [], []
@@ -66,7 +68,7 @@ def main():
     with ClientFixture(args.screenshots / "runtime") as fixture, sync_playwright() as playwright:
         fixture.engine.app.state.control.component_versions = {"yt_dlp": "2026.6.9"}
         browser = playwright.chromium.launch(
-            executable_path="/opt/google/chrome/chrome", headless=True,
+            executable_path=str(args.chrome), headless=True,
             args=["--disable-background-networking", "--disable-component-update", "--disable-sync",
                   "--host-resolver-rules=MAP * ~NOTFOUND"],
         )

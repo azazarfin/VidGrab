@@ -267,13 +267,15 @@ def main():
     parser.add_argument("--screenshots", type=Path, required=True)
     parser.add_argument("--desktop-url")
     parser.add_argument("--scope", choices=("browser", "desktop", "all"), default="browser")
+    parser.add_argument("--chrome", type=Path, default=Path("/opt/google/chrome/chrome"),
+                        help="Explicit Chrome executable for the selected validation target")
     arguments = parser.parse_args()
     arguments.screenshots.mkdir(parents=True, exist_ok=False)
     fixture = ClientFixture(arguments.screenshots / "runtime")
     report = {}
     try:
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(executable_path="/opt/google/chrome/chrome", headless=True,
+            browser = playwright.chromium.launch(executable_path=str(arguments.chrome), headless=True,
                                                  args=["--disable-background-networking", "--disable-component-update", "--disable-sync"])
             try:
                 if arguments.scope in ("browser", "all"):

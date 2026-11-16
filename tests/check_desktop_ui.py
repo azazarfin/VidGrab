@@ -12,6 +12,8 @@ from tests.client_ui_support import ClientFixture
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--screenshots', type=Path, required=True)
+    parser.add_argument('--chrome', type=Path, default=Path('/opt/google/chrome/chrome'),
+                        help='Explicit Chrome executable for the selected validation target')
     arguments = parser.parse_args()
     assert Path('desktop/dist/index.html').is_file(), 'Build the desktop renderer before checking it'
     from playwright.sync_api import expect, sync_playwright
@@ -20,7 +22,7 @@ def main():
     external = []
     fixtures = []
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(executable_path='/opt/google/chrome/chrome', headless=True)
+        browser = playwright.chromium.launch(executable_path=str(arguments.chrome), headless=True)
         try:
             for width, height in ((1280, 900), (620, 600), (390, 720)):
                 page = browser.new_page(viewport={'width': width, 'height': height})

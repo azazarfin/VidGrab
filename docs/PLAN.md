@@ -75,7 +75,7 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 
 ### [ ] P04 — Version the app/extension contract and synchronize settings
 
-**Client migration checked on Fedora on 2026-11-16; P04 remains open.** [ADR-027](DECISIONS.md#adr-027--p04-client-sessions-and-explicit-request-review) and [client validation](VALIDATION.md#p04-client-migration--2026-11-16) extend [ADR-026](DECISIONS.md#adr-026--p04-ordinary-media-and-scoped-authentication) and the preceding [target runtime checkpoint](VALIDATION.md#p04-target-runtime-validation--2026-11-15). Actual callers/defaults/revisions/events/permissions are migrated; changed Ubuntu/Windows/runtime/client and GUI/installed-browser acceptance remain open.
+**Client migration and selected Fedora/Ubuntu-userspace/Windows runtime/Chromium renderer checks pass on 2026-11-16; P04 remains open.** [ADR-027](DECISIONS.md#adr-027--p04-client-sessions-and-explicit-request-review), [client validation](VALIDATION.md#p04-client-migration--2026-11-16) and [client target validation](VALIDATION.md#p04-client-target-validation--2026-11-16) extend [ADR-026](DECISIONS.md#adr-026--p04-ordinary-media-and-scoped-authentication). Actual callers/defaults/revisions/events/permissions are migrated; native GUI and installed-browser acceptance remain open.
 
 - [x] Add import-safe `/v1` models/schema and generated module/classic/TypeScript clients plus Rust validation inputs; implement IDs, stable mutation keys, typed errors, schema-9 revisions/receipts, capabilities and bounded reconnect snapshots.
 - [x] Carry versioned operations through compatible native framing and the authenticated internal API. Negotiate capabilities before versioned mutations, retain independent ownership and hide packaged legacy routes/WebSockets.
@@ -83,10 +83,10 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 - [x] Migrate extension/desktop callers and authoritative download defaults to the app. Keep browser preferences separate from actual granted permissions; preserve dirty settings drafts, stable request intents and explicit replay/review.
 - [x] Validate the migration on Fedora: 433 guarded cases, 32 session + 22 browser-control cases, actual renderer journeys through mocked delivery, and thirteen source/fresh-frozen native cases per mode.
 - [x] Record the preceding 2026-11-15 schema-10 Ubuntu-userspace/Windows runtime acceptance: 432-case discovery on each (nine Windows POSIX skips), thirteen Linux/eight Windows native cases per mode and thirteen Windows junction/DACL cases.
-- [ ] Repeat changed-byte runtime and client checks on selected Ubuntu 24.04 userspace and Windows baselines.
-- [ ] Validate actual client behavior on both selected target baselines. Pairing/revocation remains an unimplemented optional transport; advertise it as disabled.
+- [x] Repeat changed-byte runtime and client checks on selected Ubuntu 24.04 userspace and Windows baselines: 433-case discovery (nine Windows POSIX skips), 54 session/background cases, generated/Rust/source/fresh-frozen/native and client/options/lifecycle Chromium renderers pass; all 62 runtime inputs match the Fedora migration.
+- [ ] Validate actual WebKit/WebView2 and installed Chrome/Firefox clients on both selected targets for defaults/events/conflicts/reconnect/auth/permissions. Recover and verify Ubuntu VM controls before startup. Pairing/revocation remains an unimplemented optional transport; advertise it as disabled.
 - Acceptance remains: both actual clients see consistent queue/settings state; stale updates conflict explicitly; reconnects do not duplicate jobs; incompatible versions give an upgrade message.
-- Foundation commit: `feat(protocol): add versioned control and settings revisions`. Media-control commit: `feat(protocol): add ordinary media and scoped authentication`. Target checkpoint: `test(protocol): validate media controls on Ubuntu and Windows`. Client checkpoint: `feat(clients): migrate desktop and extension to versioned control`.
+- Foundation commit: `feat(protocol): add versioned control and settings revisions`. Media-control commit: `feat(protocol): add ordinary media and scoped authentication`. Target checkpoint: `test(protocol): validate media controls on Ubuntu and Windows`. Client checkpoint: `feat(clients): migrate desktop and extension to versioned control`. Client target checkpoint: `test(clients): validate Ubuntu and Windows migration`.
 
 ### [ ] P05 — Expand detection and make failures actionable
 

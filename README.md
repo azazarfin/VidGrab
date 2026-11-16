@@ -4,7 +4,7 @@ VidGrab combines Google Chrome/Firefox extensions with a desktop companion for l
 
 ## Desktop companion development
 
-The selected Linux/Windows desktop feasibility previews and scoped durable backend are implemented. Current source popup/options and desktop downloads/defaults use the generated native v1 contract; use a matching companion build. The 2026-11-16 migration passes Fedora guarded/renderer/source/fresh-frozen checks; changed Ubuntu/Windows client, native GUI/installed-browser and final release acceptance remain open. See [current source development](docs/DEVELOPMENT.md#p04-client-migration--2026-11-16), [browser connection guidance](docs/BROWSER_CONNECTION.md), [the plan](docs/PLAN.md) and [HANDOFF.md](HANDOFF.md). macOS follows the selected Linux/Windows targets.
+The selected Linux/Windows desktop feasibility previews and scoped durable backend are implemented. Current source popup/options and desktop downloads/defaults use the generated native v1 contract; use a matching companion build. The 2026-11-16 migration passes selected Fedora/Ubuntu-userspace/Windows guarded/Chromium renderer/source/fresh-frozen checks; native GUI/installed-browser and final release acceptance remain open. See [current target validation](docs/DEVELOPMENT.md#p04-client-target-validation--2026-11-16), [browser connection guidance](docs/BROWSER_CONNECTION.md), [the plan](docs/PLAN.md) and [HANDOFF.md](HANDOFF.md). macOS follows the selected Linux/Windows targets.
 
 The backend setup and endpoint examples below document retained legacy ASGI development. Current source clients use the native companion; per-request scheduling and arbitrary executable arguments are unavailable in that interface.
 
