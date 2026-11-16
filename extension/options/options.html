@@ -84,6 +84,7 @@
                   <option value="3" selected>3</option>
                   <option value="4">4</option>
                   <option value="5">5</option>
+                  <option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option><option value="10">10</option>
                 </select>
               </div>
               <div class="form-group flex-1">
@@ -95,7 +96,7 @@
             <div class="form-group" style="margin-top: 15px;">
               <label for="input-download-threads">Concurrent Connections Per Download</label>
               <div style="display: flex; align-items: center; gap: 10px;">
-                <input type="range" id="input-download-threads" min="1" max="16" value="4" style="flex: 1;">
+                <input type="range" id="input-download-threads" min="1" max="32" value="4" style="flex: 1;">
                 <span id="download-threads-value" style="font-family: monospace; font-weight: 600; min-width: 25px; text-align: center;">4</span>
               </div>
               <span class="input-hint">Number of simultaneous connections per file to boost download speed.</span>
@@ -237,18 +238,19 @@
             <div class="form-group">
               <label for="input-backend-url">Backend Server URL</label>
               <div class="input-with-action">
-                <input type="text" id="input-backend-url" class="form-input" placeholder="http://127.0.0.1:8000">
-                <button class="btn btn-secondary" id="btn-test-backend">Test</button>
+                <input type="text" id="input-backend-url" disabled class="form-input" placeholder="http://127.0.0.1:8000">
+                <button class="btn btn-secondary" id="btn-test-backend">Test connection</button>
               </div>
             </div>
           </div>
 
           <div class="card">
-            <h2>Cookie Forwarding (Power User)</h2>
+            <h2>Cookie Forwarding</h2>
+            <p class="section-desc" id="permission-status" role="status">Checking granted browser permissions...</p>
             <div class="switch-row">
               <div class="switch-text">
                 <label for="chk-cookie-forwarding" class="switch-title">Enable Cookie Forwarding</label>
-                <span class="switch-desc">Send cookies of the current active browser tab to the downloader backend. Required to download private, watch-later, or age-restricted videos. Cookies are processed in-memory and never stored on disk.</span>
+                <span class="switch-desc">Share cookies for the media site when probing or downloading. Cookie values stay outside saved settings and history; downloads use private temporary cookie files.</span>
               </div>
               <label class="switch">
                 <input type="checkbox" id="chk-cookie-forwarding">
@@ -290,7 +292,7 @@
               
               <div class="form-group flex-1" id="custom-speed-group" style="display: none;">
                 <label for="input-custom-speed">Custom Speed Limit (KB/s)</label>
-                <input type="number" id="input-custom-speed" class="form-input" min="50" placeholder="e.g. 500">
+                <input type="number" id="input-custom-speed" class="form-input" min="0" step="any" placeholder="e.g. 500">
               </div>
             </div>
           </div>
@@ -317,13 +319,20 @@
             </div>
           </div>
 
+          <div class="card" id="request-notices" hidden>
+            <h2>Request notices</h2>
+            <p class="section-desc">A reply was interrupted or its browser notice could not be cleared. Review Downloads and the current app settings before dismissing a notice. Dismissing it sends no download or settings request.</p>
+            <ul id="request-notice-list" class="request-notice-list"></ul>
+            <p id="request-notice-status" class="section-desc" role="status"></p>
+          </div>
+
           <div class="card">
             <h2>Custom yt-dlp Arguments</h2>
             <div class="form-group">
               <label for="input-custom-ytdlp-args">Raw command-line arguments</label>
               <textarea id="input-custom-ytdlp-args" class="form-input" rows="3" placeholder="e.g. --ignore-errors --no-mtime" style="font-family: monospace; resize: vertical;"></textarea>
               <span class="switch-desc" style="display: block; margin-top: 5px;">
-                Enter raw yt-dlp arguments separated by spaces. Disallowed command execution options (like <code>--exec</code>) will be filtered out.
+                Executable arguments are unavailable in the companion. Existing legacy arguments can be cleared with the Clear button and Save Changes.
               </span>
             </div>
             <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;">
@@ -343,11 +352,16 @@
       <!-- Action Footer -->
       <footer class="footer">
         <div class="status-msg" id="status-message" role="status" aria-live="polite" aria-atomic="true"></div>
-        <button class="btn btn-primary" id="btn-save-settings">Save Changes</button>
+        <div class="footer-actions">
+          <button class="btn btn-secondary" id="btn-reload-settings" type="button">Reload app settings</button>
+          <button class="btn btn-secondary" id="btn-check-request" type="button" hidden>Check request</button>
+          <button class="btn btn-primary" id="btn-save-settings">Save Changes</button>
+        </div>
       </footer>
     </main>
   </div>
 
+  <script src="../lib/protocol.js"></script>
   <script src="../lib/api.js"></script>
   <script src="options.js"></script>
 </body>

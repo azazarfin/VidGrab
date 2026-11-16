@@ -217,6 +217,7 @@ class Capabilities(Model):
 
 class Job(Model):
     id: str
+    url: str
     revision: Counter
     title: str | None
     status: str

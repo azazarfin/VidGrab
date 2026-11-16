@@ -29,7 +29,7 @@ async def event_cursor(db):
 async def download_page(db, limit=25, after=None):
     async with db.execute("SELECT COUNT(*), COALESCE(SUM(status NOT IN ('complete','failed','cancelled')),0) FROM downloads") as cursor:
         total, unfinished = await cursor.fetchone()
-    async with db.execute("SELECT id,revision,title,status,progress,file_path,error_code,retry_at,parent_id "
+    async with db.execute("SELECT id,url,revision,title,status,progress,file_path,error_code,retry_at,parent_id "
                           "FROM downloads WHERE (? IS NULL OR id>?) ORDER BY id LIMIT ?", (after, after, limit + 1)) as cursor:
         rows = await cursor.fetchall()
     jobs = [{**dict(row), "title": row["title"][:512] if row["title"] else row["title"],

@@ -2,7 +2,7 @@
 
 Firefox Flatpak **159.0.1** can connect to the VidGrab P02 preview through Ubuntu's built-in WebExtensions portal after you enable one Firefox setting. Its default value is `0`, which reports “No such native application com.vidgrab.companion” even when VidGrab is registered. The tested setup uses the number `1`.
 
-This guide covers the P02 native connection test on Ubuntu 24.04.5/GNOME 46. The preview's regular extension popup and options still use the earlier backend. The desktop **Connected** label reports app readiness; the native test confirms Firefox access. The preview has browser registration controls; full release installation/removal remains unfinished.
+This guide records the preserved P02 native-connection previews on Ubuntu 24.04.5/GNOME 46. Their popup/options use the earlier backend, and their native test confirms Firefox access. Current source popup/options now use native v1 with a matching app and authoritative app settings; they show **Update required** when the app lacks `downloads.source`. The P04 source migration has Fedora renderer/native evidence; changed target/installed-browser/GUI acceptance and final release remain open. See [development](DEVELOPMENT.md#p04-client-migration--2026-11-16) for the current source workflow.
 
 ## Set up the connection
 
@@ -30,7 +30,7 @@ Choose **Disconnect browsers** to remove browser access while active downloads k
 
 ## Run the P02 diagnostic
 
-The regular popup has no native connection button yet. To create a fresh diagnostic XPI without replacing the tracked `dist/` archives, run from the repository root after [development setup](DEVELOPMENT.md):
+The preserved P02 previews use this separate native diagnostic; the current source popup checks native v1 access when opened. To create a fresh diagnostic XPI without replacing the tracked `dist/` archives, run from the repository root after [development setup](DEVELOPMENT.md):
 
 ```sh
 .venv/bin/python -B - <<'PY'
@@ -68,3 +68,15 @@ Fixture download checks use a selected local validation server and disposable st
 | `REQUEST_OUTCOME_UNKNOWN` | Inspect status/history before deciding what to do next. The request may already have taken effect; do not repeat a download or other mutation automatically. |
 
 The user selected guided native portal setup on **2026-11-08**. There is no paired loopback fallback in this preview. Other Firefox/portal versions and distributions need separate evidence; see [ADR-013](DECISIONS.md#adr-013--guide-firefox-flatpak-users-through-native-portal-setup) and [VALIDATION.md](VALIDATION.md).
+
+## Current source downloads, defaults and cookies
+
+Use a matching current companion build with the source extension. Open VidGrab, connect/repair browser registration and open the popup to negotiate native v1. **Connected** confirms the current native request succeeded; **Update required** requests a compatible app/extension. The stored legacy backend URL is shown as a deprecated browser value and is ignored for native transport.
+
+App download defaults are shared by the desktop and extension. Options saves only edited settings under the loaded revision. If another window changes settings, your edits remain visible; use Reload app settings to review the current values before saving. The desktop Download defaults disclosure follows the same revision/reload behavior.
+
+Enable cookie forwarding only when you want to share cookies for the selected source. The browser's cookie/site grants remain a separate requirement, and Settings reports cookie/native/notification/origin grants separately from preferences. Sign in to the source site before using Share fresh cookies on an authentication-waiting job. That action and protected retries use a fresh context bound to the exact URL/job; cookie payloads/auth references remain volatile. Desktop authentication waits direct you to this browser action.
+
+If a request reply is lost, use Check request to replay its original payload/key explicitly. Reconnect only refreshes state. After a background/view restart, the original credential payload may be unavailable; review Downloads and dismiss the reviewed notice in Settings before making a new decision. Dismissing a notice changes no engine download or setting. A failed batch stops before submitting its remaining items and exposes the request review action.
+
+This source workflow is implemented and covered by isolated renderer/control/native fixtures under [ADR-027](DECISIONS.md#adr-027--p04-client-sessions-and-explicit-request-review). The preserved Snap/Flatpak/installed-browser evidence above belongs to P02 packages; actual P04 installed-browser permission/auth/default/event acceptance remains open. VidGrab still leaves real Firefox preferences and desktop Allow decisions to the user.

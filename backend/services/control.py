@@ -116,7 +116,7 @@ class ControlService:
             raise ControlError("BAD_REQUEST", 422, "The parameters do not match this operation") from error
         if request.operation == "capabilities.get":
             result = Capabilities(fixture_only=self.fixture_validator is not None, instance_id=self.owner.id,
-                                  features=["settings.revisions", "downloads.idempotency", "events.snapshots", "events.replay",
+                                  features=["settings.revisions", "downloads.idempotency", "downloads.source", "events.snapshots", "events.replay",
                                             "downloads.actions", "downloads.options", "auth.scoped", "probes.http"],
                                   component_versions=self.component_versions)
         elif request.operation == "settings.get":

@@ -1,12 +1,16 @@
-"""Opt-in visual checks with a mocked backend; not part of unittest discovery."""
+"""Opt-in visual checks with a temporary v1 service and mocked browser delivery."""
 
 import argparse
 import json
+import sys
 from importlib.metadata import version
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests.client_ui_support import ClientFixture
 
 
 MEASURE = """() => {
@@ -47,17 +51,7 @@ def main():
     parser.add_argument("--screenshots", type=Path, required=True)
     parser.add_argument("--baseline", action="store_true", help="Record current findings without failing")
     args = parser.parse_args()
-    args.screenshots.mkdir(parents=True, exist_ok=True)
-    fixture = {
-        "download_dir": "/tmp/vidgrab-fixture-media", "max_concurrent": 3,
-        "filename_template": "%(title)s.%(ext)s", "download_threads": 4,
-        "default_quality": "1080", "default_format": "bestvideo+bestaudio/best",
-        "sponsorblock_enabled": False, "sponsorblock_categories": [], "sponsorblock_mode": "remove",
-        "postprocess_codec": "none", "postprocess_normalize_audio": False,
-        "gpu_accelerated_conversion": False, "speed_limit": 0, "custom_ytdlp_args": "",
-    }
-    status = {"status": "online", "yt_dlp_version": "2026.6.9", "yt_dlp_latest": None,
-              "update_available": False, "ffmpeg_available": False}
+    args.screenshots.mkdir(parents=True, exist_ok=False)
     findings, blocked, errors, measurements = [], [], [], []
 
     def route_request(route):
@@ -66,20 +60,11 @@ def main():
         if url.scheme not in ("http", "https"):
             route.continue_()
             return
-        headers = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*",
-                   "Access-Control-Allow-Methods": "GET, PATCH, OPTIONS"}
-        if url.hostname in ("localhost", "127.0.0.1") and url.path in ("/config", "/status"):
-            if request.method == "OPTIONS":
-                route.fulfill(status=204, headers=headers)
-                return
-            if request.method == "PATCH":
-                fixture.update(request.post_data_json)
-            route.fulfill(json=status if url.path == "/status" else fixture, headers=headers)
-        else:
-            blocked.append(request.url)
-            route.abort()
+        blocked.append(request.url)
+        route.abort()
 
-    with sync_playwright() as playwright:
+    with ClientFixture(args.screenshots / "runtime") as fixture, sync_playwright() as playwright:
+        fixture.engine.app.state.control.component_versions = {"yt_dlp": "2026.6.9"}
         browser = playwright.chromium.launch(
             executable_path="/opt/google/chrome/chrome", headless=True,
             args=["--disable-background-networking", "--disable-component-update", "--disable-sync",
@@ -89,6 +74,7 @@ def main():
             for width, height in ((1280, 900), (768, 900), (390, 844)):
                 context = browser.new_context(viewport={"width": width, "height": height}, reduced_motion="reduce")
                 try:
+                    fixture.install(context)
                     context.route("**/*", route_request)
                     page = context.new_page()
                     page.set_default_timeout(5000)
@@ -122,11 +108,12 @@ def main():
                     assert page.locator("#btn-update-ytdlp").is_disabled()
                     page.locator("#btn-save-settings").click()
                     page.locator("#status-message").filter(has_text="Settings saved and synced successfully.").wait_for()
-                    assert fixture["auto_update_ytdlp"] is False
+                    assert fixture.settings()["values"]["auto_update_ytdlp"] is False
                 finally:
                     context.close()
         finally:
             browser.close()
+            fixture.write_report(args.screenshots / "fixture-report.json")
     report = {"playwright": version("playwright"), "screenshots": str(args.screenshots),
               "findings": findings, "page_errors": errors, "blocked_requests": sorted(set(blocked)),
               "surfaces_checked": len(measurements),

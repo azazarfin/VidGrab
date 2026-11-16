@@ -1,14 +1,16 @@
 # 🎥 VidGrab — Cross-Browser Video Downloader & Queue Manager
 
-VidGrab is a premium, local-first video downloader extension for Google Chrome and Mozilla Firefox. It is powered by a high-performance Python backend wrapping `yt-dlp` and `ffmpeg`, providing a unified queue manager, download history, automated SponsorBlock segment cutting, subtitles/thumbnail integration, custom command-line arguments, and schedule-for-later planning.
+VidGrab combines Google Chrome/Firefox extensions with a desktop companion for local media downloads. The app owns the queue, shared download defaults and bundled Python/yt-dlp/FFmpeg execution, so downloads can continue after the browser closes.
 
-## Desktop companion roadmap
+## Desktop companion development
 
-A standalone download-manager app is planned for **Linux and Windows first**, with macOS following. See [the implementation plan](docs/PLAN.md), [target architecture](docs/ARCHITECTURE.md), and [HANDOFF.md](HANDOFF.md) to continue development across agents or devices. The desktop app is not implemented yet; the setup below describes the existing extension/backend.
+The selected Linux/Windows desktop feasibility previews and scoped durable backend are implemented. Current source popup/options and desktop downloads/defaults use the generated native v1 contract; use a matching companion build. The 2026-11-16 migration passes Fedora guarded/renderer/source/fresh-frozen checks; changed Ubuntu/Windows client, native GUI/installed-browser and final release acceptance remain open. See [current source development](docs/DEVELOPMENT.md#p04-client-migration--2026-11-16), [browser connection guidance](docs/BROWSER_CONNECTION.md), [the plan](docs/PLAN.md) and [HANDOFF.md](HANDOFF.md). macOS follows the selected Linux/Windows targets.
+
+The backend setup and endpoint examples below document retained legacy ASGI development. Current source clients use the native companion; per-request scheduling and arbitrary executable arguments are unavailable in that interface.
 
 ---
 
-## 🏗️ Architecture Overview
+## 🏗️ Legacy backend architecture
 
 VidGrab uses a hybrid architecture: a lightweight, responsive browser extension UI communicates via REST and WebSockets with a locally hosted background Python service.
 

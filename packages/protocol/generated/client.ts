@@ -18,7 +18,7 @@ export type Event = { "sequence": number; "topic": "downloads" | "settings"; "en
 export type EventBatch = { "instance_id": string; "cursor": number; "resnapshot": boolean; "has_more": boolean; "snapshot": Snapshot | null; "events": Array<Event> };
 export type EventParams = { "instance_id"?: string | null; "cursor"?: number; "limit"?: number };
 export type Failure = { "protocol_version": 1; "request_id": string | null; "ok": false; "error": Error };
-export type Job = { "id": string; "revision": number; "title": string | null; "status": string; "progress": number; "file_path": string | null; "error_code": string | null; "retry_at": number | null; "parent_id": string | null };
+export type Job = { "id": string; "url": string; "revision": number; "title": string | null; "status": string; "progress": number; "file_path": string | null; "error_code": string | null; "retry_at": number | null; "parent_id": string | null };
 export type JsonValue = unknown;
 export type ProbeEntry = { "id": string; "title": string; "duration": number | null; "thumbnail": string | null; "url": string };
 export type ProbeFormat = { "format_id": string; "ext": string; "resolution": string | null; "filesize": number | null; "filesize_approx": number | null; "vcodec": string | null; "acodec": string | null; "fps": number | null; "tbr": number | null; "container": string | null };
@@ -47,4 +47,8 @@ export interface Operations {
 export interface RequestOptions { request_id: string; idempotency_key?: string }
 export type Transport = (request: Request) => Promise<unknown>;
 export interface Client { request<K extends keyof Operations>(operation: K, params: Operations[K]['params'], options: RequestOptions): Promise<Operations[K]['result']> }
-export { createClient, ProtocolError } from './client.mjs';
+export type MutationOperation = 'settings.patch' | 'downloads.enqueue' | 'downloads.action' | 'downloads.authenticate';
+export interface PendingMutation { readonly operation: MutationOperation; readonly params: unknown; readonly key: string }
+export interface ControlState { connected: boolean; capabilities: Capabilities | null; snapshot: Snapshot | null; has_more: boolean }
+export interface ControlSession { readonly state: ControlState; readonly pending: PendingMutation | null; sync(force?: boolean): Promise<ControlState>; loadMore(): Promise<ControlState>; read<K extends keyof Operations>(operation: K, params?: Operations[K]['params']): Promise<Operations[K]['result']>; mutate<K extends MutationOperation>(operation: K, params: Operations[K]['params']): Promise<Operations[K]['result']>; replay(): Promise<Operations[MutationOperation]['result']>; dismiss(key: string): void }
+export { createClient, createSession, ProtocolError } from './client.mjs';

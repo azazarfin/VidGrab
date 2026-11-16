@@ -103,6 +103,18 @@ class ControlMediaTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(one["title"], two["title"])
         self.assertEqual(len(self.probe_calls), 1)
 
+    async def test_job_pages_retain_the_exact_source_for_scoped_authentication(self):
+        capabilities = self.ok(await self.send("capabilities.get"))
+        self.assertIn("downloads.source", capabilities["features"])
+        url = "https://fixture.invalid/মিডিয়া.mp4?token=literal%2Bvalue"
+        job = self.ok(await self.send("downloads.enqueue", {"url": url}, key="literal-source"))["job_id"]
+        for operation in ("downloads.list", "events.read"):
+            with self.subTest(operation=operation):
+                result = self.ok(await self.send(operation))
+                page = result["snapshot"] if operation == "events.read" else result
+                self.assertEqual(page["jobs"][0]["id"], job)
+                self.assertEqual(page["jobs"][0].get("url"), url)
+
     async def test_probe_reports_bounded_format_pages(self):
         self.application.state.probes.runner = lambda *_: {"title": "Many", "formats": [
             {"format_id": str(index), "ext": "mp4"} for index in range(100)]}

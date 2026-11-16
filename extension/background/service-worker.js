@@ -1,391 +1,156 @@
-// Import the API client and utilities
-if (typeof importScripts === "function") {
-  importScripts("../lib/protocol.js", "../lib/api.js", "../lib/utils.js", "../lib/native.js");
+if (typeof importScripts === 'function') {
+  importScripts('../lib/protocol.js', '../lib/api.js', '../lib/utils.js', '../lib/native.js');
 }
 
-const DEFAULT_SETTINGS = {
-  backendUrl: "http://localhost:8000",
-  defaultFormat: "bestvideo+bestaudio/best",
-  defaultQuality: "1080",
-  notificationPreference: "both",
-};
+const api = self.vidGrabAPI;
+const DEFAULT_SETTINGS = { cookieForwardingEnabled: false, notificationPreference: 'both' };
+const read = keys => new Promise(resolve => chrome.storage.local.get(keys, resolve));
 
-// Listen for tab removals to clean up tab-specific detected videos
-chrome.tabs?.onRemoved?.addListener((tabId) => {
-  chrome.storage.local.remove(`detected_videos_${tabId}`);
+chrome.tabs?.onRemoved?.addListener(tabId => chrome.storage.local.remove('detected_videos_' + tabId));
+chrome.runtime.onInstalled.addListener(async () => {
+  const current = await read(Object.keys(DEFAULT_SETTINGS));
+  const missing = Object.fromEntries(Object.entries(DEFAULT_SETTINGS).filter(([key]) => current[key] === undefined));
+  if (Object.keys(missing).length) chrome.storage.local.set(missing);
+  for (const [id, title, contexts] of [
+    ['vidgrab-download-page', 'Download video from this page', ['page']],
+    ['vidgrab-download-link', 'Download linked video', ['link']],
+    ['vidgrab-download-video', 'Download this video', ['video']],
+  ]) chrome.contextMenus.create({ id, title, contexts });
 });
 
-// Initialize settings and context menus on install
-chrome.runtime.onInstalled.addListener(() => {
-  console.log("VidGrab Service Worker installed.");
-  
-  // Set default settings in local storage if not already present
-  chrome.storage.local.get(Object.keys(DEFAULT_SETTINGS), (result) => {
-    const updates = {};
-    for (const [key, val] of Object.entries(DEFAULT_SETTINGS)) {
-      if (result[key] === undefined) {
-        updates[key] = val;
-      }
-    }
-    if (Object.keys(updates).length > 0) {
-      chrome.storage.local.set(updates);
-    }
-  });
-
-  // Clear any old detected video keys on startup/install
-  chrome.storage.local.get(null, (items) => {
-    const keysToRemove = Object.keys(items).filter(k => k.startsWith("detected_videos_"));
-    if (keysToRemove.length > 0) {
-      chrome.storage.local.remove(keysToRemove);
-    }
-  });
-
-  // Create context menu items
-  chrome.contextMenus.create({
-    id: "vidgrab-download-page",
-    title: "Download video from this page",
-    contexts: ["page"]
-  });
-
-  chrome.contextMenus.create({
-    id: "vidgrab-download-link",
-    title: "Download linked video",
-    contexts: ["link"]
-  });
-
-  chrome.contextMenus.create({
-    id: "vidgrab-download-video",
-    title: "Download this video",
-    contexts: ["video"]
-  });
-});
-
-// Handle context menu clicks
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  let targetUrl = "";
-
-  if (info.menuItemId === "vidgrab-download-video" && info.srcUrl) {
-    targetUrl = info.srcUrl;
-  } else if (info.menuItemId === "vidgrab-download-link" && info.linkUrl) {
-    targetUrl = info.linkUrl;
-  } else if (info.menuItemId === "vidgrab-download-page" && info.pageUrl) {
-    targetUrl = info.pageUrl;
-  }
-
-  if (targetUrl) {
-    console.log(`Context menu click triggered download for: ${targetUrl}`);
-    await triggerQuickDownload(targetUrl);
-  }
-});
-
-async function getCookiesForUrl(url) {
-  return new Promise((resolve) => {
-    if (typeof chrome === 'undefined' || !chrome.cookies) {
-      resolve(null);
-      return;
-    }
-    // Skip cookie extraction for localhost/loopback URLs
-    try {
-      const parsedUrl = new URL(url);
-      if (parsedUrl.hostname === 'localhost' || parsedUrl.hostname === '127.0.0.1') {
-        resolve(null);
-        return;
-      }
-    } catch (e) {
-      resolve(null);
-      return;
-    }
-    chrome.storage.local.get(["cookieForwardingEnabled"], (settings) => {
-      if (!settings.cookieForwardingEnabled) {
-        resolve(null);
-        return;
-      }
-      try {
-        chrome.cookies.getAll({ url }, (cookies) => {
-          if (chrome.runtime.lastError) {
-            console.warn("Failed to get cookies:", chrome.runtime.lastError);
-            resolve(null);
-          } else {
-            resolve(cookies || null);
-          }
-        });
-      } catch (err) {
-        console.warn("Error calling chrome.cookies.getAll:", err);
-        resolve(null);
-      }
-    });
-  });
+async function notify(id, title, message, kind) {
+  const permission = await api.getPermissions();
+  if (!permission.notifications_granted || !['both', kind].includes(permission.notification_preference)) return;
+  chrome.notifications.create(id, { type: 'basic', iconUrl: chrome.runtime.getURL('icons/icon128.png'), title, message });
 }
 
-/**
- * Sends a quick download request using default settings.
- */
 async function triggerQuickDownload(url) {
   try {
-    // Show a starting notification
-    showNotification("download-start", "VidGrab: Starting Download", "Analyzing video URL...");
-
-    // Get default format
-    const settings = await new Promise((resolve) => {
-      chrome.storage.local.get(["defaultFormat"], resolve);
-    });
-    const formatId = settings.defaultFormat || "bestvideo+bestaudio/best";
-
-    // Get cookies if forwarding is enabled
-    const cookies = await getCookiesForUrl(url);
-    const options = {};
-    if (cookies) {
-      options.cookies = cookies;
-    }
-
-    // Call backend to start download
-    const res = await self.vidGrabAPI.startDownload(url, formatId, null, null, options);
-    console.log("Download started successfully:", res);
-
-    showNotification("download-started", "VidGrab: Download Queued", "Video has been added to the download queue.");
+    await api.startDownload(url);
+    await notify('download-started', 'VidGrab: Download Queued', 'Video has been added to the download queue.', 'completion');
+    await api.sync();
   } catch (error) {
-    console.error("Failed to trigger download from context menu:", error);
-    showNotification("download-error", "VidGrab: Download Failed", `Could not start download: ${error.message}`);
+    await notify('download-error', 'VidGrab: Download Needs Attention', error.message, 'failure');
   }
 }
 
-/**
- * Helper to show system notifications.
- */
-function showNotification(id, title, message, contextMessage = "", buttons = []) {
-  const options = {
-    type: "basic",
-    iconUrl: chrome.runtime.getURL("icons/icon128.png"),
-    title: title,
-    message: message,
-    priority: 1
-  };
-  if (contextMessage) {
-    options.contextMessage = contextMessage;
-  }
-  if (buttons && buttons.length > 0) {
-    options.buttons = buttons;
-  }
-  chrome.notifications.create(id, options);
-}
-
-// --- Handle messages from content scripts ---
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === "video_detected") {
-    const newVideos = message.videos || [];
-    if (sender.tab && sender.tab.id) {
-      const tabId = sender.tab.id;
-      const storageKey = `detected_videos_${tabId}`;
-      
-      chrome.storage.local.get([storageKey], (result) => {
-        const accumulated = result[storageKey] || [];
-        const updated = [...accumulated];
-        
-        newVideos.forEach(newVid => {
-          if (!updated.some(v => v.url === newVid.url)) {
-            updated.push(newVid);
-          }
-        });
-
-        // Update badge count
-        const total = updated.length;
-        const text = total > 0 ? String(total) : "";
-        chrome.action.setBadgeText({ text, tabId: tabId });
-        chrome.action.setBadgeBackgroundColor({ color: "#7C6BF0", tabId: tabId });
-
-        // Save back
-        chrome.storage.local.set({ [storageKey]: updated });
-      });
-    }
-  } else if (message.type === "download_request") {
-    // Triggered from the floating overlay button on a page (legacy quick download)
-    triggerQuickDownload(message.url);
-  } else if (message.type === "open_popup") {
-    // Programmatically open the extension popup if supported by the browser
-    if (chrome.action && chrome.action.openPopup) {
-      chrome.action.openPopup((err) => {
-        if (chrome.runtime.lastError) {
-          console.warn("VidGrab background: openPopup failed:", chrome.runtime.lastError);
-        }
-      });
-    } else {
-      console.warn("VidGrab background: chrome.action.openPopup is not supported in this browser.");
-    }
-  } else if (message.type === "probe_request") {
-    // Triggered from the inline overlay panel to fetch video metadata
-    (async () => {
-      try {
-        const info = await self.vidGrabAPI.probeUrl(message.url);
-        const statusData = await self.vidGrabAPI.getStatus();
-        sendResponse({ success: true, data: info, ffmpeg_available: statusData.ffmpeg_available !== false });
-      } catch (err) {
-        sendResponse({ success: false, error: err.message || "Probe failed" });
-      }
-    })();
-    return true; // keep channel open for async sendResponse
-  } else if (message.type === "download_with_options") {
-    // Triggered from the inline overlay panel with user-selected options
-    (async () => {
-      try {
-        const { url, formatId, title, thumbnailUrl, options } = message;
-
-        // Get cookies if forwarding is enabled
-        const cookies = await getCookiesForUrl(url);
-        const finalOptions = { ...options };
-        if (cookies) {
-          finalOptions.cookies = cookies;
-        }
-
-        const res = await self.vidGrabAPI.startDownload(url, formatId, title, thumbnailUrl, finalOptions);
-        showNotification("download-started", "VidGrab: Download Queued", `${title || "Video"} has been added to the download queue.`);
-        sendResponse({ success: true, data: res });
-      } catch (err) {
-        showNotification("download-error", "VidGrab: Download Failed", `Could not start download: ${err.message}`);
-        sendResponse({ success: false, error: err.message || "Download failed" });
-      }
-    })();
-    return true; // keep channel open for async sendResponse
-  }
-  return false; // synchronous for other message types
+chrome.contextMenus.onClicked.addListener(async info => {
+  const url = info.menuItemId === 'vidgrab-download-video' ? info.srcUrl
+    : info.menuItemId === 'vidgrab-download-link' ? info.linkUrl : info.pageUrl;
+  if (url) await triggerQuickDownload(url);
 });
 
-// Keep-alive and connection management for badge updates
-function updateBadge(activeCount) {
-  const text = activeCount > 0 ? String(activeCount) : "";
-  chrome.action.setBadgeText({ text });
-  chrome.action.setBadgeBackgroundColor({ color: "#7C6BF0" });
-}
-
-// Connect to WebSocket and monitor active downloads to update badge
-function setupWebSocketMonitoring() {
-  self.vidGrabAPI.connectWebSocket();
-
-  self.vidGrabAPI.addEventListener("init_state", (e) => {
-    const tasks = e.detail;
-    const activeCount = tasks.filter(t => t.status === "downloading" || t.status === "queued" || t.status === "postprocessing").length;
-    updateBadge(activeCount);
-  });
-
-  self.vidGrabAPI.addEventListener("task_queued", () => refreshActiveCount());
-  self.vidGrabAPI.addEventListener("task_started", () => refreshActiveCount());
-  self.vidGrabAPI.addEventListener("task_complete", (e) => {
-    refreshActiveCount();
-    chrome.storage.local.get(["notificationPreference"], (settings) => {
-      const pref = settings.notificationPreference || "both";
-      if (pref === "both" || pref === "completion") {
-        const task = e.detail;
-        let options = {};
-        try {
-          options = JSON.parse(task.download_options || "{}");
-        } catch(err){}
-        
-        let context = `Format: ${task.format_selected || 'default'}`;
-        if (task.file_size) {
-          context += ` | Size: ${formatBytes(task.file_size)}`;
-        }
-        if (options.duration) {
-          context += ` | Duration: ${formatDuration(options.duration)}`;
-        }
-        
-        showNotification(
-          "success|" + task.id,
-          "Download Complete",
-          `${task.title || "Video"} finished downloading.`,
-          context,
-          [{ title: "Open Containing Folder" }]
-        );
-      }
-    });
-  });
-  self.vidGrabAPI.addEventListener("task_failed", (e) => {
-    refreshActiveCount();
-    chrome.storage.local.get(["notificationPreference"], (settings) => {
-      const pref = settings.notificationPreference || "both";
-      if (pref === "both" || pref === "failure") {
-        const task = e.detail;
-        showNotification(
-          "failure|" + task.id,
-          "Download Failed",
-          `${task.title || "Video"} failed.`,
-          `Error: ${task.error_message || "Unknown error"}`,
-          [{ title: "Retry Download" }]
-        );
-      }
-    });
-  });
-  self.vidGrabAPI.addEventListener("task_cancelled", () => refreshActiveCount());
-}
-
-// Handle notification button clicks
-chrome.notifications.onButtonClicked.addListener(async (notificationId, buttonIndex) => {
-  const parts = notificationId.split("|");
-  if (parts.length < 2) return;
-  const status = parts[0];
-  const taskId = parts[1];
-  
-  if (status === "success" && buttonIndex === 0) {
-    try {
-      await self.vidGrabAPI.openFolder(taskId);
-    } catch (err) {
-      console.error("Failed to open folder via notification:", err);
-    }
-  } else if (status === "failure" && buttonIndex === 0) {
-    try {
-      let cookies = null;
-      try {
-        const downloads = await self.vidGrabAPI.listDownloads();
-        const task = downloads.find(d => d.id === taskId);
-        if (task && task.url) {
-          cookies = await getCookiesForUrl(task.url);
-        }
-      } catch (err) {
-        console.warn("Failed to get cookies on retry via notification:", err);
-      }
-      await self.vidGrabAPI.retryDownload(taskId, cookies);
-      chrome.notifications.clear(notificationId);
-    } catch (err) {
-      console.error("Failed to retry download via notification:", err);
-    }
-  }
-});
-
-// Handle notification body clicks
-chrome.notifications.onClicked.addListener(async (notificationId) => {
-  const parts = notificationId.split("|");
-  if (parts.length < 2) return;
-  const status = parts[0];
-  const taskId = parts[1];
-  
-  if (status === "success") {
-    try {
-      await self.vidGrabAPI.openFolder(taskId);
-    } catch (err) {
-      console.error("Failed to open folder via notification click:", err);
-    }
-  }
-});
-
-async function refreshActiveCount() {
+function ownPage(sender) {
+  if (sender.id !== chrome.runtime.id) return false;
   try {
-    // Only fetch active statuses instead of the entire download history
-    const [downloading, queued] = await Promise.all([
-      self.vidGrabAPI.listDownloads("downloading"),
-      self.vidGrabAPI.listDownloads("queued")
-    ]);
-    const activeCount = downloading.length + queued.length;
-    updateBadge(activeCount);
-  } catch (e) {
-    console.warn("Failed to refresh active count for badge:", e);
-  }
+    const url = new URL(sender.url);
+    const base = new URL(chrome.runtime.getURL(''));
+    return url.protocol === base.protocol && url.host === base.host
+      && ['/popup/popup.html', '/options/options.html'].includes(url.pathname);
+  } catch { return false; }
 }
 
-// Start WebSocket monitoring
-setupWebSocketMonitoring();
+function content(sender) {
+  if (sender.id !== chrome.runtime.id || !Number.isInteger(sender.tab?.id) || sender.tab.id < 0) return false;
+  try { self.vidGrabMediaUrl(sender.url); return true; } catch { return false; }
+}
 
-// Periodically check status to keep service worker alive when downloads are active
-chrome.alarms.create("check-downloads", { periodInMinutes: 1 });
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "check-downloads") {
-    refreshActiveCount();
+function errorResponse(request, error) {
+  return { protocol_version: 1, request_id: request?.request_id || null, ok: false,
+    error: { code: error.code || 'INTERNAL_ERROR', message: error.message || 'The request could not be completed',
+      request_id: request?.request_id || null, retryable: false, retry_at: null, provenance: 'local', details: error.details || {} } };
+}
+
+chrome.runtime.onMessage.addListener((message, sender, respond) => {
+  if (typeof message?.type !== 'string') return false;
+  if (message.type.startsWith('companion.')) {
+    if (!ownPage(sender)) {
+      respond(errorResponse(message.request, { code: 'UNAUTHORIZED', message: 'Only VidGrab popup and settings pages may use this control request' }));
+      return false;
+    }
+    void (async () => {
+      try {
+        if (message.type === 'companion.request') {
+          if (message.request?.operation === 'auth.create') throw { code: 'UNSUPPORTED_OPERATION', message: 'Use the browser authentication action to share cookies' };
+          respond(await api.forwardRequest(message.request, message.replay === true));
+        } else if (message.type === 'companion.permissions') respond({ ok: true, data: await api.getPermissions(message.url) });
+        else if (message.type === 'companion.context') {
+          if (message.job_id !== null && message.job_id !== undefined && (typeof message.job_id !== 'string' || message.job_id.length > 256)) {
+            throw { code: 'BAD_REQUEST', message: 'Invalid download identity' };
+          }
+          respond({ ok: true, data: await api.prepareAuth(message.url, message.job_id || null, message.fresh === true) });
+        } else if (message.type === 'companion.pending') respond({ ok: true, data: await api.getPending() });
+        else if (message.type === 'companion.dismiss') {
+          await api.dismissPending(message.key);
+          respond({ ok: true });
+        }
+        else throw { code: 'UNSUPPORTED_OPERATION', message: 'Unsupported companion message' };
+      } catch (error) { respond(errorResponse(message.request, error)); }
+    })();
+    return true;
   }
+  if (!content(sender)) return false;
+  if (message.type === 'video_detected') {
+    const candidates = Array.isArray(message.videos) ? message.videos.slice(0, 128) : [];
+    const videos = candidates.flatMap(video => {
+      try {
+        self.vidGrabMediaUrl(video.url);
+        return [{ url: video.url, title: String(video.title || '').slice(0, 512),
+          thumbnail: typeof video.thumbnail === 'string' ? video.thumbnail.slice(0, 16384) : null,
+          type: typeof video.type === 'string' ? video.type.slice(0, 32) : 'video' }];
+      } catch { return []; }
+    });
+    const key = 'detected_videos_' + sender.tab.id;
+    void read([key]).then(current => {
+      const merged = new Map((Array.isArray(current[key]) ? current[key] : []).map(video => [video.url, video]));
+      for (const video of videos) merged.set(video.url, video);
+      const bounded = [...merged.values()].slice(-128);
+      chrome.storage.local.set({ [key]: bounded });
+      chrome.action.setBadgeText({ text: bounded.length ? String(bounded.length) : '', tabId: sender.tab.id });
+      chrome.action.setBadgeBackgroundColor({ color: '#7C6BF0', tabId: sender.tab.id });
+    });
+  } else if (message.type === 'open_popup') {
+    chrome.action?.openPopup?.();
+  } else if (message.type === 'download_request') {
+    void triggerQuickDownload(message.url);
+  } else if (message.type === 'probe_request' || message.type === 'download_with_options') {
+    void (async () => {
+      try {
+        const data = message.type === 'probe_request' ? await api.probeUrl(message.url)
+          : await api.startDownload(message.url, message.formatId || null, message.title || null, message.thumbnailUrl || null, message.options || {});
+        respond({ success: true, data });
+      } catch (error) { respond({ success: false, error: error.message, code: error.code }); }
+    })();
+    return true;
+  }
+  return false;
+});
+
+let observedInstance = null;
+let observedJobs = new Map();
+api.addEventListener('snapshot', event => {
+  const snapshot = event.detail.snapshot;
+  chrome.action.setBadgeText({ text: snapshot.counts.unfinished ? String(snapshot.counts.unfinished) : '' });
+  chrome.action.setBadgeBackgroundColor({ color: '#7C6BF0' });
+  if (observedInstance === snapshot.instance_id) {
+    for (const job of snapshot.jobs) {
+      const previous = observedJobs.get(job.id);
+      if (previous && previous.status !== job.status && ['complete', 'failed', 'waiting_for_auth'].includes(job.status)) {
+        const success = job.status === 'complete';
+        void notify((success ? 'success' : 'failure') + '|' + job.id, success ? 'Download Complete' : 'Download Needs Attention',
+          success ? (job.title || 'Video') + ' finished downloading.' : job.status === 'waiting_for_auth'
+            ? 'Open VidGrab and share fresh cookies for this download.' : (job.title || 'Video') + ' failed. Open VidGrab to review it.',
+          success ? 'completion' : 'failure').catch(() => {});
+      }
+    }
+  }
+  observedInstance = snapshot.instance_id;
+  observedJobs = new Map(snapshot.jobs.map(job => [job.id, job]));
+});
+
+chrome.notifications.onClicked.addListener(() => chrome.action?.openPopup?.());
+chrome.notifications.onButtonClicked.addListener(() => chrome.action?.openPopup?.());
+chrome.alarms.create('check-downloads', { periodInMinutes: 1 });
+chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name === 'check-downloads') void api.sync().catch(() => {});
 });

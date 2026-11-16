@@ -1,46 +1,6 @@
 document.addEventListener("DOMContentLoaded", () => {
   const api = window.vidGrabAPI;
   
-  // Helper to fetch cookies if forwarding is enabled
-  async function getCookiesForUrl(url) {
-    return new Promise((resolve) => {
-      if (typeof chrome === 'undefined' || !chrome.cookies) {
-        resolve(null);
-        return;
-      }
-      // Skip cookie extraction for localhost/loopback URLs
-      try {
-        const parsedUrl = new URL(url);
-        if (parsedUrl.hostname === 'localhost' || parsedUrl.hostname === '127.0.0.1') {
-          resolve(null);
-          return;
-        }
-      } catch (e) {
-        resolve(null);
-        return;
-      }
-      chrome.storage.local.get(["cookieForwardingEnabled"], (settings) => {
-        if (!settings.cookieForwardingEnabled) {
-          resolve(null);
-          return;
-        }
-        try {
-          chrome.cookies.getAll({ url }, (cookies) => {
-            if (chrome.runtime.lastError) {
-              console.warn("Failed to get cookies:", chrome.runtime.lastError);
-              resolve(null);
-            } else {
-              resolve(cookies || null);
-            }
-          });
-        } catch (err) {
-          console.warn("Error calling chrome.cookies.getAll:", err);
-          resolve(null);
-        }
-      });
-    });
-  }
-  
   // DOM Elements
   const connectionStatus = document.getElementById("connection-status");
   const backendErrorOverlay = document.getElementById("backend-error-overlay");
@@ -142,123 +102,106 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentProbedData = null;
   let renderAllTimer = null;
   let activeTabId = null;
+  let appDefaults = null;
+  let counts = { total: 0, unfinished: 0 };
+  let probeNumber = 0;
+  let actionBusy = false;
+  const clientStatus = document.getElementById("client-status");
+  const checkRequestBtn = document.getElementById("check-request-btn");
+  const reviewRequestBtn = document.getElementById("review-request-btn");
+  const loadMoreBtn = document.getElementById("load-more-btn");
+  const jobsSummary = document.getElementById("jobs-summary");
+  const freshProbeBtn = document.getElementById("fresh-probe-btn");
 
-  // HTML escaping to prevent XSS from untrusted video titles
-  function escapeHtml(str) {
-    if (!str) return "";
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+  function showClientStatus(message, error = false) {
+    clientStatus.textContent = message;
+    clientStatus.hidden = !message;
+    clientStatus.setAttribute("role", error ? "alert" : "status");
+    clientStatus.classList.toggle("error", error);
+    checkRequestBtn.hidden = api.session.pending === null;
   }
 
-  // URL validation helper
-  function isValidUrl(string) {
-    try { new URL(string); return true; } catch { return false; }
+  function updateDefaults() {
+    for (const input of [modalDownloadDirInput, playlistDownloadDirInput, batchDownloadDirInput]) {
+      input.readOnly = true;
+      input.value = appDefaults?.download_dir || "";
+    }
+    modalOutputTemplateInput.readOnly = true;
+    modalOutputTemplateInput.value = appDefaults?.filename_template || "";
+    for (const select of [formatSelect, playlistFormatSelect, batchQualitySelect]) {
+      const option = select.querySelector('option[value=""]');
+      if (option) option.textContent = "App default (" + (appDefaults?.default_format || "loading") + ")";
+    }
   }
 
-  // --- Initialize Connections ---
+  function isValidUrl(value) {
+    try { window.vidGrabMediaUrl(value); return true; } catch { return false; }
+  }
+
+  let ffmpegAvailable = false;
   function connect() {
-    api.connectWebSocket();
-    checkBackendHealth();
+    api.connect();
+    void api.getPending().then(pending => {
+      reviewRequestBtn.hidden = pending.length === 0;
+      if (pending.length) showClientStatus("A previous request may have succeeded. Review downloads before submitting the same request again.", true);
+    }).catch(error => showClientStatus(error.message, true));
   }
-
-  let ffmpegAvailable = true;
-
+  reviewRequestBtn.addEventListener("click", () => chrome.runtime.openOptionsPage());
   async function checkBackendHealth() {
-    try {
-      const statusData = await api.getStatus();
-      ffmpegAvailable = statusData.ffmpeg_available !== false;
-      onBackendOnline(statusData);
-    } catch (e) {
-      onBackendOffline();
-    }
+    try { await api.sync(true); } catch (error) { onBackendOffline(error); }
   }
-
-  function onBackendOnline(statusData) {
-    connectionStatus.classList.add("online");
-    connectionStatus.querySelector(".status-text").textContent = "Online";
-    backendErrorOverlay.classList.remove("active");
-    
-    const modalFfmpegWarning = document.getElementById("modal-ffmpeg-warning");
-    if (statusData && statusData.ffmpeg_available === false) {
-      ffmpegAvailable = false;
-      if (modalFfmpegWarning) modalFfmpegWarning.style.display = "block";
-    } else {
-      ffmpegAvailable = true;
-      if (modalFfmpegWarning) modalFfmpegWarning.style.display = "none";
-    }
-    
-    refreshLists();
-  }
-
-  function onBackendOffline() {
+  function onBackendOffline(error) {
     connectionStatus.classList.remove("online");
-    connectionStatus.querySelector(".status-text").textContent = "Offline";
+    connectionStatus.querySelector(".status-text").textContent = error?.code === "APP_INCOMPATIBLE" ? "Update required" : "Unavailable";
     backendErrorOverlay.classList.add("active");
+    backendErrorOverlay.hidden = false;
+    backendErrorOverlay.querySelector("h3").textContent = error?.code === "APP_INCOMPATIBLE" ? "Update required" : "Companion unavailable";
+    const description = backendErrorOverlay.querySelector("p");
+    if (description) description.textContent = error?.message || "Open VidGrab and test the native browser connection.";
   }
-
-  // --- API Event Listeners ---
-  api.addEventListener("connection_change", (e) => {
-    if (e.detail.connected) {
-      checkBackendHealth();
-    } else {
-      onBackendOffline();
-    }
-  });
-
-  api.addEventListener("init_state", (e) => {
-    tasksMap.clear();
-    e.detail.forEach(task => tasksMap.set(task.id, task));
+  api.addEventListener("snapshot", event => {
+    const state = event.detail;
+    tasksMap = new Map(state.snapshot.jobs.map(job => [job.id, job]));
+    appDefaults = state.snapshot.settings.values;
+    counts = state.snapshot.counts;
+    ffmpegAvailable = Boolean(state.capabilities.component_versions.ffmpeg);
+    connectionStatus.classList.add("online");
+    connectionStatus.querySelector(".status-text").textContent = "Connected";
+    connectionStatus.title = "Native companion connected";
+    backendErrorOverlay.classList.remove("active");
+    backendErrorOverlay.hidden = true;
+    const warning = document.getElementById("modal-ffmpeg-warning");
+    if (warning) warning.style.display = ffmpegAvailable ? "none" : "block";
+    loadMoreBtn.hidden = !state.snapshot.next_after;
+    jobsSummary.textContent = state.snapshot.jobs.length + " shown · " + counts.total + " total · " + counts.unfinished + " unfinished";
+    updateDefaults();
     renderAll();
   });
-
-  api.addEventListener("task_queued", (e) => {
-    tasksMap.set(e.detail.id, e.detail);
-    renderAll();
+  api.addEventListener("connection_change", event => {
+    if (!event.detail.connected) onBackendOffline(event.detail.error);
   });
-
-  api.addEventListener("task_started", (e) => {
-    tasksMap.set(e.detail.id, e.detail);
-    renderAll();
-  });
-
-  api.addEventListener("task_progress", (e) => {
-    const task = e.detail;
-    // Only update and re-render if it exists
-    if (tasksMap.has(task.id)) {
-      tasksMap.set(task.id, { ...tasksMap.get(task.id), ...task });
-      updateTaskCardDOM(task.id);
-    }
-  });
-
-  api.addEventListener("task_complete", (e) => {
-    tasksMap.set(e.detail.id, e.detail);
-    renderAll();
-    showDesktopNotification("Download Finished", `${e.detail.title || "Video"} downloaded successfully!`);
-  });
-
-  api.addEventListener("task_failed", (e) => {
-    tasksMap.set(e.detail.id, e.detail);
-    renderAll();
-    showDesktopNotification("Download Failed", `${e.detail.title || "Video"} failed to download.`);
-  });
-
-  api.addEventListener("task_cancelled", (e) => {
-    tasksMap.set(e.detail.id, e.detail);
-    renderAll();
-  });
-
-  // --- Refresh Lists ---
   async function refreshLists() {
-    try {
-      const allTasks = await api.listDownloads();
-      tasksMap.clear();
-      allTasks.forEach(task => tasksMap.set(task.id, task));
-      renderAll();
-    } catch (e) {
-      console.error("Failed to refresh lists:", e);
-    }
+    try { await api.sync(); } catch (error) { showClientStatus(error.message, true); }
   }
+  loadMoreBtn.addEventListener("click", async () => {
+    loadMoreBtn.disabled = true;
+    try { await api.loadMore(); } catch (error) { showClientStatus(error.message, true); }
+    finally { loadMoreBtn.disabled = false; }
+  });
+  checkRequestBtn.addEventListener("click", async () => {
+    checkRequestBtn.disabled = true;
+    try {
+      await api.retryPending();
+      await api.sync(true);
+      closeModal();
+      showClientStatus("Request checked. Current downloads refreshed.");
+    } catch (error) {
+      if (error.details?.replay_available === false) reviewRequestBtn.hidden = false;
+      showClientStatus(error.message, true);
+    }
+    finally { checkRequestBtn.disabled = false; }
+  });
+  window.addEventListener("pagehide", () => api.disconnect());
 
   // --- Helper: Format Utilities ---
   function formatBytes(bytes, decimals = 2) {
@@ -303,13 +246,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const tasks = Array.from(tasksMap.values());
     
     const activeTasks = tasks.filter(t => t.status === "downloading" || t.status === "postprocessing");
-    const queuedTasks = tasks.filter(t => t.status === "queued" || t.status === "scheduled");
+    const queuedTasks = tasks.filter(t => !["downloading", "postprocessing", "complete", "failed", "cancelled"].includes(t.status));
     const historyTasks = tasks.filter(t => ["complete", "failed", "cancelled"].includes(t.status));
 
     // Update badges
     badgeDownloads.textContent = activeTasks.length;
     badgeQueue.textContent = queuedTasks.length;
-    badgeHistory.textContent = historyTasks.length;
+    badgeHistory.textContent = counts.total - counts.unfinished;
 
     // Render lists
     renderList(activeList, activeTasks, downloadsEmpty);
@@ -317,7 +260,7 @@ document.addEventListener("DOMContentLoaded", () => {
     renderList(historyList, historyTasks, historyEmpty);
     
     // Show/hide history clear button
-    historyActions.style.display = historyTasks.length > 0 ? "flex" : "none";
+    historyActions.style.display = "none";
   }
 
   function renderList(listElement, tasks, emptyElement) {
@@ -336,143 +279,65 @@ document.addEventListener("DOMContentLoaded", () => {
   function createTaskCard(task) {
     const card = document.createElement("div");
     card.className = "download-card";
-    card.id = `task-card-${task.id}`;
-    
-    const isFinished = ["complete", "failed", "cancelled"].includes(task.status);
-    const showProgress = !isFinished && task.status !== "scheduled";
-
-    card.innerHTML = `
-      <img class="card-thumbnail" src="${escapeHtml(task.thumbnail_url) || '../icons/icon128.png'}" alt="Thumbnail">
-      <div class="card-content">
-        <div class="card-title" title="${escapeHtml(task.title || task.url)}">${escapeHtml(task.title || task.url)}</div>
-        
-        ${showProgress ? `
-          <div class="progress-container">
-            <div class="progress-bar" id="bar-${task.id}" style="width: ${task.progress || 0}%"></div>
-          </div>
-        ` : ''}
-
-        <div class="card-meta">
-          <span class="card-status-badge ${task.status}" id="status-${task.id}">
-            ${task.status === "scheduled" ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 10px; height: 10px; vertical-align: middle; margin-right: 4px; display: inline-block;"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>' : ''}${task.status}
-          </span>
-          <span class="meta-details" id="meta-${task.id}">
-            ${getMetaText(task)}
-          </span>
-          <div class="card-actions">
-            ${getActionButtons(task)}
-          </div>
-        </div>
-      </div>
-    `;
-
-    // Attach event listeners to buttons
-    const cancelBtn = card.querySelector(".cancel-btn");
-    if (cancelBtn) {
-      cancelBtn.addEventListener("click", () => api.cancelDownload(task.id));
+    card.id = "task-card-" + task.id;
+    const thumbnail = document.createElement("img");
+    thumbnail.className = "card-thumbnail";
+    thumbnail.src = "../icons/icon128.png";
+    thumbnail.alt = "";
+    card.appendChild(thumbnail);
+    const content = document.createElement("div");
+    content.className = "card-content";
+    const title = document.createElement("div");
+    title.className = "card-title";
+    title.textContent = task.title || task.url || "Download";
+    title.title = title.textContent;
+    content.appendChild(title);
+    if (!["complete", "failed", "cancelled"].includes(task.status)) {
+      const progress = document.createElement("progress");
+      progress.max = 100; progress.value = task.progress;
+      progress.setAttribute("aria-label", title.textContent + " progress");
+      content.appendChild(progress);
     }
-    
-     const retryBtn = card.querySelector(".retry-btn");
-     if (retryBtn) {
-       retryBtn.addEventListener("click", async () => {
-         let cookies = null;
-         try {
-           cookies = await getCookiesForUrl(task.url);
-         } catch (err) {
-           console.warn("Failed to get cookies on retry:", err);
-         }
-         api.retryDownload(task.id, cookies);
-       });
-     }
-
-    const deleteBtn = card.querySelector(".delete-btn");
-    if (deleteBtn) {
-      deleteBtn.addEventListener("click", async () => {
-        try {
-          await api.deleteHistoryItem(task.id);
-          tasksMap.delete(task.id);
-          renderAll();
-        } catch (e) {
-          console.error("Failed to delete history item:", e);
-        }
+    const meta = document.createElement("div");
+    meta.className = "card-meta";
+    const status = document.createElement("span");
+    status.className = "card-status-badge";
+    status.textContent = {
+      waiting_for_auth: "Fresh cookies needed", retry_wait: "Retry scheduled",
+      waiting_children: "Waiting for playlist items", cancelling: "Cancelling",
+    }[task.status] || task.status;
+    meta.appendChild(status);
+    if (task.error_code || task.retry_at || task.file_path) {
+      const detail = document.createElement("span");
+      detail.className = "card-detail";
+      detail.textContent = task.file_path || (task.retry_at ? "Retry after " + new Date(task.retry_at * 1000).toLocaleString() : task.error_code);
+      meta.appendChild(detail);
+    }
+    const actions = document.createElement("div");
+    actions.className = "card-actions";
+    const addAction = (label, execute) => {
+      const button = document.createElement("button");
+      button.className = "job-action";
+      button.type = "button";
+      button.textContent = label;
+      button.disabled = actionBusy;
+      button.addEventListener("click", async () => {
+        if (actionBusy) return;
+        actionBusy = true; renderAll();
+        try { await execute(); await api.sync(); showClientStatus("Download action accepted."); }
+        catch (error) {
+          showClientStatus(error.code === "REVISION_CONFLICT" ? "This download changed. Review its current state before trying again."
+            : api.session.pending ? "The request may have succeeded. Check it before submitting another action." : error.message, true);
+          if (!api.session.pending) await refreshLists();
+        } finally { actionBusy = false; renderAll(); }
       });
-    }
-
+      actions.appendChild(button);
+    };
+    if (task.status === "waiting_for_auth") addAction("Share fresh cookies", () => api.authenticate(task));
+    if (["failed", "cancelled"].includes(task.status)) addAction("Retry", () => api.retryDownload(task));
+    else if (task.status !== "complete" && task.status !== "cancelling") addAction("Cancel", () => api.cancelDownload(task));
+    meta.appendChild(actions); content.appendChild(meta); card.appendChild(content);
     return card;
-  }
-
-  function getMetaText(task) {
-    if (task.status === "downloading") {
-      const sizeStr = task.file_size ? `/ ${formatBytes(task.file_size)}` : "";
-      return `${task.progress}% ${sizeStr} • ${formatSpeed(task.speed)} • ETA ${formatETA(task.eta)}`;
-    } else if (task.status === "postprocessing") {
-      return "Merging/Processing files...";
-    } else if (task.status === "complete") {
-      return `${formatBytes(task.file_size)} • Complete`;
-    } else if (task.status === "failed") {
-      return `Failed: ${task.error_message || "Unknown error"}`;
-    } else if (task.status === "cancelled") {
-      return "Cancelled";
-    } else if (task.status === "queued") {
-      return "Waiting in queue...";
-    } else if (task.status === "scheduled") {
-      const timeStr = task.scheduled_at ? new Date(task.scheduled_at).toLocaleString() : "Unknown time";
-      return `Start at ${timeStr}`;
-    }
-    return "";
-  }
-
-  function getActionButtons(task) {
-    if (task.status === "downloading" || task.status === "queued" || task.status === "postprocessing" || task.status === "scheduled") {
-      return `
-        <button class="icon-button cancel-btn" title="Cancel Download">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-        </button>
-      `;
-    } else if (task.status === "failed" || task.status === "cancelled") {
-      return `
-        <button class="icon-button retry-btn" title="Retry Download">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path></svg>
-        </button>
-        <button class="icon-button delete-btn" title="Remove from History">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-        </button>
-      `;
-    } else if (task.status === "complete") {
-      return `
-        <button class="icon-button delete-btn" title="Remove from History">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-        </button>
-      `;
-    }
-    return "";
-  }
-
-  function updateTaskCardDOM(taskId) {
-    const task = tasksMap.get(taskId);
-    if (!task) return;
-
-    const card = document.getElementById(`task-card-${taskId}`);
-    if (!card) return;
-
-    // Update progress bar
-    const bar = card.querySelector(`#bar-${taskId}`);
-    if (bar) {
-      bar.style.width = `${task.progress}%`;
-    }
-
-    // Update status badge
-    const statusBadge = card.querySelector(`#status-${taskId}`);
-    if (statusBadge) {
-      statusBadge.textContent = task.status;
-      statusBadge.className = `card-status-badge ${task.status}`;
-    }
-
-    // Update meta details
-    const metaDetails = card.querySelector(`#meta-${taskId}`);
-    if (metaDetails) {
-      metaDetails.innerHTML = getMetaText(task);
-    }
   }
 
   // --- Tab Navigation ---
@@ -487,17 +352,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  // --- History Actions ---
-  clearHistoryBtn.addEventListener("click", async () => {
-    if (confirm("Are you sure you want to clear all download history?")) {
-      try {
-        await api.clearHistory();
-        refreshLists();
-      } catch (e) {
-        console.error("Failed to clear history:", e);
-      }
-    }
-  });
+  clearHistoryBtn.hidden = true;
 
   // --- Quick Download Trigger & Probe ---
   downloadBtn.addEventListener("click", () => {
@@ -534,21 +389,29 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  async function triggerProbe(url) {
+  async function triggerProbe(url, fresh = false) {
+    const sequence = ++probeNumber;
     currentProbedUrl = url;
+    currentProbedData = null;
     showModalLoading();
+    updateDefaults();
+    freshProbeBtn.hidden = true;
     formatModal.classList.add("active");
-
+    if (!formatModal.open) formatModal.showModal();
     try {
-      const info = await api.probeUrl(url);
+      const info = await api.probeUrl(url, { fresh });
+      if (sequence !== probeNumber || currentProbedUrl !== url) return;
       currentProbedData = info;
       showModalDetails(info);
-    } catch (e) {
-      console.error("Probing failed:", e);
-      modalTitle.textContent = "Error loading video details";
-      modalAuthor.textContent = e.message || "Invalid URL or unsupported site";
+      updateDefaults();
+    } catch (error) {
+      if (sequence !== probeNumber) return;
+      modalTitle.textContent = "Video information unavailable";
+      modalAuthor.textContent = error.message;
+      freshProbeBtn.hidden = !["AUTH_REQUIRED", "AUTH_CONTEXT_EXPIRED"].includes(error.code);
     }
   }
+  freshProbeBtn.addEventListener("click", () => { if (currentProbedUrl) void triggerProbe(currentProbedUrl, true); });
 
   // --- Extended Option Listeners ---
   optionAudioOnly.addEventListener("change", () => {
@@ -589,9 +452,9 @@ document.addEventListener("DOMContentLoaded", () => {
   function showModalLoading() {
     modalThumbnail.src = "../icons/icon128.png";
     modalTitle.textContent = "Fetching video information...";
-    modalAuthor.textContent = "Please wait while yt-dlp analyzes the link.";
+    modalAuthor.textContent = "Reading media information…";
     modalDuration.textContent = "";
-    formatSelect.innerHTML = '<option value="bestvideo+bestaudio/best">Best Quality (Default)</option>';
+    formatSelect.replaceChildren(new Option("App default", ""));
     formatSelect.disabled = true;
     modalStartBtn.disabled = true;
     
@@ -677,6 +540,7 @@ document.addEventListener("DOMContentLoaded", () => {
           checkbox.type = "checkbox";
           checkbox.checked = true;
           checkbox.className = "playlist-item-checkbox";
+          checkbox.dataset.position = String(idx + 1);
           checkbox.dataset.url = entry.url;
           checkbox.dataset.title = entry.title;
           checkbox.dataset.thumbnail = entry.thumbnail || "";
@@ -729,8 +593,8 @@ document.addEventListener("DOMContentLoaded", () => {
       
       // Default option
       const bestOpt = document.createElement("option");
-      bestOpt.value = "bestvideo+bestaudio/best";
-      bestOpt.textContent = "Best Quality (Default)";
+      bestOpt.value = "";
+      bestOpt.textContent = "App default (" + (appDefaults?.default_format || "loading") + ")";
       formatSelect.appendChild(bestOpt);
 
       if (info.formats) {
@@ -779,7 +643,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // --- Modal Button Clicks ---
   function closeModal() {
+    ++probeNumber;
     formatModal.classList.remove("active");
+    if (formatModal.open) formatModal.close();
     currentProbedUrl = "";
     currentProbedData = null;
     if (customTitleInput) customTitleInput.value = "";
@@ -831,165 +697,47 @@ document.addEventListener("DOMContentLoaded", () => {
 
   modalCloseBtn.addEventListener("click", closeModal);
   modalCancelBtn.addEventListener("click", closeModal);
+  formatModal.addEventListener("cancel", event => { event.preventDefault(); closeModal(); });
   
   modalStartBtn.addEventListener("click", async () => {
-    if (!currentProbedUrl) return;
-
-    // Check duplicate download (look for completed downloads in history)
-    let isDuplicate = false;
-    for (const [id, task] of tasksMap.entries()) {
-      if (task.url === currentProbedUrl && task.status === "complete") {
-        isDuplicate = true;
-        break;
+    if (!currentProbedUrl || !currentProbedData || actionBusy) return;
+    modalStartBtn.disabled = true;
+    actionBusy = true;
+    showClientStatus("");
+    try {
+      let formatId;
+      let options;
+      if (currentProbedData.is_playlist) {
+        const selected = Array.from(playlistEntriesList.querySelectorAll(".playlist-item-checkbox:checked"));
+        if (!selected.length) throw new Error("Select at least one playlist item.");
+        formatId = playlistFormatSelect.value || null;
+        options = { is_playlist: true, playlist_items: selected.map(checkbox => checkbox.dataset.position).join(","),
+          audio_only: formatId === "bestaudio/best", audio_format: "mp3" };
+      } else {
+        formatId = formatSelect.value || null;
+        const selected = currentProbedData.formats?.find(format => format.format_id === formatId);
+        if (!optionAudioOnly.checked && selected?.vcodec && selected.vcodec !== "none" && (!selected.acodec || selected.acodec === "none")) {
+          formatId += "+bestaudio/best";
+        }
+        const languages = Array.from(subtitleLangSelect.selectedOptions).map(option => option.value).filter(Boolean);
+        options = { audio_only: optionAudioOnly.checked, audio_format: audioFormatSelect.value,
+          download_subtitles: optionSubtitles.checked, subtitle_langs: languages.length ? languages : null,
+          subtitle_format: subtitleFormatSelect.value, embed_subtitles: optionEmbedSubtitles.checked,
+          embed_thumbnail: optionThumbnail.checked };
       }
-    }
-    if (isDuplicate) {
-      const confirmDownload = confirm("This video has already been downloaded successfully. Do you want to download it again?");
-      if (!confirmDownload) return;
-    }
-
-    if (currentProbedData && currentProbedData.is_playlist) {
-      const selectedCBs = playlistEntriesList.querySelectorAll(".playlist-item-checkbox:checked");
-      if (selectedCBs.length === 0) {
-        alert("Please select at least one video to download.");
-        return;
-      }
-      
-      const formatId = playlistFormatSelect.value;
-      const audioOnly = (formatId === "bestaudio/best");
-      
-      modalStartBtn.disabled = true;
-      modalStartBtn.textContent = "Enqueuing...";
-      
-      try {
-        let scheduledAt = null;
-        if (chkScheduleLater && chkScheduleLater.checked && inputScheduleTime.value) {
-          try {
-            scheduledAt = new Date(inputScheduleTime.value).toISOString();
-          } catch (err) {
-            console.error("Invalid scheduled datetime:", err);
-          }
-        }
-
-        const cookies = await getCookiesForUrl(currentProbedUrl);
-        const options = { audio_only: audioOnly };
-        if (cookies) {
-          options.cookies = cookies;
-        }
-        if (scheduledAt) {
-          options.scheduled_at = scheduledAt;
-        }
-
-        const customDownloadDir = playlistDownloadDirInput ? playlistDownloadDirInput.value.trim() : "";
-
-        const promises = Array.from(selectedCBs).map(cb => {
-          const itemOptions = { ...options };
-          if (cb.dataset.duration) {
-            itemOptions.duration = parseInt(cb.dataset.duration);
-          }
-          if (customDownloadDir) {
-            itemOptions.download_dir = customDownloadDir;
-          }
-          return api.startDownload(
-            cb.dataset.url,
-            formatId,
-            cb.dataset.title,
-            cb.dataset.thumbnail || null,
-            itemOptions
-          );
-        });
-        
-        await Promise.all(promises);
-        videoUrlInput.value = "";
-        closeModal();
-        document.querySelector('[data-tab="downloads"]').click();
-      } catch (e) {
-        alert(`Failed to enqueue playlist items: ${e.message}`);
-      } finally {
-        modalStartBtn.disabled = false;
-        modalStartBtn.textContent = "Start Download";
-      }
-    } else {
-      let formatId = formatSelect.value;
-      const audioOnly = optionAudioOnly.checked;
-      const audioFormat = audioFormatSelect.value;
-      const downloadSubtitles = optionSubtitles.checked;
-
-      // If it's a video-only format, automatically append +bestaudio/best so yt-dlp merges them
-      if (!audioOnly && currentProbedData && currentProbedData.formats) {
-        const selectedFormat = currentProbedData.formats.find(f => f.format_id === formatId);
-        if (selectedFormat) {
-          const hasVideo = selectedFormat.vcodec && selectedFormat.vcodec !== 'none';
-          const hasAudio = selectedFormat.acodec && selectedFormat.acodec !== 'none';
-          if (hasVideo && !hasAudio) {
-            formatId = `${formatId}+bestaudio/best`;
-          }
-        }
-      }
-      
-      const subtitleLangs = Array.from(subtitleLangSelect.selectedOptions).map(opt => opt.value);
-      const subtitleFormat = subtitleFormatSelect.value;
-      const embedSubtitles = optionEmbedSubtitles.checked;
-      const embedThumbnail = optionThumbnail.checked;
-
-      const options = {
-        audio_only: audioOnly,
-        audio_format: audioFormat,
-        download_subtitles: downloadSubtitles,
-        subtitle_langs: (subtitleLangs.length > 0 && subtitleLangs[0] !== "") ? subtitleLangs : null,
-        subtitle_format: subtitleFormat,
-        embed_subtitles: embedSubtitles,
-        embed_thumbnail: embedThumbnail
-      };
-
-      const customDownloadDir = modalDownloadDirInput ? modalDownloadDirInput.value.trim() : "";
-      const customOutputTemplate = modalOutputTemplateInput ? modalOutputTemplateInput.value.trim() : "";
-
-      if (customDownloadDir) {
-        options.download_dir = customDownloadDir;
-      }
-      if (customOutputTemplate) {
-        options.output_template = customOutputTemplate;
-      }
-
-      try {
-        let scheduledAt = null;
-        if (chkScheduleLater && chkScheduleLater.checked && inputScheduleTime.value) {
-          try {
-            scheduledAt = new Date(inputScheduleTime.value).toISOString();
-          } catch (err) {
-            console.error("Invalid scheduled datetime:", err);
-          }
-        }
-
-        const cookies = await getCookiesForUrl(currentProbedUrl);
-        if (cookies) {
-          options.cookies = cookies;
-        }
-        if (scheduledAt) {
-          options.scheduled_at = scheduledAt;
-        }
-        if (currentProbedData && currentProbedData.duration) {
-          options.duration = parseInt(currentProbedData.duration);
-        }
-
-        const customTitle = customTitleInput.value.trim();
-        const finalTitle = customTitle || (currentProbedData ? currentProbedData.title : null);
-
-        await api.startDownload(
-          currentProbedUrl,
-          formatId,
-          finalTitle,
-          currentProbedData ? currentProbedData.thumbnail : null,
-          options
-        );
-        videoUrlInput.value = "";
-        closeModal();
-        document.querySelector('[data-tab="downloads"]').click();
-      } catch (e) {
-        alert(`Failed to start download: ${e.message}`);
-      }
-    }
+      await api.startDownload(currentProbedUrl, formatId, customTitleInput.value || currentProbedData.title,
+        currentProbedData.thumbnail, options);
+      videoUrlInput.value = "";
+      closeModal();
+      await api.sync();
+      document.querySelector('[data-tab="queue"]').click();
+      showClientStatus("Download queued.");
+    } catch (error) {
+      if (api.session.pending) closeModal();
+      else modalAuthor.textContent = error.message;
+      showClientStatus(api.session.pending ? "The request may have succeeded. Check it before starting another download." : error.message, true);
+      if (api.session.pending) checkRequestBtn.focus();
+    } finally { actionBusy = false; modalStartBtn.disabled = false; renderAll(); }
   });
 
   retryBackendBtn.addEventListener("click", () => {
@@ -1020,7 +768,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // --- Detected Videos Handling ---
   function loadDetectedVideos() {
-    if (!activeTabId) return;
+    if (activeTabId == null) return;
     const storageKey = `detected_videos_${activeTabId}`;
     chrome.storage.local.get([storageKey], (result) => {
       renderDetectedVideos(result[storageKey] || []);
@@ -1066,19 +814,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
         card.innerHTML = `
           <label class="checkbox-container" style="margin: 0; padding-left: 16px; align-self: center; width: 16px; height: 16px;">
-            <input type="checkbox" class="detected-item-checkbox" data-url="${escapeHtml(video.url)}" ${isChecked ? 'checked' : ''}>
+            <input type="checkbox" class="detected-item-checkbox">
             <span class="checkbox-checkmark" style="left: 0;"></span>
           </label>
           <img class="card-thumbnail" src="../icons/icon128.png" alt="Thumbnail">
           <div class="card-content">
-            <div class="card-title" title="${escapeHtml(video.title)}">${escapeHtml(video.title)}</div>
+            <div class="card-title"></div>
             <div class="card-meta">
               <span class="card-status-badge complete" style="background: rgba(124, 107, 240, 0.15); color: #9b8fff; border-color: rgba(124, 107, 240, 0.3);">
                 Detected
               </span>
-              <span class="meta-details" style="text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 160px;" title="${escapeHtml(video.url)}">
-                ${escapeHtml(hostname)}
-              </span>
+              <span class="meta-details" style="text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 160px;"></span>
               <div class="card-actions">
                 <button class="icon-button download-detected-btn" title="Download Video">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
@@ -1089,6 +835,15 @@ document.addEventListener("DOMContentLoaded", () => {
         `;
 
         const checkbox = card.querySelector(".detected-item-checkbox");
+        checkbox.dataset.url = video.url;
+        checkbox.checked = isChecked;
+        checkbox.setAttribute("aria-label", "Select " + (video.title || "detected video"));
+        const title = card.querySelector(".card-title");
+        title.textContent = video.title || "Detected video";
+        title.title = title.textContent;
+        const details = card.querySelector(".meta-details");
+        details.textContent = hostname;
+        details.title = video.url;
         checkbox.addEventListener("change", () => {
           if (checkbox.checked) {
             selectedDetectedUrls.add(video.url);
@@ -1127,13 +882,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function closeBatchModal() {
     if (batchModal) batchModal.classList.remove("active");
+    if (batchModal?.open) batchModal.close();
     if (batchDownloadDirInput) batchDownloadDirInput.value = "";
   }
 
   // --- Batch Event Listeners ---
   if (detectedSelectAll) {
     detectedSelectAll.addEventListener("change", () => {
-      if (!activeTabId) return;
+      if (activeTabId == null) return;
       const storageKey = `detected_videos_${activeTabId}`;
       chrome.storage.local.get([storageKey], (result) => {
         const videos = result[storageKey] || [];
@@ -1154,7 +910,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (detectedRemoveBtn) {
     detectedRemoveBtn.addEventListener("click", () => {
-      if (!activeTabId || selectedDetectedUrls.size === 0) return;
+      if (activeTabId == null || selectedDetectedUrls.size === 0) return;
       const storageKey = `detected_videos_${activeTabId}`;
       chrome.storage.local.get([storageKey], (result) => {
         const videos = result[storageKey] || [];
@@ -1176,65 +932,41 @@ document.addEventListener("DOMContentLoaded", () => {
     detectedDownloadBtn.addEventListener("click", () => {
       if (selectedDetectedUrls.size === 0) return;
       if (batchModal) batchModal.classList.add("active");
+      if (batchModal && !batchModal.open) batchModal.showModal();
     });
   }
 
   if (batchModalCloseBtn) batchModalCloseBtn.addEventListener("click", closeBatchModal);
   if (batchModalCancelBtn) batchModalCancelBtn.addEventListener("click", closeBatchModal);
+  if (batchModal) batchModal.addEventListener("cancel", event => { event.preventDefault(); closeBatchModal(); });
 
-  if (batchModalStartBtn) {
-    batchModalStartBtn.addEventListener("click", async () => {
-      const quality = batchQualitySelect.value;
-      const audioOnly = batchOptionAudioOnly.checked;
-      const customDownloadDir = batchDownloadDirInput ? batchDownloadDirInput.value.trim() : "";
-      
+  if (batchModalStartBtn) batchModalStartBtn.addEventListener("click", async () => {
+    if (actionBusy) return;
+    actionBusy = true; batchModalStartBtn.disabled = true;
+    let added = 0;
+    try {
+      const data = await new Promise(resolve => chrome.storage.local.get(["detected_videos_" + activeTabId], resolve));
+      const videos = data["detected_videos_" + activeTabId] || [];
+      for (const video of videos) {
+        if (!selectedDetectedUrls.has(video.url)) continue;
+        const audioOnly = batchOptionAudioOnly.checked;
+        await api.startDownload(video.url, audioOnly ? "bestaudio/best" : batchQualitySelect.value || null,
+          video.title || null, null, { audio_only: audioOnly, audio_format: "mp3" });
+        added++;
+      }
       closeBatchModal();
-      
-      if (!activeTabId) return;
-      const storageKey = `detected_videos_${activeTabId}`;
-      chrome.storage.local.get([storageKey], async (result) => {
-        const videos = result[storageKey] || [];
-        const selectedVideos = videos.filter(v => selectedDetectedUrls.has(v.url));
-        
-        selectedDetectedUrls.clear();
-        renderDetectedVideos(videos);
-        
-        for (const video of selectedVideos) {
-          try {
-            let formatId = quality;
-            let options = {};
-            
-            if (audioOnly) {
-              formatId = "bestaudio/best";
-              options.audio_only = true;
-            }
-            if (customDownloadDir) {
-              options.download_dir = customDownloadDir;
-            }
-
-            const cookies = await getCookiesForUrl(video.url);
-            if (cookies) {
-              options.cookies = cookies;
-            }
-
-            await api.startDownload(
-              video.url,
-              formatId,
-              video.title,
-              null,
-              options
-            );
-          } catch (e) {
-            console.error(`Failed to start batch download for ${video.url}:`, e);
-          }
-        }
-        
-        document.querySelector('[data-tab="downloads"]').click();
-      });
-    });
-  }
+      await api.sync();
+      document.querySelector('[data-tab="queue"]').click();
+      showClientStatus(added + " downloads queued.");
+    } catch (error) {
+      closeBatchModal();
+      showClientStatus(added + " queued. " + (api.session.pending ? "The last request may have succeeded. Check it before continuing." : error.message), true);
+      if (api.session.pending) checkRequestBtn.focus();
+    } finally { actionBusy = false; batchModalStartBtn.disabled = false; renderAll(); }
+  });
 
   // --- Startup ---
+  chkScheduleLater.disabled = true;
   connect();
 
   // Retrieve active tab details for Detected tab tracking
@@ -1247,7 +979,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     chrome.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName === "local" && activeTabId && changes[`detected_videos_${activeTabId}`]) {
+      if (areaName === "local" && activeTabId !== null && changes[`detected_videos_${activeTabId}`]) {
         renderDetectedVideos(changes[`detected_videos_${activeTabId}`].newValue || []);
       }
     });

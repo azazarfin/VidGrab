@@ -14,13 +14,14 @@ const config = Object.fromEntries(Object.entries(settingsSchema.$defs[settingsNa
 config.download_dir = '/fixture/media';
 for (const browser of ['chrome', 'firefox']) {
   const manifest = JSON.parse(readFileSync(resolve(extension, browser === 'chrome' ? 'manifest.json' : 'manifest.firefox.json')));
+  const base = browser === 'firefox' ? 'moz-extension://fixture-extension/' : 'chrome-extension://test-extension/';
   assert.ok(manifest.permissions.includes('nativeMessaging'), `${browser} must grant native messaging`);
   assert.ok(manifest.permissions.includes('alarms'), `${browser} uses the alarms API`);
   const nativeCalls = [];
   const chrome = {
     runtime: {
-      id: 'test-extension', lastError: null, onInstalled: event(), onMessage: event(),
-      getURL: path => `chrome-extension://test-extension/${path}`,
+      id: browser === 'firefox' ? 'vidgrab@azaz.local' : 'test-extension', lastError: null, onInstalled: event(), onMessage: event(),
+      getURL: path => base + path,
       sendNativeMessage(host, message, callback) {
         nativeCalls.push({ host, message });
         const data = message.op === 'v1.request' ? { protocol_version: 1, request_id: message.params.request_id, ok: true,
@@ -36,6 +37,7 @@ for (const browser of ['chrome', 'firefox']) {
     alarms: { create() {}, onAlarm: event() },
   };
   const context = vm.createContext({
+    ...(browser === 'firefox' ? { document: {}, location: new URL(base + '_generated_background_page.html') } : {}),
     chrome, console, EventTarget, Event, URL, TextEncoder,
     CustomEvent: class extends Event { constructor(name, opts) { super(name); this.detail = opts?.detail; } },
     crypto: { randomUUID: () => 'bootstrap-request' },

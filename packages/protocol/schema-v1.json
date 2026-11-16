@@ -714,10 +714,15 @@
                   }
                 ],
                 "title": "Title"
+              },
+              "url": {
+                "title": "Url",
+                "type": "string"
               }
             },
             "required": [
               "id",
+              "url",
               "revision",
               "title",
               "status",
@@ -956,10 +961,15 @@
                   }
                 ],
                 "title": "Title"
+              },
+              "url": {
+                "title": "Url",
+                "type": "string"
               }
             },
             "required": [
               "id",
+              "url",
               "revision",
               "title",
               "status",
@@ -2655,10 +2665,15 @@
               }
             ],
             "title": "Title"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
           }
         },
         "required": [
           "id",
+          "url",
           "revision",
           "title",
           "status",

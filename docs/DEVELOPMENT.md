@@ -481,3 +481,36 @@ The two Windows registration fixtures exercise canonical HKCU keys and hold a sh
 Evidence is `packaging/out/p04-target-validation-i65553hs/`, via `p04-target-current.json`. `target-acceptance.json` verifies twenty accepted command steps, complete 432-case discovery on each target (nine Windows POSIX skips), generated clients/bootstraps, Rust fixtures, source/frozen native checks, thirteen Windows junction/DACL cases and all 50 Ubuntu ELFs against glibc 2.39. Ubuntu 24.04.5/Python 3.12.3 shares the Fedora kernel; Windows uses Python 3.12.16. Private Rust 1.99.1/Node 22.22.2 SDK archives were officially checksum-verified. All 61 production inputs match the prior Fedora media checkpoint; the two 261-file snapshots differ only in the Windows-only registration test mutex.
 
 Preserve `ubuntu-validation/`, both Windows roots/bundles, all 68 retrieved Windows evidence files, SDK/snapshot receipts and every failure. Two empty uv locks were identity-verified and moved into preserved evidence; test temp directories are empty. Only the exact owned idle Ubuntu container was removed. The final read-only libvirt query timed out and was retained without retry; pinned Windows OS/disk/process and independent local audits pass. Windows stays on existing E: and Ubuntu remains stopped; recover missing Ubuntu VM controls before startup. Actual browser/desktop callers, defaults, revisions/events and permission reporting remain the next P04 task. These checks establish no new GUI, installed-browser or installer acceptance.
+
+## P04 client migration — 2026-11-16
+
+Current popup/options/backgrounds and desktop downloads/defaults consume the generated shared session. Firefox backgrounds are document pages, so the facade identifies popup/options by known paths instead of document presence; the corrected control/bootstrap fixtures use actual browser identity/scheme/page shapes. Use a matching current companion build: clients require protocol 1 and `downloads.source`. Opening the source popup negotiates native access and displays an upgrade message for an older app. Settings/downloads use native v1; the stored legacy backend URL and browser format defaults are preserved and ignored. Native registration/installation/tray commands retain the P02 lifecycle adapter. Do not select a real runtime just to test the connection.
+
+Regenerate/check and run the deterministic client boundaries from the repository root:
+
+```sh
+.venv/bin/python -B -m packages.protocol.generate --check
+node --test tests/check_control_session.mjs tests/check_extension_control.mjs
+node tests/check_protocol_client.mjs
+node tests/check_extension_bootstrap.mjs
+```
+
+`tests/check_client_ui.py` is an opt-in Python Playwright journey. It loads the actual extension pages/desktop renderer against `tests/client_ui_support.py`: mocked browser/Tauri delivery, a real temporary v1 service with `start_queue=False`, source media/probe fixtures and blocked external browser HTTP. Runtime data lives in an owned `/tmp` directory; supplied output directories hold reports/screenshots only and must be fresh. UI output does not prove media execution, native WebKit/WebView2, an installed extension, Firefox or physical input.
+
+After the locked desktop frontend build, run both renderer journeys through the skill's server wrapper. Prepend `.venv/bin` to the child environment PATH so its `python` resolves to the project interpreter; select an unused local port and a fresh output path.
+
+```sh
+.venv/bin/python -B /home/azaz/.agents/skills/webapp-testing/scripts/with_server.py \
+  --server "python -B -m http.server 4173 --bind 127.0.0.1 --directory desktop/dist" \
+  --port 4173 -- \
+  python -B -m tests.check_client_ui --scope all \
+  --desktop-url http://127.0.0.1:4173 --screenshots /tmp/vidgrab-client-ui-fresh
+```
+
+Browser-only `--scope browser` needs no desktop server. The three-size lifecycle renderer and twelve-combination options harness now also use the temporary v1 boundary. `--scope desktop` tests the desktop independently. These Linux diagnostics currently select `/opt/google/chrome/chrome`; target validation must supply/adapt verified target executable paths before making a Windows claim.
+
+Fresh source/frozen native lifecycle checks remain the separate thirteen-case private bwrap journey documented above. The source shim must select the locked project interpreter in its shebang, inject the verified component root and execute inside the owned process. System Python without Pydantic failed startup; preserve that failed bundle/report. Fresh frozen execution is separately verified and never receives this diagnostic shim.
+
+Evidence is `packaging/out/p04-clients-tdn77zvr/`, via `p04-clients-current.json`. All 433 guarded Fedora cases, 32 session + 22 browser-control cases, generated/bootstraps, TypeScript/Vite, 32 supervisor + two native-host Rust cases and thirteen source/fresh-frozen native cases per mode pass. Current renderer journeys cover partial settings/conflicts/reload, auth/protected retry, lost replies, dialog focus/Escape, tab ID 0, quoted metadata, incompatible versions, revisioned desktop actions and pagination. Popup bundled fonts/license match locked Source Sans 3 assets; read-only default fields measure 9.7325:1 contrast. Source design checks are clean; modal detector occlusions of inert background controls are retained as false positives, without new waivers.
+
+Only two opt-in UI harnesses changed after guarded discovery; executed guarded/runtime inputs are unchanged. Preserve protected DB/dirty ZIPs/banner, old bundles, snapshots, source/frozen failures and guest disks. Changed Ubuntu/Windows runtime/client and native GUI/installed-browser acceptance are next; recover Ubuntu VM controls before startup. Prior target runtime evidence covers earlier bytes. No installer, real-user runtime/registration, public media, VM mutation, project-wide formatting, push or export ran. See [ADR-027](DECISIONS.md#adr-027--p04-client-sessions-and-explicit-request-review) and [HANDOFF](../HANDOFF.md#p04-client-migration-checkpoint--2026-11-16).

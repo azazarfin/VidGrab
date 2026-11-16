@@ -1,24 +1,32 @@
 """Opt-in desktop render check; Tauri commands are mocked, network is local."""
 
 import argparse
+import sys
 from pathlib import Path
 from urllib.parse import urlsplit
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests.client_ui_support import ClientFixture
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--screenshots', type=Path, required=True)
     arguments = parser.parse_args()
-    assert Path('desktop/dist/index.html').is_file(), 'P02 needs a built desktop connection window'
+    assert Path('desktop/dist/index.html').is_file(), 'Build the desktop renderer before checking it'
     from playwright.sync_api import expect, sync_playwright
-    arguments.screenshots.mkdir(parents=True, exist_ok=True)
+    arguments.screenshots.mkdir(parents=True, exist_ok=False)
     errors = []
     external = []
+    fixtures = []
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path='/opt/google/chrome/chrome', headless=True)
         try:
             for width, height in ((1280, 900), (620, 600), (390, 720)):
                 page = browser.new_page(viewport={'width': width, 'height': height})
+                fixture = ClientFixture(arguments.screenshots / f'{width}-runtime')
+                fixtures.append(fixture)
+                fixture.install(page.context)
                 page.on('pageerror', lambda error: errors.append(str(error)))
                 def route(request):
                     parsed = urlsplit(request.request.url)
@@ -41,19 +49,11 @@ def main():
                     window.__removeActions = 0;
                     window.__TAURI_INTERNALS__ = {
                       invoke: async (command, arguments) => {
+                        if (command === 'protocol_request') return window.__vidgrabControl({type:'fixture.invoke', command, arguments});
                         if (command === 'companion_status') {
                           window.__statusCalls++;
                           if (window.__statusFailures-- > 0) throw 'Temporary engine connection loss';
                           return structuredClone(window.__fixture);
-                        }
-                        if (command === 'download_fixture') {
-                          const url = new URL(arguments.url);
-                          if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || url.pathname !== '/fixture.wav') {
-                            throw 'Use a numeric loopback fixture.wav URL';
-                          }
-                          window.__fixture.jobs = [{id:'fixture', title:'VidGrab test audio', status:'downloading', progress:35}];
-                          setTimeout(() => { window.__fixture.jobs[0].status='complete'; window.__fixture.jobs[0].progress=100; window.__fixture.jobs[0].file_path='/tmp/media/fixture.mp3'; }, 500);
-                          return {task_id:'fixture'};
                         }
                         if (command === 'set_browser_connection') {
                           window.__connectionActions++;
@@ -89,10 +89,10 @@ def main():
                 ''')
                 page.goto('http://127.0.0.1:4173', wait_until='networkidle')
                 page.evaluate('document.fonts.ready')
-                expect(page.get_by_role('heading', name='Connection test')).to_be_visible()
+                expect(page.get_by_role('heading', name='Downloads', level=1)).to_be_visible()
                 expect(page.locator('.connection')).to_have_text('Connected', timeout=5000)
                 expect(page.get_by_role('alert')).to_have_count(0)
-                expect(page.get_by_text('No test downloads yet')).to_be_visible()
+                expect(page.get_by_text('No downloads yet')).to_be_visible()
                 expect(page.get_by_text('This desktop has no tray.', exact=False)).to_be_visible()
                 installation = page.locator('.application-setup')
                 installation.locator('summary').click(timeout=3000)
@@ -118,7 +118,7 @@ def main():
                 page.get_by_role('button', name='Disconnect browsers', exact=True).click()
                 expect(page.locator('.browser-connection-summary')).to_have_text('Disconnected')
                 expect(page.locator('.connection')).to_have_text('Connected')
-                expect(page.get_by_role('button', name='Download test audio')).to_be_enabled()
+                expect(page.get_by_role('button', name='Download', exact=True)).to_be_enabled()
                 page.reload(wait_until='networkidle')
                 expect(page.locator('.browser-connection-summary')).to_have_text('Disconnected')
                 page.evaluate('window.__registrationFailure = true')
@@ -146,26 +146,31 @@ def main():
                 summary.press('Space')
                 expect(help).not_to_have_attribute('open', '')
                 page.screenshot(path=str(arguments.screenshots / f'{width}-empty.png'), full_page=True)
-                page.get_by_label('Fixture URL').fill('https://example.com/fixture.wav')
-                page.get_by_role('button', name='Download test audio').click()
-                expect(page.get_by_role('alert')).to_contain_text('loopback')
+                page.get_by_label('Media URL', exact=True).fill('file:///fixture.wav')
+                page.get_by_role('button', name='Download', exact=True).click()
+                expect(page.get_by_role('alert')).to_contain_text('HTTP or HTTPS')
                 page.evaluate('window.__statusFailures = 1')
                 expect(page.locator('.connection')).to_have_text('Reconnecting', timeout=5000)
-                expect(page.get_by_role('button', name='Download test audio')).to_be_disabled()
+                expect(page.get_by_role('button', name='Download', exact=True)).to_be_disabled()
                 expect(page.locator('.connection')).to_have_text('Connected', timeout=5000)
                 expect(page.get_by_role('alert')).to_have_count(1)
-                expect(page.get_by_role('alert')).to_contain_text('loopback')
-                page.get_by_label('Fixture URL').fill('http://127.0.0.1:8080/fixture.wav')
-                page.get_by_role('button', name='Download test audio').click()
+                expect(page.get_by_role('alert')).to_contain_text('HTTP or HTTPS')
+                page.get_by_label('Media URL', exact=True).fill('http://127.0.0.1:8080/fixture.wav')
+                page.get_by_label('Audio only', exact=True).check()
+                page.get_by_role('button', name='Download', exact=True).click()
+                expect(page.get_by_role('status').filter(has_text='queued')).to_be_visible(timeout=5000)
+                job = fixture.jobs()[0]
+                fixture.set_status(job['id'], 'complete')
                 expect(page.get_by_text('Finished', exact=True)).to_be_visible(timeout=5000)
                 expect(page.get_by_role('alert')).to_have_count(0)
                 assert not page.evaluate('document.documentElement.scrollWidth > innerWidth'), f'Overflow at {width}px'
                 page.screenshot(path=str(arguments.screenshots / f'{width}-complete.png'), full_page=True)
                 installation.locator('summary').click()
-                page.evaluate("window.__fixture.jobs.push({id:'active',title:'Active fixture',status:'downloading',progress:25})")
+                active = fixture.request('downloads.enqueue', {'url': 'http://127.0.0.1:8080/active.wav'}, key='active')['job_id']
                 expect(page.get_by_role('button', name='Remove installed copy…', exact=True)).to_be_disabled(timeout=5000)
                 expect(installation.get_by_text('Finish active downloads before removing VidGrab.', exact=True)).to_be_visible()
-                calls = page.evaluate("window.__fixture.jobs.pop(); window.__fixture.downloads_active = true; window.__statusCalls")
+                fixture.set_status(active, 'complete')
+                calls = page.evaluate("window.__fixture.downloads_active = true; window.__statusCalls")
                 page.wait_for_function('window.__statusCalls > ' + str(calls + 1))
                 expect(page.get_by_role('button', name='Remove installed copy…', exact=True)).to_be_disabled(timeout=5000)
                 page.evaluate("window.__fixture.downloads_active = false")
@@ -181,6 +186,9 @@ def main():
                 print(f'{width}x{height}: browser controls, help, recovery, download completion and overflow passed')
         finally:
             browser.close()
+            for fixture in fixtures:
+                fixture.write_report(fixture.root / 'fixture-report.json')
+                fixture.close()
     assert not errors, errors
     assert not external, external
 

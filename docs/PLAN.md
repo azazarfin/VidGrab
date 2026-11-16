@@ -1,6 +1,6 @@
 # VidGrab desktop-companion plan
 
-Status: P01 and P02 are complete for the selected Ubuntu 24.04/GNOME x86_64 and Windows 11 x64 preview baselines. Both platform reviews, packaged lifecycle/browser gates and measured size/startup results pass on 2026-11-10. Windows missing-WebView2 behavior uses reversible SDK discovery unavailability and an actual offline per-user install/render journey; physical runtime absence is not claimed. ADR-001 is accepted for this feasibility scope. P03 started on 2026-11-11 and its scoped backend acceptance passes on 2026-11-15. P04 is in progress: ten generated v1 operations, schema-10 action receipts and scoped volatile authentication support ordinary media and pass selected Fedora source/fresh-frozen checks. Actual client migration, changed target compatibility and final release remain separate gates.
+Status: P01 and P02 are complete for the selected Ubuntu 24.04/GNOME x86_64 and Windows 11 x64 preview baselines. Both platform reviews, packaged lifecycle/browser gates and measured size/startup results pass on 2026-11-10. Windows missing-WebView2 behavior uses reversible SDK discovery unavailability and an actual offline per-user install/render journey; physical runtime absence is not claimed. ADR-001 is accepted for this feasibility scope. P03 started on 2026-11-11 and its scoped backend acceptance passes on 2026-11-15. P04 is in progress: ordinary media, scoped authentication and migrated browser/desktop clients pass the Fedora checkpoint on 2026-11-16. Changed target/client, native GUI/installed-browser and final release acceptance remain open.
 
 ## Approach
 
@@ -75,16 +75,18 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 
 ### [ ] P04 — Version the app/extension contract and synchronize settings
 
-**Foundation and ordinary-media runtime control validated on 2026-11-15; P04 remains open.** [ADR-026](DECISIONS.md#adr-026--p04-ordinary-media-and-scoped-authentication), [the media checkpoint](VALIDATION.md#p04-ordinary-media-actions-and-authentication--2026-11-15) and [target validation](VALIDATION.md#p04-target-runtime-validation--2026-11-15) extend [ADR-025](DECISIONS.md#adr-025--p04-contract-and-settings-foundation). Current guarded/generated/source/fresh-frozen/native checks pass on Fedora, selected Ubuntu userspace and Windows; all 61 production inputs are unchanged. Actual clients/defaults/revisions/events/permissions and their target/GUI/browser acceptance remain open.
+**Client migration checked on Fedora on 2026-11-16; P04 remains open.** [ADR-027](DECISIONS.md#adr-027--p04-client-sessions-and-explicit-request-review) and [client validation](VALIDATION.md#p04-client-migration--2026-11-16) extend [ADR-026](DECISIONS.md#adr-026--p04-ordinary-media-and-scoped-authentication) and the preceding [target runtime checkpoint](VALIDATION.md#p04-target-runtime-validation--2026-11-15). Actual callers/defaults/revisions/events/permissions are migrated; changed Ubuntu/Windows/runtime/client and GUI/installed-browser acceptance remain open.
 
 - [x] Add import-safe `/v1` models/schema and generated module/classic/TypeScript clients plus Rust validation inputs; implement IDs, stable mutation keys, typed errors, schema-9 revisions/receipts, capabilities and bounded reconnect snapshots.
 - [x] Carry versioned operations through compatible native framing and the authenticated internal API. Negotiate capabilities before versioned mutations, retain independent ownership and hide packaged legacy routes/WebSockets.
 - [x] Add ordinary-media probe/actions/fresh-auth operations, schema-10 action receipts and explicit safe per-job/volatile scoped auth-context models; enable ordinary native execution while retaining the guarded fixture endpoint.
-- [ ] Migrate extension/desktop callers and authoritative download defaults to the app. Synchronize browser preferences while reporting actual granted permissions separately.
-- [x] Validate the current schema-10 source/fresh-frozen/native runtime on selected Ubuntu 24.04 userspace and Windows baselines: 432-case discovery on each (nine Windows POSIX skips), thirteen Linux/eight Windows native cases per mode and thirteen Windows junction/DACL cases.
+- [x] Migrate extension/desktop callers and authoritative download defaults to the app. Keep browser preferences separate from actual granted permissions; preserve dirty settings drafts, stable request intents and explicit replay/review.
+- [x] Validate the migration on Fedora: 433 guarded cases, 32 session + 22 browser-control cases, actual renderer journeys through mocked delivery, and thirteen source/fresh-frozen native cases per mode.
+- [x] Record the preceding 2026-11-15 schema-10 Ubuntu-userspace/Windows runtime acceptance: 432-case discovery on each (nine Windows POSIX skips), thirteen Linux/eight Windows native cases per mode and thirteen Windows junction/DACL cases.
+- [ ] Repeat changed-byte runtime and client checks on selected Ubuntu 24.04 userspace and Windows baselines.
 - [ ] Validate actual client behavior on both selected target baselines. Pairing/revocation remains an unimplemented optional transport; advertise it as disabled.
 - Acceptance remains: both actual clients see consistent queue/settings state; stale updates conflict explicitly; reconnects do not duplicate jobs; incompatible versions give an upgrade message.
-- Foundation commit: `feat(protocol): add versioned control and settings revisions`. Media-control commit: `feat(protocol): add ordinary media and scoped authentication`. Target checkpoint: `test(protocol): validate media controls on Ubuntu and Windows`.
+- Foundation commit: `feat(protocol): add versioned control and settings revisions`. Media-control commit: `feat(protocol): add ordinary media and scoped authentication`. Target checkpoint: `test(protocol): validate media controls on Ubuntu and Windows`. Client checkpoint: `feat(clients): migrate desktop and extension to versioned control`.
 
 ### [ ] P05 — Expand detection and make failures actionable
 
