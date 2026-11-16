@@ -10,6 +10,7 @@ from backend.db.events import EventRepository, read_transaction
 from backend.db.control_actions import ControlAction
 from backend.services.control_errors import ControlError
 from backend.services.credentials import CredentialStore
+from backend.services.format_selection import ProbeWitnesses
 from backend.services.retry_policy import RequestFailure, decide, nested_errors
 
 
@@ -23,9 +24,11 @@ class ControlService:
         self.events = EventRepository(settings.runtime, owner, settings.validate_settings)
         self.probes = probes
         self.credentials = CredentialStore(owner, lambda: queue.clock())
+        self.probe_witnesses = ProbeWitnesses(lambda: queue.clock())
 
     def close(self):
         self.credentials.close()
+        self.probe_witnesses.close()
 
     async def _credential_scope(self, params):
         async with read_transaction(self.settings.runtime, self.owner) as db:
@@ -45,7 +48,7 @@ class ControlService:
         await self._credential_scope(params)
         auth = self.credentials.resolve(params.auth_ref, params.url, params.job_id) if params.auth_ref else None
         try:
-            result = (await self.probes.probe(params.url, auth_context=auth)).model_dump()
+            result = (await self.probes.probe(params.url, auth_context=auth, fresh=params.fresh)).model_dump()
         except Exception as error:
             decision = decide(error, 0, 1, self.queue.clock())
             failure = next((value for value in nested_errors(error) if isinstance(value, RequestFailure)), None)
@@ -68,7 +71,12 @@ class ControlService:
                 raise ControlError("HTTP_ERROR", 422, "The media server rejected this request", provenance="upstream") from error
             raise ControlError("UNSUPPORTED_MEDIA", 422, "The media could not be probed with the supported request lane") from error
         formats, entries = result["formats"] or [], result["entries"] or []
-        result.update(probe_id=str(uuid4()), format_count=len(formats), entry_count=len(entries),
+        probe_id = self.probe_witnesses.create(params.url, params.auth_ref, formats[:params.format_limit],
+                                             expires_at=self.probes.cache_expiry(params.url, auth))
+        for item in formats:
+            item.pop("height", None)
+            item.pop("width", None)
+        result.update(probe_id=probe_id, format_count=len(formats), entry_count=len(entries),
                       formats_truncated=len(formats) > params.format_limit, entries_truncated=len(entries) > params.entry_limit)
         result["formats"] = formats[:params.format_limit] if result["formats"] is not None else None
         result["entries"] = entries[:params.entry_limit] if result["entries"] is not None else None
@@ -117,7 +125,7 @@ class ControlService:
         if request.operation == "capabilities.get":
             result = Capabilities(fixture_only=self.fixture_validator is not None, instance_id=self.owner.id,
                                   features=["settings.revisions", "downloads.idempotency", "downloads.source", "events.snapshots", "events.replay",
-                                            "downloads.actions", "downloads.options", "auth.scoped", "probes.http"],
+                                            "downloads.actions", "downloads.options", "auth.scoped", "auth.headers", "probes.http", "probes.fresh"],
                                   component_versions=self.component_versions)
         elif request.operation == "settings.get":
             result = await self.events.settings()
@@ -145,7 +153,9 @@ class ControlService:
             defaults = await self.settings.get_all()
             # Keep the original six-operation enqueue identity when all added
             # fields have defaults, so schema-9 receipts survive this extension.
-            semantic = params.model_dump(exclude={"options", "auth_ref"})
+            semantic = params.model_dump(exclude={"options", "auth_ref", "probe_id"})
+            if params.probe_id is not None:
+                semantic["probe_id"] = params.probe_id
             selected_options = params.options.model_dump(exclude_defaults=True)
             if selected_options:
                 semantic["options"] = selected_options
@@ -156,6 +166,8 @@ class ControlService:
                 if defaults.get("custom_ytdlp_args"):
                     raise ControlError("UNSUPPORTED_OPTION", 422, "Clear executable legacy arguments before using this contract")
                 return self.credentials.resolve(params.auth_ref, params.url) if params.auth_ref else None
+            def format_intent():
+                return self.probe_witnesses.resolve(params.probe_id, params.url, params.auth_ref, params.format_id) if params.probe_id else None
             # Legacy and v1 receipts have separate key domains; both retain P03's
             # atomic owner-fenced admission, tombstones and joined cancellation.
             key = "v1." + hashlib.sha256(request.idempotency_key.encode("ascii")).hexdigest()
@@ -163,6 +175,7 @@ class ControlService:
                 params.url, params.format_id or defaults["default_format"], title=params.title,
                 thumbnail_url=params.thumbnail_url, audio_only=params.audio_only, audio_format=params.audio_format,
                 idempotency_key=key, idempotency_intent=intent, credential_loader=credentials,
+                format_intent_loader=format_intent if params.probe_id else None,
                 requires_auth=params.auth_ref is not None, **params.options.model_dump(),
             )
             result = {"job_id": job_id}

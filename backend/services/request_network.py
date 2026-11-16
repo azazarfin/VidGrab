@@ -32,7 +32,7 @@ class BudgetedRequests:
     def _origin(url):
         try:
             parsed = urlsplit(url)
-            return parsed.scheme, parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80)
+            return parsed.scheme, parsed.hostname, parsed.port if parsed.port is not None else (443 if parsed.scheme == "https" else 80)
         except ValueError:
             return None
 

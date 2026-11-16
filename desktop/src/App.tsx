@@ -30,7 +30,7 @@ interface BrowserConnection {
 }
 
 const states = { starting: 'Starting', ready: 'Connected', recovering: 'Reconnecting', failed: 'Engine stopped' };
-const jobStates: Record<string, string> = { queued: 'Queued', downloading: 'Downloading', postprocessing: 'Converting', complete: 'Finished', failed: 'Failed', cancelled: 'Cancelled', cancelling: 'Cancelling', waiting_for_auth: 'Fresh cookies needed', retry_wait: 'Retry scheduled', waiting_children: 'Waiting for playlist items' };
+const jobStates: Record<string, string> = { queued: 'Queued', downloading: 'Downloading', postprocessing: 'Converting', complete: 'Finished', failed: 'Failed', cancelled: 'Cancelled', cancelling: 'Cancelling', waiting_for_auth: 'Fresh browser context needed', retry_wait: 'Retry scheduled', waiting_children: 'Waiting for playlist items' };
 
 export function App() {
   const [snapshot, setSnapshot] = useState<Snapshot>({ state: 'starting', tray_available: false });
@@ -315,8 +315,9 @@ export function App() {
             {!['complete', 'failed', 'cancelled'].includes(job.status) && <progress max="100" value={job.progress} aria-label={(job.title || 'Download') + ' progress'} />}
             {job.file_path && <span className="file-name">{job.file_path}</span>}
             {job.error_code && <span className="error">{job.error_code}</span>}
-            {job.status === 'waiting_for_auth' && <p className="helper">Sign in to this source site, then use Share fresh cookies in the VidGrab browser popup.</p>}
-            {job.status === 'waiting_for_auth' && <span className="file-name">{job.url}</span>}
+            {job.status === 'waiting_for_auth' && <p className="helper">Return to the source page and use the VidGrab browser popup to share fresh cookies or context for this media.</p>}
+            {job.error_code === 'FORMAT_UNAVAILABLE' && <p className="helper">Review this media's current formats in the VidGrab browser popup before starting it again.</p>}
+            {(job.status === 'waiting_for_auth' || job.error_code === 'FORMAT_UNAVAILABLE') && <span className="file-name">{job.url}</span>}
             <div className="job-actions">
               {['failed', 'cancelled'].includes(job.status) && <button className="secondary" type="button" disabled={busy || !connected} onClick={() => jobAction(job, 'retry')}>Retry</button>}
               {!['complete', 'failed', 'cancelled', 'cancelling'].includes(job.status) && <button className="secondary" type="button" disabled={busy || !connected} onClick={() => jobAction(job, 'cancel')}>Cancel</button>}

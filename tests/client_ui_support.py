@@ -3,9 +3,11 @@
 import json
 import sqlite3
 import tempfile
+import time
 from contextlib import ExitStack, closing
 from pathlib import Path
 from uuid import uuid4
+from urllib.parse import urlsplit
 
 from fastapi.testclient import TestClient
 
@@ -29,6 +31,7 @@ BOOTSTRAP = r"""
       },
     },
     tabs: { query(_query, callback) { callback([{id: 0, url: 'https://fixture.invalid/media.mp4'}]); } },
+    permissions: {request(value, callback) {call({type:'fixture.permissions.request', value}).then(callback);}},
     storage: {
       local: {
         get(keys, callback) { call({type:'fixture.storage.get', keys}).then(callback); },
@@ -67,23 +70,31 @@ class ClientFixture:
         self.excluded_features = set()
         self.pending = []
         self.preferences = {"backendUrl": "http://untrusted.invalid:8000", "defaultFormat": "old-browser-default",
-                            "cookieForwardingEnabled": False, "notificationPreference": "none"}
+                            "cookieForwardingEnabled": False, "requestObservationEnabled": False, "notificationPreference": "none"}
+        self.permission_requests = []
+        self.permission_approval = True
         self.permissions = {"cookies_granted": True, "native_granted": True, "notifications_granted": True,
                             "site_granted": True, "permission_api_available": True, "origins": ["<all_urls>"]}
         self.contexts = {}
         self.context_calls = []
+        self.now = time.time()
+        self.probe_error = None
+        self.probe_formats = [{"format_id": "720", "ext": "mp4", "resolution": "720p", "vcodec": "avc1", "acodec": "none"}]
+        self.probe_extra = {}
         self.application = {"kind": "appimage", "installed": False, "app": "/fixture/VidGrab.AppImage", "shortcut": None}
         self.connection = {"enabled": True, "bridge_ready": True, "chrome": "registered", "firefox": "registered"}
 
         def probe(url, runtime, *, auth_context=None):
             self.probe_urls.append(url)
+            if self.probe_error is not None:
+                raise self.probe_error
             return {"title": "Fixture <img src=x onerror=window.pwned=1>", "duration": 12,
-                    "formats": [{"format_id": "720", "ext": "mp4", "resolution": "720p", "vcodec": "avc1", "acodec": "none"}],
-                    "subtitles": {"en": [{"ext": "vtt", "name": "English"}]}}
+                    "formats": self.probe_formats,
+                    "subtitles": {"en": [{"ext": "vtt", "name": "English"}]}, **self.probe_extra}
 
         self.engine = create_engine_app(self.runtime, token="a" * 64, port=43210, media_mode="ordinary",
                                         components={"ffmpeg": "/fixture/ffmpeg", "ffprobe": "/fixture/ffprobe", "deno": "/fixture/deno"},
-                                        probe_runner=probe, start_queue=False)
+                                        probe_runner=probe, clock=lambda: self.now, start_queue=False)
         self.client = self.stack.enter_context(TestClient(self.engine, base_url="http://127.0.0.1:43210",
                                                          headers={"Authorization": "Bearer " + "a" * 64}))
         self.engine.app.state.control.component_versions = {"ffmpeg": "fixture", "yt_dlp": "2026.6.9"}
@@ -114,10 +125,10 @@ class ClientFixture:
     def jobs(self):
         return self.request("downloads.list", {"limit": 50})["jobs"]
 
-    def set_status(self, job_id, status):
+    def set_status(self, job_id, status, *, error_code=None):
         with closing(sqlite3.connect(self.runtime.db_path)) as db, db:
-            db.execute("UPDATE downloads SET status=?,auth_required=?,revision=revision+1 WHERE id=?",
-                       (status, int(status == "waiting_for_auth"), job_id))
+            db.execute("UPDATE downloads SET status=?,auth_required=?,error_code=COALESCE(?,error_code),revision=revision+1 WHERE id=?",
+                       (status, int(status == "waiting_for_auth"), error_code, job_id))
             revision = db.execute("SELECT revision FROM downloads WHERE id=?", (job_id,)).fetchone()[0]
             db.execute("INSERT INTO protocol_events(topic,entity_id,revision,kind) VALUES('downloads',?,?,'changed')", (job_id, revision))
         if job_id in self.engine.app.state.queue.in_memory_progress:
@@ -144,26 +155,46 @@ class ClientFixture:
             return None
         if kind == "companion.permissions":
             return {"ok": True, "data": {**self.permissions, "cookie_forwarding_enabled": self.preferences["cookieForwardingEnabled"],
+                                          "request_observation_enabled": self.preferences["requestObservationEnabled"],
                                           "notification_preference": self.preferences["notificationPreference"]}}
+        if kind == "fixture.permissions.request":
+            self.permission_requests.append(message["value"])
+            self.permissions["request_observation_granted"] = self.permission_approval
+            return self.permission_approval
         if kind == "companion.pending":
             return {"ok": True, "data": self.pending}
         if kind == "companion.dismiss":
             self.pending = [item for item in self.pending if item["key"] != message["key"]]
             return {"ok": True}
         if kind == "companion.context":
-            if not self.preferences["cookieForwardingEnabled"]:
+            candidate = None
+            if message.get("candidate_id"):
+                candidate = next((item for item in self.preferences.get("detected_videos_0", [])
+                                  if item.get("id") == message["candidate_id"] and item["url"] == message["url"]), None)
+                if candidate is None:
+                    return {"ok": False, "error": {"code": "BROWSER_CONTEXT_EXPIRED", "message": "Select media from the current tab"}}
+            if not self.preferences["cookieForwardingEnabled"] and candidate is None:
                 return {"ok": True, "data": None}
-            if not self.permissions["cookies_granted"] or not self.permissions["site_granted"]:
+            if self.preferences["cookieForwardingEnabled"] and (not self.permissions["cookies_granted"] or not self.permissions["site_granted"]):
                 return {"ok": False, "error": {"code": "BROWSER_CONNECTION_UNAVAILABLE", "message": "Review browser site permissions"}}
-            scope = (message["url"], message.get("job_id"))
+            scope = (message["url"], message.get("job_id"), message.get("candidate_id"))
             if message.get("fresh") or scope not in self.contexts:
                 params = {"url": scope[0], "instance_id": self.engine.app.state.owner.id,
-                          "cookies": [{"domain": ".fixture.invalid", "path": "/", "name": "session", "value": "fixture-cookie-secret", "secure": True}]}
+                          "cookies": [{"domain": ".fixture.invalid", "path": "/", "name": "session", "value": "fixture-cookie-secret", "secure": True}]
+                                     if self.preferences["cookieForwardingEnabled"] else []}
+                if candidate is not None:
+                    frame = urlsplit(candidate["frame_url"])
+                    params["referer"] = f"{frame.scheme}://{frame.netloc}/"
                 if scope[1]:
                     params["job_id"] = scope[1]
                 self.context_calls.append(params)
                 self.contexts[scope] = self.request("auth.create", params, str(uuid4()))
             return {"ok": True, "data": self.contexts[scope]}
+        if kind == "companion.discovery.remove":
+            key = "detected_videos_" + str(message["tab_id"])
+            self.preferences[key] = [item for item in self.preferences.get(key, [])
+                                     if item.get("id", item["url"]) not in message["ids"]]
+            return {"ok": True}
         if kind == "fixture.invoke":
             command = message["command"]
             arguments = message.get("arguments") or {}

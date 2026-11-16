@@ -57,6 +57,19 @@ def media_url(value):
     return value
 
 
+def public_parent_referer(parent_url, child_url, *, auth_required):
+    """Derive only an unprotected playlist's already-persisted same-origin URL."""
+    if auth_required:
+        return None
+    try:
+        source, target = urlsplit(media_url(parent_url)), urlsplit(media_url(child_url))
+    except PlaylistError:
+        return None
+    source_origin = (source.scheme, source.hostname, source.port if source.port is not None else (443 if source.scheme == "https" else 80))
+    target_origin = (target.scheme, target.hostname, target.port if target.port is not None else (443 if target.scheme == "https" else 80))
+    return parent_url if source_origin == target_origin else None
+
+
 def validate_playlist_result(result):
     if not isinstance(result, dict) or set(result) != {"playlist"}:
         raise PlaylistError("Playlist metadata cannot contain media outputs")

@@ -70,7 +70,10 @@ class CredentialStore:
                 raise ControlError("AUTH_CONTEXT_EXPIRED", 410, "Share a fresh browser context with a new key")
             return dict(result)
         try:
-            validate_fresh_cookies(params.url, values["cookies"], self.clock())
+            if values["cookies"]:
+                validate_fresh_cookies(params.url, values["cookies"], self.clock())
+            elif not (params.user_agent or params.referer):
+                raise ValueError("An empty browser context has no request purpose")
         except ValueError as error:
             raise ControlError("BAD_REQUEST", 422, "Browser cookies must be fresh and belong to the selected media site") from error
         if len(self.contexts) >= MAX_CONTEXTS or len(self.receipts) >= MAX_CONTEXT_RECEIPTS:
@@ -93,7 +96,8 @@ class CredentialStore:
         if context.url != url or context.job_id != job_id:
             raise ControlError("AUTH_CONTEXT_SCOPE", 403, "This browser context belongs to different media or a different job")
         try:
-            validate_fresh_cookies(url, context.cookies, self.clock())
+            if context.cookies:
+                validate_fresh_cookies(url, context.cookies, self.clock())
         except ValueError as error:
             del self.contexts[reference]
             raise ControlError("AUTH_CONTEXT_EXPIRED", 410, "Share fresh browser cookies before continuing") from error

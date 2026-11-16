@@ -251,6 +251,21 @@ def desktop_journey(browser, fixture, root, url):
         assert action["params"]["expected_revision"] == target["revision"]
         row.get_by_role("button", name="Retry", exact=True).click()
         expect(row.get_by_text("Queued", exact=True)).to_be_visible(timeout=7000)
+        header_context = fixture.request("auth.create", {"instance_id": fixture.engine.app.state.owner.id,
+            "url": "https://fixture.invalid/header-context.mp4", "cookies": [], "referer": "https://fixture.invalid/"}, key="desktop-header-context")
+        header_job = fixture.request("downloads.enqueue", {"url": "https://fixture.invalid/header-context.mp4",
+            "auth_ref": header_context["reference"], "title": "Header context fixture"}, key="desktop-header-job")["job_id"]
+        fixture.set_status(header_job, "waiting_for_auth", error_code="BROWSER_CONTEXT_REQUIRED")
+        header_row = page.locator(".job").filter(has=page.get_by_text("Header context fixture", exact=True))
+        expect(header_row.locator(".job-status")).to_contain_text("browser context", timeout=7000)
+        expect(header_row.locator(".helper")).to_contain_text("source page")
+        assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
+        page.screenshot(path=str(root / "desktop-header-context.png"), full_page=True)
+        count = len(fixture.jobs())
+        fixture.set_status(header_job, "failed", error_code="FORMAT_UNAVAILABLE")
+        expect(header_row.locator(".helper")).to_contain_text("current formats", timeout=7000)
+        expect(header_row.locator(".file-name")).to_have_text("https://fixture.invalid/header-context.mp4")
+        assert len(fixture.jobs()) == count, "Format recovery guidance must not submit another job"
         for index in range(26):
             fixture.request("downloads.enqueue", {"url": f"https://fixture.invalid/page-{index}.mp4", "title": f"Page fixture {index}"}, key=f"page-{index}")
         expect(page.get_by_role("button", name="Load more downloads", exact=True)).to_be_visible(timeout=7000)

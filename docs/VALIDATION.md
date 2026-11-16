@@ -1,6 +1,6 @@
 # Validation and release gates
 
-Current milestone: scoped P04 is accepted; [native client acceptance](#p04-native-client-acceptance--2026-11-16) records the final selected-VM scope. P05 detection/context/actionable failures is next. Earlier dated records retain their original scope.
+Current milestone: [P05 discovery development](#p05-discovery-development-checkpoint--2026-11-16) passes Fedora guarded/browser/renderer/source/fresh-frozen/native checks. P05 acceptance remains open for changed-byte Ubuntu/Windows, actual browser/window journeys and the separately recorded live-site matrix. Scoped P04 is accepted for its earlier selected-VM bytes. Earlier dated records retain their original scope.
 
 ## Evidence at the planning checkpoint
 
@@ -946,3 +946,49 @@ Preservation/cleanup verifies:
 - Local: four protected files, **135** prior media/**143** prior client bundle files, **18** SDK libraries/**18** metadata files. Legacy DB and dirty ZIP/banner bytes remain unchanged. SID-private Windows metadata contents remain unreadable/unverified, with no new access/credential/logon-right/ACL attempt.
 
 P05 normalized candidates, permission-gated request/manifest observations, shared probe/download contexts, bounded/coalesced probes, one expired-format reprobe and actionable failures are next. Pairing stays disabled. Acceptance adds no physical-input, store/installer, public-media or new Snap/Flatpak journey. Live-site breadth, unsupported modes, arbitrary parent mutation, power loss, SQLite exhaustion and release retain separate gates. No formatting, push or Git export ran. [HANDOFF](../HANDOFF.md#p04-native-client-acceptance-checkpoint--2026-11-16) owns the exact next task.
+
+
+## P05 discovery development checkpoint — 2026-11-16
+
+**P05 is not accepted.** [ADR-028](DECISIONS.md#adr-028--scoped-media-discovery-and-format-review) implements normalized discovery/context/actionable failures with Fedora/Python 3.14.8 evidence. Existing P04 Ubuntu/Windows and native-browser acceptance describes earlier runtime/client bytes. No changed-byte target, installed-browser, physical-input or live-site claim comes from this checkpoint.
+
+Evidence is ignored `packaging/out/p05-discovery-2q62w6tl/`, via `p05-discovery-current.json`. Preserve the 284-file `source-3/` snapshot before final documentation/harness edits. Final `source-4/` and `checkpoint-inputs-final-8.json` bind the final snapshot, unchanged 132 runtime inputs and generation-3 six-file source / 134-file frozen bundles. Source diagnostics select the absolute locked interpreter and verified component directory inside the owned process. Linux native binaries are unchanged copies from the verified accepted bundle; no Rust rebuild was required. Both bundles pass empty-PATH self-checks without creating their configured state/media directories.
+
+| Check | Actual scope/result |
+| --- | --- |
+| Guarded backend discovery | 472 passing cases; temporary runtimes, injected diagnostic boundaries and external-request/process guards |
+| Browser/content | 102 passing Node checks for both browser identities, sender/document/frame authority, normalization, navigation/dismissal, optional observation and scoped volatile context |
+| Generated/protocol/bootstraps/lock | Generated module/classic/TypeScript clients and extension mirror, strict protocol checks, both actual manifest bootstrap shapes and offline uv lock check pass |
+| Detection renderer | Fifteen isolated headless-Chrome journeys; DOM-safe titles, overlay/handoff, frame scope, permissions, expired/context review, login/throttle/unsupported/update, witness omission and lost-reply behavior |
+| Browser/desktop renderer | Shared defaults/conflicts, fresh context/actions, explicit keyed review, incompatibility and desktop header-only recovery pass; real temporary non-executing v1 service with mocked browser/Tauri delivery |
+| Options renderer | Twelve layouts pass; minimum sampled contrast 4.858421159674452:1 |
+| Final desktop lifecycle renderer | 1280×900, 620×600 and 390×720 pass browser controls, help, recovery, completion and overflow checks; final copy bytes are built and rendered |
+| Mechanical design scan | Seven source files, regex-only, no findings; parsed-page contrast/element rules did not run. Separate renderer sampling and reviewed screenshots supply their own limits |
+
+Each mode passes all ten process suites below and thirteen native lifecycle cases. `process-acceptance-final-8.json` binds source validation 7 with its corrected playlist suite 8, and frozen validation 8. Process discovery totals 78 per mode: 77 pass and one explicit Windows-only owner-death case skips on Linux. Nested helpers and repeated diagnostic cases are not additional top-level acceptance cases.
+
+| Process suite | Source and fresh frozen cases per mode |
+| --- | --- |
+| Worker lifecycle | 11 discovered: 10 pass, one explicit platform skip |
+| Worker execution/publication | 10 pass, including Unicode, multiple outputs and cross-volume publication via private `/dev/shm` |
+| Service recovery | 8 pass |
+| Cookie crash recovery | 11 pass |
+| Direct resume/authentication | 5 pass |
+| Whole-engine resume crashes | 6 pass |
+| Static clear fragment resume | 12 pass |
+| Playlist jobs | 8 pass; crash case adds a committed sibling boundary/completed-byte check, retaining all original assertions and deadlines |
+| Persisted request budgets | 2 owned process cases pass |
+| P05 format repair | 5 pass: rotated HLS/DASH IDs with decoded audio preserved, unchanged DASH, incompatible containers rejected before fragments, header-only context delivered to actual probe/worker |
+| Native lifecycle/control | 13 pass per mode through private CLI callers, empty child PATH and owned loopback execution; no actual browser/window/registration |
+
+The format-repair probe/caller is source instrumentation in both modes; `--engine` selects genuinely frozen media workers. Tests preserve normal owner/attempt/request/publication/cookie boundaries. Per-instance format repair does not promise one durable repair across outer attempts.
+
+Generation 1 initially passed worker/execution/recovery/cookie/direct/fragment suites, then failed three of eight playlist cases per mode: ordinary extracted parent Referers were incorrectly treated as lost browser authentication. Unknown/private/protected headers must remain volatile, but an exact same-origin unprotected persisted parent URL can be safely reconstructed from a benign marker. Focused red/green cases also reproduce missing cookie-required error codes, cancelled header-only refresh after real authentication failure and explicit port-0 origin mismatch. Generation 2 passes the original full process/native checks; final review then reproduces port 0 versus default in both directions at the wire credential fence. Generation 3 is freshly frozen; validation 7/8 checks its final bytes.
+
+The first final source playlist run timed out without state snapshots; its exact cause remains unproven. Three isolated repetitions and an instrumented full suite pass. Forced source/frozen admission-retry crashes retain their deadlines, never start early and finish within the original 15-second wait. Frozen validation 7 then captures the same timeout with phase snapshots: recovery immediately marks the sibling failed because its output was published without a success footer. That is required ambiguous-publication behavior. The fixture now waits for committed sibling completion or admission retry while the cancelled child remains response-gated, and verifies completed bytes survive reopening. `playlist-original-assertions-proof-8.json` binds its five original assertions/three waits and seven unchanged method ASTs. Corrected source/frozen suites pass; additional forced admission diagnostics exercise the retry branch. No production publication/retry behavior or bundle bytes changed.
+
+Preserve the earlier diagnostics stall/interruption receipt (PID 1534099, starttime 24403733, joined exit 143), `format-process-source-1.log` (audit hook wrongly used as a context manager), corrected `sys.addaudithook` runs and the desktop fixture's context-shadowing/old-cookie-label red logs. No failing assertion or deadline was relaxed. All snapshots, freezes, staged bundles, failed/accepted reports, harness versions/proofs and screenshots remain. `checkpoint-audit-final-8.json` and `evidence-index-final-8.json` bind the final checkpoint.
+
+Final preservation checks verify all four protected files, 135 prior media / 143 prior client bundle files, 18 SDK libraries / 18 metadata files and original stopped Ubuntu disk controls. Selected processes/temporary server exits are verified; no real runtime, registration, installer, extension packaging, public media, guest lifecycle/storage mutation, project-wide formatting, push or Git export occurred. Windows stays on existing E:; recorded Ubuntu controls remain stopped.
+
+Next: bind the committed source, rebuild/revalidate changed backend/client/frozen bytes on Ubuntu 24.04 LTS and Windows, then actual WebKit/WebView2 and installed Chrome/Firefox P05 frame/navigation/grant/context/format/failure journeys. Record current live-site compatibility separately before P05 acceptance. Response-header Referrer-Policy discovery is unimplemented, visible document/meta policy is the current evidence, partitioned/FPI cookies are excluded and pairing stays disabled. Unsupported modes, arbitrary parent mutation, power loss, SQLite exhaustion, physical input and final release retain separate gates.

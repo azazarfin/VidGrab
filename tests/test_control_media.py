@@ -103,6 +103,269 @@ class ControlMediaTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(one["title"], two["title"])
         self.assertEqual(len(self.probe_calls), 1)
 
+    async def test_explicit_fresh_public_probe_bypasses_success_cache(self):
+        self.ok(await self.send("probes.create", {"url": URL}))
+        self.ok(await self.send("probes.create", {"url": URL, "fresh": True}))
+        self.assertEqual(len(self.probe_calls), 2)
+        self.ok(await self.send("probes.create", {"url": URL}))
+        self.assertEqual(len(self.probe_calls), 2)
+
+    async def test_expired_format_probe_creates_no_job_or_enqueue_receipt(self):
+        probe = self.ok(await self.send("probes.create", {"url": URL}))
+        self.now += 301
+        self.error(await self.send("downloads.enqueue", {"url": URL, "format_id": "one", "probe_id": probe["probe_id"]},
+                                   key="expired-format"), 410, "PROBE_EXPIRED")
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM downloads"), [(0,)])
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM enqueue_receipts"), [(0,)])
+
+    async def test_format_probe_receipt_replay_precedes_expiry_and_does_not_wake_execution(self):
+        probe = self.ok(await self.send("probes.create", {"url": URL}))
+        params = {"url": URL, "format_id": "one", "probe_id": probe["probe_id"]}
+        first = self.ok(await self.send("downloads.enqueue", params, key="format-replay"))
+        self.now += 301
+        self.application.state.queue.wakeup_event.clear()
+        repeated = self.ok(await self.send("downloads.enqueue", params, key="format-replay"))
+        self.assertEqual(first, repeated)
+        self.assertFalse(self.application.state.queue.wakeup_event.is_set())
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM downloads"), [(1,)])
+
+    async def test_format_probe_is_bound_to_literal_url_and_credential_identity(self):
+        probe = self.ok(await self.send("probes.create", {"url": URL}))
+        self.error(await self.send("downloads.enqueue", {"url": URL + "?new-signature=1", "format_id": "one",
+                         "probe_id": probe["probe_id"]}, key="wrong-probe-url"), 403, "PROBE_CONTEXT_SCOPE")
+        _, context = await self.authentication()
+        self.error(await self.send("downloads.enqueue", {"url": URL, "format_id": "one", "probe_id": probe["probe_id"],
+                         "auth_ref": context["reference"]}, key="wrong-probe-auth"), 403, "PROBE_CONTEXT_SCOPE")
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM downloads"), [(0,)])
+
+    async def test_probe_display_metadata_preserves_unicode_without_changing_filename_policy(self):
+        title = 'বাংলা "title" / display'
+        self.application.state.probes.runner = lambda *_: {"title": title, "uploader": "বাংলা author", "formats": []}
+        result = self.ok(await self.send("probes.create", {"url": URL}))
+        self.assertEqual(result["title"], title)
+        self.assertEqual(result["uploader"], "বাংলা author")
+
+    async def test_header_context_without_cookies_is_shared_by_probe_and_execution(self):
+        params = {"instance_id": self.application.state.owner.id, "url": URL, "cookies": [],
+                  "referer": "https://player.fixture.invalid/watch?source=one", "user_agent": "Fixture Browser"}
+        context = self.ok(await self.send("auth.create", params, key="header-context"))
+        self.ok(await self.send("probes.create", {"url": URL, "auth_ref": context["reference"]}))
+        job = self.ok(await self.send("downloads.enqueue", {"url": URL, "auth_ref": context["reference"]}, key="header-job"))["job_id"]
+        self.assertEqual(self.probe_calls[0][1]["referer"], params["referer"])
+        queue = self.application.state.queue
+        observed = {}
+        def download(**options):
+            observed.update(options)
+            output = Path(options["download_dir"]) / "header-media.mp4"
+            output.write_bytes(b"fixture media")
+            return {"filepath": str(output)}
+        from backend.engine.execution import ThreadDownloadExecutor
+        queue.download_executor = ThreadDownloadExecutor(download)
+        await queue._run_task(job, URL, "best", await self.application.state.settings.get_all(), {})
+        self.assertEqual(observed["referer"], params["referer"])
+        self.assertIsNone(observed["cookies_file_path"])
+        persisted = self.rows("SELECT download_options FROM downloads WHERE id=?", (job,))[0][0]
+        self.assertNotIn(params["referer"], persisted)
+        self.assertNotIn(params["user_agent"], persisted)
+
+    async def test_header_context_missing_after_restart_waits_for_explicit_refresh(self):
+        params = {"instance_id": self.application.state.owner.id, "url": URL, "cookies": [],
+                  "referer": "https://player.fixture.invalid/watch"}
+        reference = self.ok(await self.send("auth.create", params, key="headers-before"))["reference"]
+        job = self.ok(await self.send("downloads.enqueue", {"url": URL, "auth_ref": reference}, key="header-recovery"))["job_id"]
+        queue = self.application.state.queue
+        queue.task_headers.clear()
+        self.assertIsNone(await queue._claim(job))
+        self.assertEqual(self.rows("SELECT status,error_code,attempt_count FROM downloads WHERE id=?", (job,)),
+                         [("waiting_for_auth", "BROWSER_CONTEXT_REQUIRED", 0)])
+        fresh = self.ok(await self.send("auth.create", {**params, "job_id": job}, key="headers-after"))["reference"]
+        result = self.ok(await self.send("downloads.authenticate", {"job_id": job,
+                         "expected_revision": self.revision(job), "auth_ref": fresh}, key="refresh-headers"))
+        self.assertEqual(result["accepted_status"], "queued")
+        self.assertEqual(queue.task_headers[job]["referer"], params["referer"])
+
+    async def test_header_only_context_cannot_bypass_cookie_authentication(self):
+        params, context = await self.authentication()
+        job = self.ok(await self.send("downloads.enqueue", {"url": URL, "auth_ref": context["reference"]}, key="cookie-protected"))["job_id"]
+        self.execute("UPDATE downloads SET status='waiting_for_auth',error_code='AUTH_REQUIRED' WHERE id=?", (job,))
+        headers = self.ok(await self.send("auth.create", {"instance_id": self.application.state.owner.id,
+                     "url": URL, "job_id": job, "cookies": [], "referer": URL}, key="empty-fresh"))
+        self.error(await self.send("downloads.authenticate", {"job_id": job, "expected_revision": self.revision(job),
+                   "auth_ref": headers["reference"]}, key="refuse-empty"), 401, "AUTH_REQUIRED")
+        self.assertEqual(self.rows("SELECT status FROM downloads WHERE id=?", (job,)), [("waiting_for_auth",)])
+
+    async def test_owned_header_worker_auth_failure_reports_cookie_requirement(self):
+        from backend.engine.execution import ThreadDownloadExecutor
+        from backend.services.resume import FreshAuthRequired
+
+        def fail(**_):
+            raise FreshAuthRequired()
+
+        queue = self.application.state.queue
+        queue.download_executor = ThreadDownloadExecutor(fail)
+        _, context = await self.authentication(cookies=[], referer=URL)
+        job = self.ok(await self.send("downloads.enqueue", {"url": URL, "auth_ref": context["reference"]}, key="header-auth-failure"))["job_id"]
+        await queue._run_task(job, URL, "best", await self.application.state.settings.get_all(), {})
+        self.assertEqual(self.rows("SELECT status,error_code,retry_count FROM downloads WHERE id=?", (job,)),
+                         [("waiting_for_auth", "AUTH_REQUIRED", 0)])
+        _, fresh = await self.authentication(job=job, key="header-after-403", cookies=[], referer=URL)
+        self.error(await self.send("downloads.authenticate", {"job_id": job, "expected_revision": self.revision(job),
+                   "auth_ref": fresh["reference"]}, key="refuse-header-after-403"), 401, "AUTH_REQUIRED")
+
+    async def test_cookie_requirement_survives_cancellation_after_header_worker_auth_failure(self):
+        from backend.engine.execution import ThreadDownloadExecutor
+        from backend.services.resume import FreshAuthRequired
+
+        def fail(**_):
+            raise FreshAuthRequired()
+
+        queue = self.application.state.queue
+        queue.download_executor = ThreadDownloadExecutor(fail)
+        _, context = await self.authentication(cookies=[], referer=URL)
+        job = self.ok(await self.send("downloads.enqueue", {"url": URL, "auth_ref": context["reference"]}, key="header-auth-cancel"))["job_id"]
+        await queue._run_task(job, URL, "best", await self.application.state.settings.get_all(), {})
+        await queue.cancel(job)
+        _, fresh = await self.authentication(job=job, key="header-after-cancel", cookies=[], referer=URL)
+        self.error(await self.send("downloads.action", {"job_id": job, "expected_revision": self.revision(job),
+                   "action": "retry", "auth_ref": fresh["reference"]}, key="refuse-header-after-cancel"), 401, "AUTH_REQUIRED")
+        self.assertEqual(self.rows("SELECT status,attempt_count FROM downloads WHERE id=?", (job,)), [("cancelled", 1)])
+
+    async def test_browser_supplied_parent_referrer_is_never_reconstructed_after_recovery(self):
+        from backend.engine.execution import ThreadDownloadExecutor
+        parent_url = "https://fixture.invalid/playlist"
+        queue = self.application.state.queue
+        queue.download_executor = ThreadDownloadExecutor(lambda **_: {"playlist": {"entries": [
+            {"position": 1, "url": URL, "referer": parent_url}]}})
+        _, context = await self.authentication(url=parent_url, cookies=[], referer=parent_url)
+        parent = self.ok(await self.send("downloads.enqueue", {"url": parent_url, "options": {"is_playlist": True},
+                         "auth_ref": context["reference"]}, key="matching-browser-parent"))["job_id"]
+        await queue._run_task(parent, parent_url, "best", await self.application.state.settings.get_all(), {})
+        child = self.rows("SELECT id FROM downloads WHERE parent_id=?", (parent,))[0][0]
+        queue.task_headers.clear()
+        await queue.initialize()
+        self.assertEqual(self.rows("SELECT status,error_code,attempt_count FROM downloads WHERE id=?", (child,)),
+                         [("waiting_for_auth", "BROWSER_CONTEXT_REQUIRED", 0)])
+        self.assertIsNone(await queue._claim(child))
+        self.assertNotIn(child, queue.task_headers)
+
+    async def test_playlist_header_context_does_not_treat_zero_port_as_the_default_origin(self):
+        from backend.engine.execution import ThreadDownloadExecutor
+        parent_url = "https://fixture.invalid/playlist"
+        queue = self.application.state.queue
+        queue.download_executor = ThreadDownloadExecutor(lambda **_: {"playlist": {"entries": [
+            {"position": 1, "url": "https://fixture.invalid:0/child"}]}})
+        _, context = await self.authentication(url=parent_url, cookies=[], referer=parent_url)
+        parent = self.ok(await self.send("downloads.enqueue", {"url": parent_url, "options": {"is_playlist": True},
+                         "auth_ref": context["reference"]}, key="zero-port-playlist"))["job_id"]
+        await queue._run_task(parent, parent_url, "best", await self.application.state.settings.get_all(), {})
+        child = self.rows("SELECT id FROM downloads WHERE parent_id=?", (parent,))[0][0]
+        self.assertNotIn(child, queue.task_headers)
+        self.assertIsNone(await queue._claim(child))
+        self.assertEqual(self.rows("SELECT error_code FROM downloads WHERE id=?", (child,)), [("BROWSER_CONTEXT_REQUIRED",)])
+
+    async def test_header_playlist_expansion_and_retry_keep_context_volatile_and_origin_scoped(self):
+        from backend.engine.execution import ThreadDownloadExecutor
+        parent_url = "https://fixture.invalid/playlist"
+        source = "https://player.fixture.invalid/private?token=playlist-header-secret"
+        entries = [{"position": 1, "url": "https://fixture.invalid/one"},
+                   {"position": 2, "url": "https://fixture.invalid:8443/two"}]
+        queue = self.application.state.queue
+        queue.download_executor = ThreadDownloadExecutor(lambda **_: {"playlist": {"entries": entries}})
+        _, context = await self.authentication(url=parent_url, cookies=[], referer=source)
+        parent = self.ok(await self.send("downloads.enqueue", {"url": parent_url,
+            "options": {"is_playlist": True}, "auth_ref": context["reference"]}, key="header-playlist"))["job_id"]
+        await queue._run_task(parent, parent_url, "best", await self.application.state.settings.get_all(), {})
+        children = self.rows("SELECT id,url,download_options FROM downloads WHERE parent_id=? ORDER BY playlist_index", (parent,))
+        self.assertEqual(len(children), 2)
+        same, foreign = [child[0] for child in children]
+        self.assertEqual(queue.task_headers.get(same, {}).get("referer"), source)
+        self.assertNotIn(foreign, queue.task_headers)
+        self.assertNotIn(parent, queue.task_headers)
+        self.assertFalse(any("playlist-header-secret" in child[2] for child in children))
+        self.assertTrue(all(json.loads(child[2])["browser_context_requires_cookies"] is False for child in children))
+        self.assertIsNone(await queue._claim(foreign))
+        self.assertEqual(self.rows("SELECT status,error_code FROM downloads WHERE id=?", (foreign,)),
+                         [("waiting_for_auth", "BROWSER_CONTEXT_REQUIRED")])
+        await queue.cancel(parent)
+        _, fresh = await self.authentication(key="fresh-playlist-headers", url=parent_url, job=parent, cookies=[], referer=source + "-fresh")
+        params = {"job_id": parent, "expected_revision": self.revision(parent), "action": "retry", "auth_ref": fresh["reference"]}
+        accepted = self.ok(await self.send("downloads.action", params, key="retry-playlist-headers"))
+        self.assertEqual(queue.task_headers.get(same, {}).get("referer"), source + "-fresh")
+        self.assertNotIn(foreign, queue.task_headers)
+        self.assertEqual(self.rows("SELECT status FROM downloads WHERE parent_id=? ORDER BY playlist_index", (parent,)),
+                         [("queued",), ("waiting_for_auth",)])
+        queue.task_headers.clear()
+        queue.wakeup_event.clear()
+        self.now += 301
+        self.assertEqual(self.ok(await self.send("downloads.action", params, key="retry-playlist-headers")), accepted)
+        self.assertEqual(queue.task_headers, {})
+        self.assertFalse(queue.wakeup_event.is_set(), "Receipt replay must not reattach or execute expired credentials")
+
+    async def test_extracted_playlist_referrer_is_volatile_and_restart_requires_refresh(self):
+        from backend.engine.execution import ThreadDownloadExecutor
+        source = "https://fixture.invalid/private?token=extracted-header-secret"
+        entries = [{"position": 1, "url": URL, "referer": source}]
+        queue = self.application.state.queue
+        queue.download_executor = ThreadDownloadExecutor(lambda **_: {"playlist": {"entries": entries}})
+        parent = self.ok(await self.send("downloads.enqueue", {"url": URL, "options": {"is_playlist": True}}, key="extracted-headers"))["job_id"]
+        await queue._run_task(parent, URL, "best", await self.application.state.settings.get_all(), {})
+        child, options, required = self.rows("SELECT id,download_options,auth_required FROM downloads WHERE parent_id=?", (parent,))[0]
+        self.assertNotIn("extracted-header-secret", options)
+        self.assertTrue(required)
+        self.assertIs(json.loads(options)["browser_context_requires_cookies"], False)
+        self.assertEqual(queue.task_headers.get(child, {}).get("referer"), source)
+        queue.task_headers.clear()
+        self.assertIsNone(await queue._claim(child))
+        self.assertEqual(self.rows("SELECT error_code FROM downloads WHERE id=?", (child,)), [("BROWSER_CONTEXT_REQUIRED",)])
+        _, context = await self.authentication(job=child, key="refresh-extracted-headers", cookies=[], referer=source)
+        self.ok(await self.send("downloads.authenticate", {"job_id": child, "expected_revision": self.revision(child),
+            "auth_ref": context["reference"]}, key="authenticate-extracted-child"))
+        self.assertEqual(queue.task_headers[child]["referer"], source)
+
+    async def test_playlist_cookie_context_does_not_cross_into_a_matching_cookie_subdomain(self):
+        from backend.engine.execution import ThreadDownloadExecutor
+        queue = self.application.state.queue
+        queue.download_executor = ThreadDownloadExecutor(lambda **_: {"playlist": {"entries": [
+            {"position": 1, "url": "https://cdn.fixture.invalid/child.mp4"}]}})
+        _, context = await self.authentication()
+        parent = self.ok(await self.send("downloads.enqueue", {"url": URL, "options": {"is_playlist": True},
+            "auth_ref": context["reference"]}, key="cookie-origin-playlist"))["job_id"]
+        await queue._run_task(parent, URL, "best", await self.application.state.settings.get_all(), {})
+        child = self.rows("SELECT id FROM downloads WHERE parent_id=?", (parent,))[0][0]
+        self.assertNotIn(child, queue.task_cookies)
+        self.assertNotIn(child, queue.task_headers)
+        self.assertIsNone(await queue._claim(child))
+        self.assertEqual(self.rows("SELECT error_code FROM downloads WHERE id=?", (child,)), [("AUTH_REQUIRED",)])
+
+    async def test_completely_empty_context_is_rejected_and_not_retained(self):
+        self.error(await self.send("auth.create", {"instance_id": self.application.state.owner.id,
+                   "url": URL, "cookies": []}, key="empty-context"), 422, "BAD_REQUEST")
+        self.assertEqual(self.application.state.control.credentials.contexts, {})
+
+    async def test_header_retry_missing_context_reports_the_source_refresh_action(self):
+        _, context = await self.authentication(cookies=[], referer="https://player.fixture.invalid/")
+        job = self.ok(await self.send("downloads.enqueue", {"url": URL, "auth_ref": context["reference"]}, key="header-only-retry"))["job_id"]
+        await self.application.state.queue.cancel(job)
+        error = self.error(await self.send("downloads.action", {"job_id": job, "expected_revision": self.revision(job),
+            "action": "retry"}, key="header-without-context"), 401, "BROWSER_CONTEXT_REQUIRED")
+        self.assertIn("source", error["message"])
+
+    async def test_attempt_error_redacts_diagnostics_without_changing_the_job_source(self):
+        from backend.engine.execution import ThreadDownloadExecutor
+        source = URL + "?signature=diagnostic-private-query"
+        queue = self.application.state.queue
+        def fail(**_):
+            raise ValueError("Rejected " + source + "\nCookie: diagnostic-private-cookie")
+        queue.download_executor = ThreadDownloadExecutor(fail)
+        job = self.ok(await self.send("downloads.enqueue", {"url": source}, key="private-diagnostics"))["job_id"]
+        with self.assertLogs("vidgrab.queue_manager", level="WARNING") as captured:
+            await queue._run_task(job, source, "best", await self.application.state.settings.get_all(), {})
+        persisted_url, message = self.rows("SELECT url,error_message FROM downloads WHERE id=?", (job,))[0]
+        self.assertEqual(persisted_url, source)
+        for secret in ("diagnostic-private-query", "diagnostic-private-cookie"):
+            self.assertNotIn(secret, message)
+            self.assertNotIn(secret, "\n".join(captured.output))
+
     async def test_job_pages_retain_the_exact_source_for_scoped_authentication(self):
         capabilities = self.ok(await self.send("capabilities.get"))
         self.assertIn("downloads.source", capabilities["features"])

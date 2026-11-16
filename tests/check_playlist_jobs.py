@@ -20,6 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from backend.app import create_app
 from backend.engine.network_guard import fixture_network_guard
 from backend.engine.resources import check_components
+from backend.services.diagnostics import redact_diagnostic
 from tests import check_worker_execution as media
 from tests import check_service_recovery as services
 from backend.engine.process_identity import ProcessIdentity
@@ -87,7 +88,6 @@ class PlaylistServer:
 
 class PlaylistWorkerChecks(unittest.IsolatedAsyncioTestCase):
     owned_tree = media.WorkerExecutionChecks.owned_tree
-    until = media.WorkerExecutionChecks.until
     executor = media.WorkerExecutionChecks.executor
 
     async def asyncSetUp(self):
@@ -101,9 +101,36 @@ class PlaylistWorkerChecks(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         try:
+            RECEIPTS.append(self.diagnostic("teardown"))
             await self.context.__aexit__(None, None, None)
         finally:
             await media.WorkerExecutionChecks.asyncTearDown(self)
+
+    async def until(self, predicate, *, timeout=6, label="condition"):
+        RECEIPTS.append(self.diagnostic("wait-start", label=label, timeout=timeout))
+        try:
+            result = await media.WorkerExecutionChecks.until(self, predicate, timeout=timeout, label=label)
+        except AssertionError:
+            RECEIPTS.append(self.diagnostic("deadline", label=label, timeout=timeout))
+            raise
+        RECEIPTS.append(self.diagnostic("wait-complete", label=label, timeout=timeout))
+        return result
+
+    def diagnostic(self, phase, **fields):
+        record = {"case": self.id(), "phase": phase, "root": str(self.root), "time": time.time(), **fields}
+        try:
+            record["jobs"] = self.rows("""SELECT id,parent_id,status,current_attempt_id,auth_required,
+                error_code,error_message,attempt_count,retry_count,retry_at,request_count,download_options
+                FROM downloads ORDER BY created_at LIMIT 256""")
+            record["attempts"] = self.rows("""SELECT id,download_id,status,number,error_message,worker_identity
+                FROM download_attempts ORDER BY started_at LIMIT 256""")
+            record["request_leases"] = self.rows("SELECT * FROM request_leases LIMIT 256")
+            record["request_hosts"] = self.rows("SELECT * FROM request_hosts LIMIT 256")
+            record["logs"] = {path.name: redact_diagnostic(path.read_text(errors="replace")[-12000:])
+                              for path in self.root.glob("service-*.log")}
+        except (OSError, sqlite3.Error) as error:
+            record["diagnostic_error"] = redact_diagnostic(error)
+        return record
 
     def rows(self, sql, values=()):
         with closing(sqlite3.connect(self.runtime.db_path)) as db:
@@ -254,6 +281,19 @@ class PlaylistWorkerChecks(unittest.IsolatedAsyncioTestCase):
                 await self.until(server.entered.is_set, timeout=12, label="committed child media request")
                 children = self.rows("SELECT * FROM downloads WHERE parent_id=? ORDER BY playlist_index", (parent,))
                 self.assertEqual(len(children), 2)
+                def settled_sibling():
+                    sibling = self.rows("SELECT * FROM downloads WHERE id=?", (children[0]["id"],))[0]
+                    if sibling["status"] == "complete" or (sibling["status"] == "retry_wait"
+                            and sibling["error_code"] == "ADMISSION_LIMITED" and sibling["retry_at"] > time.time()):
+                        return sibling
+                    return None
+                # Crashing an unrelated publisher before its success footer is
+                # deliberately ambiguous. Select a committed sibling boundary
+                # while the cancelled child is still held before its response.
+                sibling = await self.until(settled_sibling, timeout=8,
+                    label="sibling completion or persisted admission retry before crash")
+                completed_bytes = Path(sibling["file_path"]).read_bytes() if sibling["status"] == "complete" else None
+                self.assertEqual(sibling["retry_count"], 0)
                 cancelled = children[1]["id"]
                 attempts = self.rows("SELECT worker_identity FROM download_attempts WHERE status='running'")
                 with closing(sqlite3.connect(self.runtime.db_path)) as db, db:
@@ -267,6 +307,8 @@ class PlaylistWorkerChecks(unittest.IsolatedAsyncioTestCase):
                 after = self.rows("SELECT * FROM downloads WHERE parent_id=? ORDER BY playlist_index", (parent,))
                 self.assertEqual([child["id"] for child in after], [child["id"] for child in children])
                 self.assertEqual([child["status"] for child in after], ["complete", "cancelled"])
+                if completed_bytes is not None:
+                    self.assertEqual(Path(after[0]["file_path"]).read_bytes(), completed_bytes)
                 self.assertIsNone(after[1]["file_path"])
                 self.assertEqual(self.rows("SELECT attempt_count FROM downloads WHERE id=?", (parent,))[0]["attempt_count"], 1)
             finally:
@@ -275,7 +317,9 @@ class PlaylistWorkerChecks(unittest.IsolatedAsyncioTestCase):
                 await asyncio.to_thread(second.stop, hard=True)
                 self.context = self.app.router.lifespan_context(self.app)
                 await self.context.__aenter__()
-            RECEIPTS.append({"case": self.id(), "child_ids": [child["id"] for child in children], "logs": {path.name: path.read_text(errors="replace")[-6000:] for path in self.root.glob("service-after-commit-*.log")}})
+            RECEIPTS.append({"case": self.id(), "child_ids": [child["id"] for child in children],
+                "sibling_crash_boundary": sibling["status"], "preserved_completed_output": completed_bytes is not None,
+                "logs": {path.name: path.read_text(errors="replace")[-6000:] for path in self.root.glob("service-after-commit-*.log")}})
 
 
 def main():

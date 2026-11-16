@@ -33,8 +33,11 @@
   function createOverlay() {
     if (overlayBtn) return;
 
-    overlayBtn = document.createElement("div");
+    overlayBtn = document.createElement("button");
     overlayBtn.id = "vidgrab-overlay-btn";
+    overlayBtn.type = "button";
+    overlayBtn.setAttribute("aria-label", "Select media in VidGrab");
+    overlayBtn.tabIndex = -1;
     
     setButtonState("idle");
 
@@ -42,25 +45,21 @@
       e.stopPropagation();
       e.preventDefault();
       
-      let url = window.location.href;
-      if (currentVideo && currentVideo.currentSrc && currentVideo.currentSrc.startsWith('http')) {
-        url = currentVideo.currentSrc;
-      }
-      
-      // Save URL to storage
-      chrome.storage.local.set({ pendingVideoUrl: url }, () => {
-        // Visual feedback on the button
-        setButtonState("success");
-        showTooltip();
-
-        // Optional: Attempt to programmatically open the popup (works on Chrome 127+)
-        chrome.runtime.sendMessage({ type: "open_popup" });
-        
-        // Reset state after a delay
-        setTimeout(() => {
-          setButtonState("idle");
-        }, 4000);
-      });
+      const candidate = currentVideo && window.__vidgrab_candidateFor?.(currentVideo);
+      if (!candidate) { showTooltip("Media changed. Select it from VidGrab's Detected tab."); return; }
+      overlayBtn.disabled = true;
+      try {
+        chrome.runtime.sendMessage({ type: "video_selected", media_url: candidate.media_url, frame_url: candidate.frame_url }, result => {
+          overlayBtn.disabled = false;
+          if (chrome.runtime.lastError || !result?.success) {
+            showTooltip("The source changed. Select the media again."); return;
+          }
+          setButtonState("success");
+          showTooltip();
+          chrome.runtime.sendMessage({ type: "open_popup" }, () => { void chrome.runtime.lastError; });
+          setTimeout(() => setButtonState("idle"), 4000);
+        });
+      } catch { overlayBtn.disabled = false; showTooltip("Open VidGrab to select this media."); }
     });
 
     overlayBtn.addEventListener("mouseenter", () => {
@@ -78,12 +77,13 @@
     if (tooltipEl) return;
     tooltipEl = document.createElement("div");
     tooltipEl.id = "vidgrab-tooltip";
-    tooltipEl.innerHTML = "Video grabbed! Click the <strong>VidGrab</strong> extension icon in your toolbar to configure download.";
+    tooltipEl.setAttribute("role", "status");
     document.body.appendChild(tooltipEl);
   }
 
-  function showTooltip() {
+  function showTooltip(message = "Media selected. Open VidGrab in the toolbar to choose download options.") {
     createTooltip();
+    tooltipEl.textContent = message;
     clearTimeout(tooltipTimeout);
     
     // Position it
@@ -118,16 +118,16 @@
     if (!overlayBtn) return;
 
     if (state === "idle") {
-      overlayBtn.className = "";
+      overlayBtn.classList.remove("success");
       overlayBtn.innerHTML = `
         ${DOWNLOAD_ICON}
-        <span class="vidgrab-overlay-label">Download</span>
+        <span class="vidgrab-overlay-label">Select</span>
       `;
     } else if (state === "success") {
-      overlayBtn.className = "success";
+      overlayBtn.classList.add("success");
       overlayBtn.innerHTML = `
         ${CHECK_ICON}
-        <span class="vidgrab-overlay-label">Grabbed!</span>
+        <span class="vidgrab-overlay-label">Selected</span>
       `;
     }
   }
@@ -157,6 +157,7 @@
     setupTracking(videoEl);
     positionOverlay(videoEl);
     overlayBtn.classList.add("visible");
+    overlayBtn.tabIndex = 0;
   }
 
   function setupTracking(videoEl) {
@@ -190,8 +191,9 @@
 
   function scheduleHide() {
     hideTimeout = setTimeout(() => {
-      if (overlayBtn && !overlayBtn.classList.contains("success")) {
+      if (overlayBtn && !overlayBtn.classList.contains("success") && !overlayBtn.matches(":focus-within")) {
         overlayBtn.classList.remove("visible");
+        overlayBtn.tabIndex = -1;
         currentVideo = null;
         hideTooltip();
         cleanupTracking();
@@ -201,15 +203,15 @@
 
   // Listen for mouse entering video elements
   document.addEventListener("mouseenter", (e) => {
-    const videoEl = e.target.closest("video");
+    const videoEl = e.target.closest?.("video, audio");
     // Ignore small thumbnails, ads, or tiny preview videos
-    if (videoEl && videoEl.offsetWidth > 150 && videoEl.offsetHeight > 100) {
+    if (videoEl && videoEl.offsetWidth > 100 && videoEl.offsetHeight >= 24) {
       showOverlay(videoEl);
     }
   }, true);
 
   document.addEventListener("mouseleave", (e) => {
-    const videoEl = e.target.closest("video");
+    const videoEl = e.target.closest?.("video, audio");
     if (videoEl && videoEl === currentVideo) {
       scheduleHide();
     }

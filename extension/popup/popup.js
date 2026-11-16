@@ -43,6 +43,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const batchOptionAudioOnly = document.getElementById("batch-option-audio-only");
 
   let selectedDetectedUrls = new Set();
+  let detectedCandidates = [];
+  const jobSources = new Map();
   
   const videoUrlInput = document.getElementById("video-url-input");
   const pasteBtn = document.getElementById("paste-btn");
@@ -100,6 +102,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let tasksMap = new Map();
   let currentProbedUrl = "";
   let currentProbedData = null;
+  let currentCandidate = null;
   let renderAllTimer = null;
   let activeTabId = null;
   let appDefaults = null;
@@ -112,6 +115,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const loadMoreBtn = document.getElementById("load-more-btn");
   const jobsSummary = document.getElementById("jobs-summary");
   const freshProbeBtn = document.getElementById("fresh-probe-btn");
+  const probeRecovery = document.getElementById("probe-recovery");
+  const probeActionBtn = document.getElementById("probe-action-btn");
+  let probeRecoveryAction = null;
+  let probeDeadlineTimer = null;
+  let expiredProbeRefreshed = false;
+  let needsQualityChoice = false;
 
   function showClientStatus(message, error = false) {
     clientStatus.textContent = message;
@@ -307,6 +316,35 @@ document.addEventListener("DOMContentLoaded", () => {
       waiting_children: "Waiting for playlist items", cancelling: "Cancelling",
     }[task.status] || task.status;
     meta.appendChild(status);
+    const headerRequired = task.error_code === "BROWSER_CONTEXT_REQUIRED";
+    if (task.status === "waiting_for_auth" && headerRequired) status.textContent = "Fresh browser context needed";
+    const sources = detectedCandidates.filter(candidate => candidate.url === task.url && candidate.id
+      && candidate.browser_context?.tab_id === activeTabId && isValidUrl(candidate.frame_url));
+    const sourceActions = [];
+    if (["waiting_for_auth", "failed", "cancelled"].includes(task.status) && sources.length) {
+      const group = document.createElement("div");
+      group.className = "job-context";
+      const label = document.createElement("label");
+      label.htmlFor = "job-source-" + task.id;
+      label.textContent = "Source frame";
+      const select = document.createElement("select");
+      select.id = label.htmlFor;
+      select.className = "form-select";
+      select.disabled = actionBusy;
+      select.appendChild(new Option("Choose source frame", ""));
+      for (const candidate of sources) {
+        const frame = new URL(candidate.frame_url);
+        select.appendChild(new Option("Frame " + candidate.browser_context.frame_id + " · " + frame.host + frame.pathname, candidate.id));
+      }
+      select.value = sources.some(candidate => candidate.id === jobSources.get(task.id)) ? jobSources.get(task.id) : "";
+      select.addEventListener("change", () => {
+        if (select.value) jobSources.set(task.id, select.value);
+        else jobSources.delete(task.id);
+        for (const button of sourceActions) button.disabled = actionBusy || !select.value;
+      });
+      group.append(label, select);
+      content.appendChild(group);
+    }
     if (task.error_code || task.retry_at || task.file_path) {
       const detail = document.createElement("span");
       detail.className = "card-detail";
@@ -315,14 +353,15 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     const actions = document.createElement("div");
     actions.className = "card-actions";
-    const addAction = (label, execute) => {
+    const addAction = (label, execute, requiresSource = false) => {
       const button = document.createElement("button");
       button.className = "job-action";
       button.type = "button";
       button.textContent = label;
-      button.disabled = actionBusy;
+      button.disabled = actionBusy || (requiresSource && !jobSources.get(task.id));
+      if (requiresSource) sourceActions.push(button);
       button.addEventListener("click", async () => {
-        if (actionBusy) return;
+        if (actionBusy || (requiresSource && !jobSources.get(task.id))) return;
         actionBusy = true; renderAll();
         try { await execute(); await api.sync(); showClientStatus("Download action accepted."); }
         catch (error) {
@@ -333,8 +372,14 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       actions.appendChild(button);
     };
-    if (task.status === "waiting_for_auth") addAction("Share fresh cookies", () => api.authenticate(task));
-    if (["failed", "cancelled"].includes(task.status)) addAction("Retry", () => api.retryDownload(task));
+    const selectedSource = () => ({ candidate_id: jobSources.get(task.id) || null });
+    if (task.status === "waiting_for_auth") {
+      if (headerRequired && !sources.length) addAction("Choose another source", chooseAnotherSource);
+      else addAction(headerRequired ? "Share fresh context" : "Share fresh cookies", () => api.authenticate(task, selectedSource()),
+        headerRequired || sources.length > 1);
+    }
+    if (["failed", "cancelled"].includes(task.status)) addAction("Retry", () => api.retryDownload(task, selectedSource()),
+      headerRequired || sources.length > 1);
     else if (task.status !== "complete" && task.status !== "cancelling") addAction("Cancel", () => api.cancelDownload(task));
     meta.appendChild(actions); content.appendChild(meta); card.appendChild(content);
     return card;
@@ -389,35 +434,140 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  async function triggerProbe(url, fresh = false) {
+  function clearProbeRecovery() {
+    clearTimeout(probeDeadlineTimer);
+    probeDeadlineTimer = null;
+    probeRecoveryAction = null;
+    probeRecovery.hidden = true;
+    probeActionBtn.hidden = true;
+    probeActionBtn.disabled = false;
+    freshProbeBtn.hidden = true;
+  }
+
+  function chooseAnotherSource() {
+    closeModal();
+    document.querySelector('[data-tab="detected"]').click();
+  }
+
+  function showProbeFailure(error) {
+    clearProbeRecovery();
+    currentProbedData = null;
+    modalStartBtn.disabled = true;
+    modalTitle.textContent = "Video information unavailable";
+    modalAuthor.textContent = error.message;
+    if (["AUTH_REQUIRED", "AUTH_CONTEXT_EXPIRED", "BROWSER_CONTEXT_REQUIRED"].includes(error.code)) {
+      probeActionBtn.textContent = "Open source page";
+      probeRecoveryAction = () => {
+        const source = currentCandidate?.page_url || currentProbedUrl;
+        if (isValidUrl(source)) chrome.tabs.create({ url: source });
+      };
+      freshProbeBtn.hidden = false;
+    } else if (error.code === "RATE_LIMITED") {
+      const deadline = Number.isFinite(error.retry_at) ? error.retry_at * 1000 : null;
+      const updateDeadline = () => {
+        const remaining = deadline === null ? 0 : Math.max(0, deadline - Date.now());
+        probeActionBtn.textContent = remaining ? "Retry after " + new Date(deadline).toLocaleString() : "Retry probe";
+        probeActionBtn.disabled = remaining > 0;
+        if (remaining) probeDeadlineTimer = setTimeout(updateDeadline, Math.min(remaining, 2147483647));
+      };
+      updateDeadline();
+      probeRecoveryAction = () => {
+        if (deadline !== null && Date.now() < deadline) return;
+        void triggerProbe(currentProbedUrl, true, currentCandidate);
+      };
+    } else if (error.code === "APP_INCOMPATIBLE") {
+      probeActionBtn.textContent = "Review VidGrab update";
+      probeRecoveryAction = () => chrome.runtime.openOptionsPage();
+    } else if (["UNSUPPORTED_MEDIA", "BROWSER_CONTEXT_EXPIRED", "FORMAT_UNAVAILABLE"].includes(error.code)) {
+      probeActionBtn.textContent = "Choose another source";
+      probeRecoveryAction = chooseAnotherSource;
+    } else if (["PROBE_EXPIRED", "PROBE_CONTEXT_SCOPE"].includes(error.code)) {
+      freshProbeBtn.hidden = false;
+    } else if (["NETWORK_ERROR", "HTTP_ERROR"].includes(error.code)) {
+      probeActionBtn.textContent = "Retry probe";
+      probeRecoveryAction = () => { void triggerProbe(currentProbedUrl, true, currentCandidate); };
+    }
+    freshProbeBtn.textContent = currentCandidate || ["PROBE_EXPIRED", "PROBE_CONTEXT_SCOPE"].includes(error.code)
+      ? "Probe with fresh context" : "Probe with fresh cookies";
+    probeActionBtn.hidden = probeRecoveryAction === null;
+    probeRecovery.hidden = probeActionBtn.hidden && freshProbeBtn.hidden;
+  }
+
+  probeActionBtn.addEventListener("click", () => {
+    if (!probeActionBtn.disabled && probeRecoveryAction) probeRecoveryAction();
+  });
+
+  function modalSelection() {
+    return { format: currentProbedData?.formats?.find(format => format.format_id === formatSelect.value),
+      title: customTitleInput.value, audio_only: optionAudioOnly.checked, audio_format: audioFormatSelect.value,
+      subtitles: optionSubtitles.checked, languages: Array.from(subtitleLangSelect.selectedOptions).map(option => option.value),
+      subtitle_format: subtitleFormatSelect.value, embed_subtitles: optionEmbedSubtitles.checked, thumbnail: optionThumbnail.checked };
+  }
+
+  function equivalentFormat(left, right) {
+    return left.resolution === right.resolution && left.ext === right.ext && (left.fps ?? null) === (right.fps ?? null)
+      && (left.container || left.ext) === (right.container || right.ext)
+      && (left.acodec === "none" || !left.acodec) === (right.acodec === "none" || !right.acodec);
+  }
+
+  function restoreModalSelection(review, info) {
+    const equivalent = review.format && info.formats?.find(format => equivalentFormat(review.format, format));
+    formatSelect.value = equivalent?.format_id || "";
+    customTitleInput.value = review.title;
+    optionAudioOnly.checked = review.audio_only && !optionAudioOnly.disabled;
+    audioFormatSelect.value = review.audio_format;
+    optionSubtitles.checked = review.subtitles && !optionSubtitles.disabled;
+    for (const option of subtitleLangSelect.options) option.selected = review.languages.includes(option.value);
+    subtitleFormatSelect.value = review.subtitle_format;
+    optionEmbedSubtitles.checked = review.embed_subtitles && !optionEmbedSubtitles.disabled;
+    optionThumbnail.checked = review.thumbnail && !optionThumbnail.disabled;
+    optionAudioOnly.dispatchEvent(new Event("change"));
+    optionSubtitles.dispatchEvent(new Event("change"));
+    needsQualityChoice = Boolean(review.format && !equivalent);
+    modalStartBtn.disabled = needsQualityChoice;
+    modalAuthor.textContent = equivalent || !review.format
+      ? "Formats refreshed once. Review the selection, then press Start Download."
+      : "Formats refreshed once. The previous quality is unavailable. Choose another quality before starting.";
+    formatSelect.focus();
+  }
+  formatSelect.addEventListener("change", () => {
+    needsQualityChoice = false;
+    if (currentProbedData && !actionBusy) modalStartBtn.disabled = false;
+  });
+
+  async function triggerProbe(url, fresh = false, candidate = null, review = null) {
     const sequence = ++probeNumber;
+    if (review === null) expiredProbeRefreshed = false;
+    needsQualityChoice = false;
     currentProbedUrl = url;
     currentProbedData = null;
+    currentCandidate = candidate;
     showModalLoading();
     updateDefaults();
-    freshProbeBtn.hidden = true;
+    clearProbeRecovery();
     formatModal.classList.add("active");
     if (!formatModal.open) formatModal.showModal();
     try {
-      const info = await api.probeUrl(url, { fresh });
+      const info = await api.probeUrl(url, { fresh, candidate_id: candidate?.id || null });
       if (sequence !== probeNumber || currentProbedUrl !== url) return;
       currentProbedData = info;
       showModalDetails(info);
       updateDefaults();
+      if (review) restoreModalSelection(review, info);
     } catch (error) {
       if (sequence !== probeNumber) return;
-      modalTitle.textContent = "Video information unavailable";
-      modalAuthor.textContent = error.message;
-      freshProbeBtn.hidden = !["AUTH_REQUIRED", "AUTH_CONTEXT_EXPIRED"].includes(error.code);
+      showProbeFailure(error);
     }
   }
-  freshProbeBtn.addEventListener("click", () => { if (currentProbedUrl) void triggerProbe(currentProbedUrl, true); });
+  freshProbeBtn.addEventListener("click", () => { if (currentProbedUrl) void triggerProbe(currentProbedUrl, true, currentCandidate); });
 
   // --- Extended Option Listeners ---
   optionAudioOnly.addEventListener("change", () => {
     if (optionAudioOnly.checked) {
       videoQualityGroup.style.display = "none";
       audioFormatGroup.style.display = "block";
+      needsQualityChoice = false;
+      if (currentProbedData && !actionBusy) modalStartBtn.disabled = false;
     } else {
       videoQualityGroup.style.display = "block";
       audioFormatGroup.style.display = "none";
@@ -598,12 +748,13 @@ document.addEventListener("DOMContentLoaded", () => {
       formatSelect.appendChild(bestOpt);
 
       if (info.formats) {
-        const uniqueResolutions = new Set();
+        const uniqueFormats = new Set();
         const cleanFormats = [];
         
         info.formats.forEach(f => {
-          if (f.resolution && !uniqueResolutions.has(f.resolution)) {
-            uniqueResolutions.add(f.resolution);
+          const identity = JSON.stringify([f.resolution, f.ext, f.fps, f.container, f.acodec === "none" || !f.acodec]);
+          if (f.resolution && !uniqueFormats.has(identity)) {
+            uniqueFormats.add(identity);
             cleanFormats.push(f);
           }
         });
@@ -613,7 +764,7 @@ document.addEventListener("DOMContentLoaded", () => {
           const opt = document.createElement("option");
           opt.value = f.format_id;
           const sizeStr = f.filesize ? ` (~${formatBytes(f.filesize)})` : "";
-          opt.textContent = `${f.resolution} (${f.ext.toUpperCase()})${sizeStr}`;
+          opt.textContent = `${f.resolution} (${f.ext.toUpperCase()}${f.fps ? ", " + f.fps + " fps" : ""})${sizeStr}`;
           formatSelect.appendChild(opt);
         });
       }
@@ -644,10 +795,12 @@ document.addEventListener("DOMContentLoaded", () => {
   // --- Modal Button Clicks ---
   function closeModal() {
     ++probeNumber;
+    clearProbeRecovery();
     formatModal.classList.remove("active");
     if (formatModal.open) formatModal.close();
     currentProbedUrl = "";
     currentProbedData = null;
+    currentCandidate = null;
     if (customTitleInput) customTitleInput.value = "";
     if (modalDownloadDirInput) modalDownloadDirInput.value = "";
     if (modalOutputTemplateInput) modalOutputTemplateInput.value = "";
@@ -700,13 +853,16 @@ document.addEventListener("DOMContentLoaded", () => {
   formatModal.addEventListener("cancel", event => { event.preventDefault(); closeModal(); });
   
   modalStartBtn.addEventListener("click", async () => {
-    if (!currentProbedUrl || !currentProbedData || actionBusy) return;
+    if (!currentProbedUrl || !currentProbedData || actionBusy || needsQualityChoice) return;
+    const submissionSequence = probeNumber;
     modalStartBtn.disabled = true;
     actionBusy = true;
+    const review = modalSelection();
     showClientStatus("");
     try {
       let formatId;
       let options;
+      let probeId = null;
       if (currentProbedData.is_playlist) {
         const selected = Array.from(playlistEntriesList.querySelectorAll(".playlist-item-checkbox:checked"));
         if (!selected.length) throw new Error("Select at least one playlist item.");
@@ -714,8 +870,9 @@ document.addEventListener("DOMContentLoaded", () => {
         options = { is_playlist: true, playlist_items: selected.map(checkbox => checkbox.dataset.position).join(","),
           audio_only: formatId === "bestaudio/best", audio_format: "mp3" };
       } else {
-        formatId = formatSelect.value || null;
+        formatId = optionAudioOnly.checked ? null : formatSelect.value || null;
         const selected = currentProbedData.formats?.find(format => format.format_id === formatId);
+        if (selected && !optionAudioOnly.checked) probeId = currentProbedData.probe_id;
         if (!optionAudioOnly.checked && selected?.vcodec && selected.vcodec !== "none" && (!selected.acodec || selected.acodec === "none")) {
           formatId += "+bestaudio/best";
         }
@@ -726,18 +883,27 @@ document.addEventListener("DOMContentLoaded", () => {
           embed_thumbnail: optionThumbnail.checked };
       }
       await api.startDownload(currentProbedUrl, formatId, customTitleInput.value || currentProbedData.title,
-        currentProbedData.thumbnail, options);
+        currentProbedData.thumbnail, options, { candidate_id: currentCandidate?.id || null, probe_id: probeId });
       videoUrlInput.value = "";
       closeModal();
       await api.sync();
       document.querySelector('[data-tab="queue"]').click();
       showClientStatus("Download queued.");
     } catch (error) {
+      if (submissionSequence !== probeNumber && !api.session.pending) return;
+      if (error.code === "PROBE_EXPIRED" && !api.session.pending) {
+        if (!expiredProbeRefreshed) {
+          expiredProbeRefreshed = true;
+          await triggerProbe(currentProbedUrl, true, currentCandidate, review);
+        } else showProbeFailure({ ...error, message: "The refreshed selection expired again. Probe explicitly to review new formats." });
+        return;
+      }
       if (api.session.pending) closeModal();
+      else if (["AUTH_REQUIRED", "AUTH_CONTEXT_EXPIRED", "BROWSER_CONTEXT_REQUIRED", "BROWSER_CONTEXT_EXPIRED", "PROBE_CONTEXT_SCOPE", "APP_INCOMPATIBLE"].includes(error.code)) showProbeFailure(error);
       else modalAuthor.textContent = error.message;
       showClientStatus(api.session.pending ? "The request may have succeeded. Check it before starting another download." : error.message, true);
       if (api.session.pending) checkRequestBtn.focus();
-    } finally { actionBusy = false; modalStartBtn.disabled = false; renderAll(); }
+    } finally { actionBusy = false; modalStartBtn.disabled = !currentProbedData || needsQualityChoice; renderAll(); }
   });
 
   retryBackendBtn.addEventListener("click", () => {
@@ -767,6 +933,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // --- Detected Videos Handling ---
+  const selectionKey = video => video.id || video.url;
   function loadDetectedVideos() {
     if (activeTabId == null) return;
     const storageKey = `detected_videos_${activeTabId}`;
@@ -776,13 +943,16 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function renderDetectedVideos(videos) {
+    detectedCandidates = videos;
+    for (const [job, source] of jobSources) if (!videos.some(candidate => candidate.id === source)) jobSources.delete(job);
+    renderAll();
     if (!detectedList) return;
 
     badgeDetected.textContent = videos.length;
     detectedList.innerHTML = "";
 
     // Sync selection Set to only contain URLs that are actually in the current list
-    const currentUrls = new Set(videos.map(v => v.url));
+    const currentUrls = new Set(videos.map(selectionKey));
     for (const url of selectedDetectedUrls) {
       if (!currentUrls.has(url)) {
         selectedDetectedUrls.delete(url);
@@ -810,7 +980,7 @@ document.addEventListener("DOMContentLoaded", () => {
           hostname = video.url;
         }
 
-        const isChecked = selectedDetectedUrls.has(video.url);
+        const isChecked = selectedDetectedUrls.has(selectionKey(video));
 
         card.innerHTML = `
           <label class="checkbox-container" style="margin: 0; padding-left: 16px; align-self: center; width: 16px; height: 16px;">
@@ -836,6 +1006,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const checkbox = card.querySelector(".detected-item-checkbox");
         checkbox.dataset.url = video.url;
+        checkbox.dataset.selection = selectionKey(video);
         checkbox.checked = isChecked;
         checkbox.setAttribute("aria-label", "Select " + (video.title || "detected video"));
         const title = card.querySelector(".card-title");
@@ -844,18 +1015,27 @@ document.addEventListener("DOMContentLoaded", () => {
         const details = card.querySelector(".meta-details");
         details.textContent = hostname;
         details.title = video.url;
+        const kinds = { audio: "Audio", video: "Video", hls: "HLS", dash: "DASH", page: "Page", browser_stream: "Browser stream" };
+        card.querySelector(".card-status-badge").textContent = kinds[video.kind] || "Detected";
+        if (video.frame_url) {
+          const frameHost = new URL(video.frame_url).hostname;
+          details.textContent = (video.browser_local ? "Page probe · " : "") + frameHost;
+          details.title = (video.observed_content_type || video.source || "Media") + " · " + frameHost;
+        }
         checkbox.addEventListener("change", () => {
           if (checkbox.checked) {
-            selectedDetectedUrls.add(video.url);
+            selectedDetectedUrls.add(selectionKey(video));
           } else {
-            selectedDetectedUrls.delete(video.url);
+            selectedDetectedUrls.delete(selectionKey(video));
           }
           updateDetectedSelectionUI(videos);
         });
 
         const downloadBtn = card.querySelector(".download-detected-btn");
+        downloadBtn.title = video.browser_local ? "Check page for downloadable media" : "Choose media download options";
+        downloadBtn.setAttribute("aria-label", downloadBtn.title);
         downloadBtn.addEventListener("click", () => {
-          triggerProbe(video.url);
+          triggerProbe(video.url, false, video);
         });
 
         detectedList.appendChild(card);
@@ -873,7 +1053,7 @@ document.addEventListener("DOMContentLoaded", () => {
     detectedDownloadBtn.disabled = !hasSelection;
     detectedRemoveBtn.disabled = !hasSelection;
 
-    if (videos.length > 0 && videos.every(v => selectedDetectedUrls.has(v.url))) {
+    if (videos.length > 0 && videos.every(v => selectedDetectedUrls.has(selectionKey(v)))) {
       detectedSelectAll.checked = true;
     } else {
       detectedSelectAll.checked = false;
@@ -894,9 +1074,9 @@ document.addEventListener("DOMContentLoaded", () => {
       chrome.storage.local.get([storageKey], (result) => {
         const videos = result[storageKey] || [];
         if (detectedSelectAll.checked) {
-          videos.forEach(v => selectedDetectedUrls.add(v.url));
+          videos.forEach(v => selectedDetectedUrls.add(selectionKey(v)));
         } else {
-          videos.forEach(v => selectedDetectedUrls.delete(v.url));
+          videos.forEach(v => selectedDetectedUrls.delete(selectionKey(v)));
         }
         
         detectedList.querySelectorAll(".detected-item-checkbox").forEach(cb => {
@@ -909,22 +1089,13 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   if (detectedRemoveBtn) {
-    detectedRemoveBtn.addEventListener("click", () => {
+    detectedRemoveBtn.addEventListener("click", async () => {
       if (activeTabId == null || selectedDetectedUrls.size === 0) return;
-      const storageKey = `detected_videos_${activeTabId}`;
-      chrome.storage.local.get([storageKey], (result) => {
-        const videos = result[storageKey] || [];
-        const filtered = videos.filter(v => !selectedDetectedUrls.has(v.url));
-        
+      try {
+        await api.removeCandidates(activeTabId, [...selectedDetectedUrls]);
         selectedDetectedUrls.clear();
-        
-        chrome.storage.local.set({ [storageKey]: filtered });
-        
-        const total = filtered.length;
-        const text = total > 0 ? String(total) : "";
-        chrome.action.setBadgeText({ text, tabId: activeTabId });
-        chrome.action.setBadgeBackgroundColor({ color: "#7C6BF0", tabId: activeTabId });
-      });
+        loadDetectedVideos();
+      } catch (error) { showClientStatus(error.message, true); }
     });
   }
 
@@ -948,10 +1119,10 @@ document.addEventListener("DOMContentLoaded", () => {
       const data = await new Promise(resolve => chrome.storage.local.get(["detected_videos_" + activeTabId], resolve));
       const videos = data["detected_videos_" + activeTabId] || [];
       for (const video of videos) {
-        if (!selectedDetectedUrls.has(video.url)) continue;
+        if (!selectedDetectedUrls.has(selectionKey(video))) continue;
         const audioOnly = batchOptionAudioOnly.checked;
         await api.startDownload(video.url, audioOnly ? "bestaudio/best" : batchQualitySelect.value || null,
-          video.title || null, null, { audio_only: audioOnly, audio_format: "mp3" });
+          video.title || null, null, { audio_only: audioOnly, audio_format: "mp3" }, { candidate_id: video.id || null });
         added++;
       }
       closeBatchModal();
@@ -975,6 +1146,23 @@ document.addEventListener("DOMContentLoaded", () => {
       if (tabs && tabs[0]) {
         activeTabId = tabs[0].id;
         loadDetectedVideos();
+        chrome.storage.local.get(["pendingVideoCandidate", "pendingVideoUrl", "detected_videos_" + activeTabId], result => {
+          const pending = result.pendingVideoCandidate;
+          if (pending) {
+            if (pending.browser_context?.tab_id !== activeTabId) return;
+            chrome.storage.local.remove(["pendingVideoCandidate", "pendingVideoUrl"]);
+            const selected = (result["detected_videos_" + activeTabId] || []).find(item => item.id === pending.id);
+            if (!selected || selected.page_url !== tabs[0].url) {
+              showClientStatus("The source page changed. Select media from the current tab.", true); return;
+            }
+            videoUrlInput.value = selected.url;
+            void triggerProbe(selected.url, false, selected);
+          } else if (isValidUrl(result.pendingVideoUrl)) {
+            chrome.storage.local.remove("pendingVideoUrl");
+            videoUrlInput.value = result.pendingVideoUrl;
+            void triggerProbe(result.pendingVideoUrl);
+          }
+        });
       }
     });
 
@@ -985,17 +1173,4 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Check for any pending video URL from the content script floating button click
-  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    chrome.storage.local.get(["pendingVideoUrl"], (result) => {
-      if (result.pendingVideoUrl) {
-        const url = result.pendingVideoUrl;
-        // Clear it immediately so it doesn't trigger again on subsequent popup opens
-        chrome.storage.local.remove("pendingVideoUrl");
-        
-        videoUrlInput.value = url;
-        triggerProbe(url);
-      }
-    });
-  }
 });

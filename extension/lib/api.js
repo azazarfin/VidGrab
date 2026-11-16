@@ -41,7 +41,7 @@
   async function fingerprint(request, exact = false) {
     // The broad fingerprint fences duplicates after credentials expire; the
     // exact witness permits replay only with the original payload.
-    const { auth_ref, ...params } = request.params;
+    const { auth_ref, probe_id, ...params } = request.params;
     const bytes = new TextEncoder().encode(JSON.stringify(canonical({ operation: request.operation,
       params: exact ? request.params : params })));
     return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(byte => byte.toString(16).padStart(2, '0')).join('');
@@ -117,7 +117,7 @@
         return response.data;
       }
       const [preferences, permissions] = await Promise.all([
-        stored(['cookieForwardingEnabled', 'notificationPreference']),
+        stored(['cookieForwardingEnabled', 'requestObservationEnabled', 'notificationPreference']),
         new Promise(resolve => {
           if (!chrome.permissions?.getAll) { resolve(null); return; }
           chrome.permissions.getAll(value => resolve(chrome.runtime.lastError ? null : value));
@@ -125,6 +125,9 @@
       ]);
       const parsed = url ? mediaUrl(url) : null;
       return { cookie_forwarding_enabled: preferences.cookieForwardingEnabled === true,
+        request_observation_enabled: preferences.requestObservationEnabled === true,
+        request_observation_granted: permissions?.permissions?.includes('webRequest') === true && permissions?.permissions?.includes('webNavigation') === true,
+        navigation_granted: permissions?.permissions?.includes('webNavigation') === true,
         notification_preference: preferences.notificationPreference || 'both', permission_api_available: permissions !== null,
         cookies_granted: permissions?.permissions?.includes('cookies') === true,
         native_granted: permissions?.permissions?.includes('nativeMessaging') === true,
@@ -133,34 +136,102 @@
         origins: permissions?.origins || [] };
     }
 
-    async prepareAuth(url, jobId = null, fresh = false) {
+    async frameEvidence(tabId, frameId) {
+      return new Promise(resolve => {
+        try {
+          chrome.tabs.sendMessage(tabId, { type: 'vidgrab.frame_context' }, { frameId }, value =>
+            resolve(chrome.runtime.lastError ? null : value));
+        } catch { resolve(null); }
+      });
+    }
+
+    async selectedCandidate(url, identity, permission) {
+      if (identity === null) return null;
+      if (typeof identity !== 'string' || !identity || identity.length > 128) throw failure('BAD_REQUEST', 'Invalid media selection');
+      const tabs = await new Promise(resolve => chrome.tabs.query({ active: true, currentWindow: true }, resolve));
+      const tab = tabs?.[0];
+      if (!Number.isInteger(tab?.id)) throw failure('BROWSER_CONTEXT_EXPIRED', 'Return to the source tab and select the media again');
+      const key = 'detected_videos_' + tab.id;
+      const candidate = (await stored([key]))[key]?.find(item => item.id === identity && item.url === url);
+      const context = candidate?.browser_context;
+      if (!candidate || candidate.page_url !== tab.url || context?.tab_id !== tab.id
+          || !Number.isInteger(context.frame_id) || context.frame_id < 0
+          || (tab.cookieStoreId && context.cookie_store_id && tab.cookieStoreId !== context.cookie_store_id)
+          || Boolean(context.incognito) !== Boolean(tab.incognito)) {
+        throw failure('BROWSER_CONTEXT_EXPIRED', 'The source page changed. Select the media again from the current tab.');
+      }
+      const live = await this.frameEvidence(tab.id, context.frame_id);
+      let verified = context.document_token && live?.frame_url === candidate.frame_url && live.document_token === context.document_token;
+      // Request observations can precede the content-script report. Reuse then
+      // requires the browser's exact current document ID and navigation grant.
+      if (!verified && !context.document_token && candidate.source === 'request' && context.document_id && permission.navigation_granted) {
+        const frame = await new Promise(resolve => chrome.webNavigation.getFrame({ tabId: tab.id, frameId: context.frame_id }, value =>
+          resolve(chrome.runtime.lastError ? null : value)));
+        verified = frame?.url === candidate.frame_url && frame.documentId === context.document_id;
+      }
+      if (!verified) throw failure('BROWSER_CONTEXT_EXPIRED', 'The source frame changed or closed. Select media from its current page again.');
+      return { ...candidate, forwarded_referer: global.vidGrabMedia.referrer(candidate.frame_url, url, live?.referrer_policy) };
+    }
+
+    async prepareAuth(url, jobId = null, fresh = false, candidateId = null) {
       mediaUrl(url);
       if (browserPage) {
-        const response = await send({ type: 'companion.context', url, job_id: jobId, fresh });
+        const response = await send({ type: 'companion.context', url, job_id: jobId, fresh, candidate_id: candidateId });
         if (!response?.ok) throw failure(response?.error?.code || 'APP_UNAVAILABLE', response?.error?.message || 'Browser authentication is unavailable');
         return response.data;
       }
       const permission = await this.getPermissions(url);
-      if (!permission.cookie_forwarding_enabled) return null;
-      if (!permission.cookies_granted || !permission.site_granted) {
+      const candidate = await this.selectedCandidate(url, candidateId, permission);
+      if (!permission.cookie_forwarding_enabled && !candidate) return null;
+      if (candidate && (!permission.site_granted || [candidate.page_url, candidate.frame_url]
+        .some(source => !permission.origins.some(pattern => originGranted(pattern, mediaUrl(source)))))) {
+        throw failure('BROWSER_CONNECTION_UNAVAILABLE', 'Allow browser access to the source page and media site, then select the media again.');
+      }
+      if (permission.cookie_forwarding_enabled && (!permission.cookies_granted || !permission.site_granted)) {
         throw failure('BROWSER_CONNECTION_UNAVAILABLE', 'Cookie forwarding is enabled, but browser permission for this site is missing. Review extension permissions.');
       }
       await this.sync();
       const instance = this.session.state.capabilities.instance_id;
-      const scope = JSON.stringify([url, jobId]);
+      if (candidate && !this.session.state.capabilities.features.includes('auth.headers')) {
+        throw failure('APP_INCOMPATIBLE', 'Update VidGrab to use context-aware detected media');
+      }
+      let referer = candidate?.forwarded_referer || null;
+      let sourceTab = null;
+      if (!candidate) {
+        const tabs = await new Promise(resolve => chrome.tabs.query({ active: true, currentWindow: true }, resolve));
+        const tab = tabs?.[0];
+        sourceTab = tab;
+        if (global.vidGrabMedia.httpUrl(tab?.url)?.origin === new URL(url).origin) {
+          const live = await this.frameEvidence(tab.id, 0);
+          if (live?.frame_url === tab.url) referer = global.vidGrabMedia.referrer(tab.url, url, live.referrer_policy);
+        }
+      }
+      let storeId = candidate?.browser_context?.cookie_store_id || sourceTab?.cookieStoreId || null;
+      const cookieTabId = candidate?.browser_context?.tab_id ?? sourceTab?.id;
+      if (permission.cookie_forwarding_enabled && !storeId && Number.isInteger(cookieTabId) && chrome.cookies.getAllCookieStores) {
+        const stores = await new Promise((resolve, reject) => chrome.cookies.getAllCookieStores(items => {
+          if (chrome.runtime.lastError) reject(failure('BROWSER_CONNECTION_UNAVAILABLE', 'The source browser cookie store could not be verified'));
+          else resolve(items);
+        }));
+        storeId = stores?.find(store => store.tabIds?.includes(cookieTabId))?.id || null;
+        if (!storeId) throw failure('BROWSER_CONNECTION_UNAVAILABLE', 'Return to the source tab and share its fresh browser context again');
+      }
+      const scope = JSON.stringify([url, jobId, candidate?.id || null, storeId,
+        candidate?.browser_context?.document_token || null, referer]);
       const existing = this.contexts.get(scope);
       if (!fresh && existing?.instance_id === instance && existing.expires_at > Date.now() / 1000 + 5) return existing;
       this.contexts.delete(scope);
-      const cookies = await new Promise((resolve, reject) => chrome.cookies.getAll({ url }, items => {
+      const observedCookies = permission.cookie_forwarding_enabled ? await new Promise((resolve, reject) => chrome.cookies.getAll({ url, ...(storeId ? { storeId } : {}) }, items => {
         if (chrome.runtime.lastError) reject(failure('BROWSER_CONNECTION_UNAVAILABLE', 'Browser cookies could not be read. Review site access.'));
         else resolve(items);
-      }));
-      if (!cookies?.length) return null;
+      })) : [];
+      const cookies = observedCookies.filter(cookie => !cookie.partitionKey && !cookie.firstPartyDomain);
+      if (observedCookies.length && !cookies.length) {
+        throw failure('BROWSER_CONNECTION_UNAVAILABLE', 'Open the source site in its own tab and share fresh cookies there. This embedded session uses partitioned cookies.');
+      }
+      if (!cookies?.length && !candidate) return null;
       const permitted = ['domain', 'path', 'name', 'value', 'secure', 'expirationDate'];
       const payload = cookies.map(cookie => Object.fromEntries(permitted.filter(key => cookie[key] !== undefined).map(key => [key, cookie[key]])));
-      const tabs = await new Promise(resolve => chrome.tabs.query({ active: true, currentWindow: true }, resolve));
-      let referer = null;
-      try { if (new URL(tabs?.[0]?.url).origin === new URL(url).origin) referer = tabs[0].url; } catch {}
       const params = { instance_id: instance, url, cookies: payload, ttl_seconds: 300,
         ...(jobId ? { job_id: jobId } : {}), ...(global.navigator?.userAgent ? { user_agent: global.navigator.userAgent } : {}), ...(referer ? { referer } : {}) };
       const result = await this.client.request('auth.create', params, { request_id: identify(), idempotency_key: identify() });
@@ -170,24 +241,32 @@
       return result;
     }
 
-    async probeUrl(url, { fresh = false, job_id = null } = {}) {
-      const context = await this.prepareAuth(url, job_id, fresh);
+    async requireFeature(feature, message) {
+      if (!this.session.state.connected) await this.sync();
+      if (!this.session.state.capabilities.features.includes(feature)) throw failure('APP_INCOMPATIBLE', message);
+    }
+
+    async probeUrl(url, { fresh = false, job_id = null, candidate_id = null } = {}) {
+      await this.requireFeature('probes.fresh', 'Update VidGrab to review media formats and refresh expired selections');
+      const context = await this.prepareAuth(url, job_id, fresh, candidate_id);
       return this.session.read('probes.create', { url, format_limit: 40, entry_limit: 128,
+        ...(fresh ? { fresh: true } : {}),
         ...(context ? { auth_ref: context.reference } : {}), ...(job_id ? { job_id } : {}) });
     }
 
-    async startDownload(url, formatId = null, title = null, thumbnailUrl = null, options = {}) {
+    async startDownload(url, formatId = null, title = null, thumbnailUrl = null, options = {}, { candidate_id = null, probe_id = null } = {}) {
       mediaUrl(url);
       if (this.session.pending) throw failure('REQUEST_OUTCOME_UNKNOWN', 'Check the previous request before adding another download');
       const optionKeys = ['download_subtitles', 'subtitle_langs', 'subtitle_format', 'embed_subtitles', 'embed_thumbnail', 'is_playlist', 'playlist_items'];
       if (Object.keys(options).some(key => ![...optionKeys, 'audio_only', 'audio_format'].includes(key))) {
         throw failure('UNSUPPORTED_OPTION', 'Change the save location and other download defaults in Settings');
       }
-      const context = await this.prepareAuth(url);
+      if (probe_id !== null) await this.requireFeature('probes.fresh', 'Update VidGrab to download a reviewed media format');
+      const context = await this.prepareAuth(url, null, false, candidate_id);
       const params = { url, format_id: formatId || null, title, thumbnail_url: thumbnailUrl,
         audio_only: options.audio_only === true, audio_format: options.audio_format || 'mp3',
         options: Object.fromEntries(optionKeys.filter(key => options[key] !== undefined).map(key => [key, options[key]])),
-        ...(context ? { auth_ref: context.reference } : {}) };
+        ...(context ? { auth_ref: context.reference } : {}), ...(probe_id !== null ? { probe_id } : {}) };
       return this.session.mutate('downloads.enqueue', params);
     }
 
@@ -195,16 +274,16 @@
       return this.session.mutate('downloads.action', { job_id: job.id, expected_revision: job.revision, action: 'cancel' });
     }
 
-    async retryDownload(job) {
+    async retryDownload(job, { candidate_id = null } = {}) {
       if (this.session.pending) throw failure('REQUEST_OUTCOME_UNKNOWN', 'Check the previous request before retrying this download');
-      const context = await this.prepareAuth(job.url, job.id, true);
+      const context = await this.prepareAuth(job.url, job.id, true, candidate_id);
       return this.session.mutate('downloads.action', { job_id: job.id, expected_revision: job.revision, action: 'retry',
         ...(context ? { auth_ref: context.reference } : {}) });
     }
 
-    async authenticate(job) {
-      if (this.session.pending) throw failure('REQUEST_OUTCOME_UNKNOWN', 'Check the previous request before sharing fresh cookies');
-      const context = await this.prepareAuth(job.url, job.id, true);
+    async authenticate(job, { candidate_id = null } = {}) {
+      if (this.session.pending) throw failure('REQUEST_OUTCOME_UNKNOWN', 'Check the previous request before sharing fresh browser context');
+      const context = await this.prepareAuth(job.url, job.id, true, candidate_id);
       if (!context) throw failure('AUTH_REQUIRED', 'Sign in to the source site, enable cookie forwarding in Settings, then share fresh cookies here');
       return this.session.mutate('downloads.authenticate', { job_id: job.id, expected_revision: job.revision, auth_ref: context.reference });
     }
@@ -221,6 +300,13 @@
         return response?.ok ? response.data : [];
       }
       return Object.values((await stored(['vidgrabPendingMutations'])).vidgrabPendingMutations || {});
+    }
+
+    async removeCandidates(tabId, ids) {
+      if (browserPage) {
+        const response = await send({ type: 'companion.discovery.remove', tab_id: tabId, ids });
+        if (!response?.ok) throw failure('BAD_REQUEST', 'The media selections could not be removed');
+      } else await global.vidGrabDiscovery.removeCandidates(tabId, ids);
     }
 
     async dismissPending(key) {
@@ -298,4 +384,5 @@
   global.vidGrabAPI = new VidGrabAPI();
   if (browserPage) global.vidGrabCompanion = global.vidGrabAPI.client;
   global.vidGrabMediaUrl = mediaUrl;
+  global.vidGrabOriginGranted = originGranted;
 })(globalThis);

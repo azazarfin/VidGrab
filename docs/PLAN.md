@@ -1,6 +1,6 @@
 # VidGrab desktop-companion plan
 
-Status: P01/P02 and ADR-001 are complete for selected Ubuntu 24.04/GNOME x86_64 and Windows 11 x64 previews. Scoped P03/ADR-024 is accepted on 2026-11-15. Scoped P04/ADR-027 is accepted on 2026-11-16 for guarded/generated/client/native cases and actual WebKit/WebView2 plus Chrome/Firefox journeys on selected VMs. Temporary development loading, software input and loopback media define that scope. P05 detection/context/actionable failures is next; final release acceptance remains open.
+Status: P01/P02 and ADR-001 are complete for selected Ubuntu 24.04/GNOME x86_64 and Windows 11 x64 previews. Scoped P03/ADR-024 and P04/ADR-027 are accepted for their recorded controlled scope. P05 discovery/context/actionable failures is implemented with Fedora guarded/browser/renderer/source/fresh-frozen/native evidence on 2026-11-16; P05 acceptance remains open for changed-byte Ubuntu/Windows, actual browser/window journeys and the separate live-site matrix. Final release acceptance remains open.
 
 ## Approach
 
@@ -91,9 +91,12 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 
 ### [ ] P05 — Expand detection and make failures actionable
 
-- Add a normalized media-candidate model covering page/frame URL, media URL, observed content type, title, and browser context. Handle SPA navigation, nested frames, audio/source elements, and deduplication.
-- Add permission-gated observation of media request metadata and HLS/DASH manifests. Keep signed URLs intact; treat `blob:` as a browser-local hint, not a downloadable URL.
-- Use the same scoped cookie/header context for probe and download, coalesce identical probes, bound caches, and re-probe expired formats once. Return useful choices for login, retry time, unsupported media, and engine updates.
+- [x] Add shared classic normalized candidates with literal page/frame/media URLs, content type, title and browser document scope; handle DOM/audio/source/SPA/nested-frame updates, navigation invalidation and bounded deduplication/dismissal.
+- [x] Add optional permission-gated request URL/content-type and HLS/DASH observation; preserve signed URLs, keep `blob:` local and require exact document evidence for request-only contexts.
+- [x] Share volatile scoped cookies/headers across probe/enqueue; bound/coalesce probes and witnesses, review an expired-list refresh, preserve quality/container intent through one owned-instance repair and expose actionable context/login/retry/unsupported/update failures.
+- [x] Preserve ordinary playlist retry/recovery without persisting headers: reconstruct only an exact same-origin unprotected parent Referer; retain protected/private contexts and cookie requirements. Pass 472 guarded, 102 browser/content, renderer and ten source/frozen process suites plus thirteen native cases per mode; retain failures and protected evidence.
+- [ ] Rebuild and validate changed runtime/client bytes on Ubuntu 24.04 LTS and Windows, then actual WebKit/WebView2 and installed Chrome/Firefox P05 journeys. Keep response-header policy discovery and partitioned/FPI-cookie limits explicit.
+- [ ] Record the live-site matrix separately and review P05 acceptance. Per-instance format repair does not promise durable once-only repair across outer attempts.
 - Acceptance: controlled fixtures pass for direct media, HLS, DASH, cookies, referer, redirects, expiring URLs, and playlists. A separately recorded live-site matrix measures current compatibility.
 - Suggested commit: `feat(extension): add context-aware media discovery`.
 

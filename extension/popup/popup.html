@@ -146,13 +146,17 @@
           <div class="ffmpeg-warning" id="modal-ffmpeg-warning" style="display: none; margin-bottom: 12px; padding: 8px 12px; background: rgba(255, 192, 72, 0.15); border: 1px solid var(--warning); border-radius: 6px; font-size: 14px; color: var(--warning); line-height: 1.4;">
             <strong>Media tools unavailable:</strong> Audio extraction, conversion and subtitle embedding are disabled. Open VidGrab to review its media tools.
           </div>
+          <div class="probe-recovery" id="probe-recovery" hidden>
+            <button class="action-btn secondary" id="probe-action-btn" type="button" hidden></button>
+            <button class="action-btn secondary" id="fresh-probe-btn" type="button" hidden>Probe with fresh cookies</button>
+          </div>
           <!-- Single Video Content -->
           <div id="modal-single-video-content">
             <div class="video-preview-card">
               <img class="preview-thumbnail" id="modal-thumbnail" src="../icons/icon128.png" alt="Thumbnail">
               <div class="preview-info">
                 <h4 class="preview-title" id="modal-title">Loading video details...</h4>
-                <p class="preview-author" id="modal-author"></p>
+                <p class="preview-author" id="modal-author" role="status" aria-live="polite"></p>
                 <p class="preview-duration" id="modal-duration"></p>
               </div>
             </div>
@@ -302,7 +306,6 @@
         </div>
         <div class="modal-footer">
           <button class="action-btn secondary" id="modal-cancel-btn">Cancel</button>
-          <button class="action-btn secondary" id="fresh-probe-btn" type="button" hidden>Probe with fresh cookies</button>
           <button class="action-btn primary" id="modal-start-btn">Start Download</button>
         </div>
       </div>

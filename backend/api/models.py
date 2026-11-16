@@ -80,6 +80,7 @@ class DownloadParams(Model):
     audio_format: Literal["mp3", "m4a", "opus", "wav", "flac"] = "mp3"
     options: DownloadOptions = Field(default_factory=DownloadOptions)
     auth_ref: Identifier | None = None
+    probe_id: Identifier | None = None
 
 
 class ProbeParams(Model):
@@ -88,6 +89,7 @@ class ProbeParams(Model):
     job_id: str | None = Field(default=None, min_length=1, max_length=256)
     format_limit: int = Field(default=50, ge=1, le=100)
     entry_limit: int = Field(default=25, ge=1, le=128)
+    fresh: bool = False
 
 
 class BrowserCookie(Model):
@@ -110,7 +112,7 @@ class AuthParams(Model):
     instance_id: Identifier
     url: MediaUrl
     job_id: str | None = Field(default=None, min_length=1, max_length=256)
-    cookies: list[BrowserCookie] = Field(min_length=1, max_length=128)
+    cookies: list[BrowserCookie] = Field(default_factory=list, max_length=128)
     user_agent: str | None = Field(default=None, min_length=1, max_length=1024)
     referer: MediaUrl | None = None
     ttl_seconds: int = Field(default=300, ge=30, le=900)
@@ -283,6 +285,7 @@ ErrorCode = Literal[
     "UNSUPPORTED_MEDIA",
     "AUTH_CONTEXT_EXPIRED", "AUTH_CONTEXT_SCOPE", "STATE_CONFLICT", "NOT_FOUND",
     "REQUEST_BUDGET_EXHAUSTED", "NETWORK_ERROR", "HTTP_ERROR",
+    "PROBE_EXPIRED", "PROBE_CONTEXT_SCOPE", "FORMAT_UNAVAILABLE", "BROWSER_CONTEXT_EXPIRED", "BROWSER_CONTEXT_REQUIRED",
 ]
 
 

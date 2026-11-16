@@ -148,6 +148,85 @@ class PlaylistJobTests(OfflineTestCase, unittest.IsolatedAsyncioTestCase):
             status = self.query(queue.runtime, "SELECT status FROM downloads WHERE id=?", (parent,))[0][0]
             self.assertEqual(status, "complete" if index == 1 else "waiting_for_children")
 
+    async def test_legacy_cookie_playlist_referrer_does_not_weaken_child_authentication(self):
+        def worker(**_):
+            return {"playlist": {"entries": [{"position": 1, "url": "https://fixture.invalid/child",
+                                               "referer": "https://fixture.invalid/list"}]}}
+        app = self.app(download_runner=worker)
+        async with app.router.lifespan_context(app):
+            queue = app.state.queue
+            parent = await queue.enqueue("https://fixture.invalid/list", "best", is_playlist=True,
+                                         cookies=[{"domain": "fixture.invalid", "name": "session", "value": "legacy-cookie"}])
+            await queue._run_task(parent, "https://fixture.invalid/list", "best", await app.state.settings.get_all(), {})
+            child, options = self.query(queue.runtime, "SELECT id,download_options FROM downloads WHERE parent_id=?", (parent,))[0]
+            self.assertIs(json.loads(options).get("browser_context_requires_cookies", True), True)
+            queue.task_cookies.clear()
+            queue.task_headers.clear()
+            self.assertIsNone(await queue._claim(child))
+            self.assertEqual(self.query(queue.runtime, "SELECT error_code FROM downloads WHERE id=?", (child,)), [("AUTH_REQUIRED",)])
+
+    async def test_public_parent_referrer_survives_retry_and_reopen_without_browser_context(self):
+        parent_url = "https://fixture.invalid/list?selection=one"
+        child_url = "https://fixture.invalid/one"
+        delivered = []
+
+        def worker(**options):
+            if options["is_playlist"]:
+                return {"playlist": {"entries": [{"position": 1, "url": child_url, "referer": parent_url}]}}
+            delivered.append((options["referer"], options["credential_url"], options["cookies_file_path"]))
+            output = Path(options["download_dir"]) / "one.mp3"
+            output.write_bytes(b"public playlist media")
+            return {"filepath": str(output)}
+
+        runtime = self.runtime()
+        app = self.app(runtime, download_runner=worker)
+        async with app.router.lifespan_context(app):
+            queue = app.state.queue
+            parent = await queue.enqueue(parent_url, "best", is_playlist=True)
+            await queue._run_task(parent, parent_url, "best", await app.state.settings.get_all(), {})
+            child = self.query(runtime, "SELECT id FROM downloads WHERE parent_id=?", (parent,))[0][0]
+            await queue.cancel(parent)
+            await queue.retry(parent)
+            self.assertEqual(self.query(runtime, "SELECT status FROM downloads WHERE id=?", (child,)), [("queued",)])
+
+        reopened = self.app(runtime, download_runner=worker)
+        async with reopened.router.lifespan_context(reopened):
+            queue = reopened.state.queue
+            self.assertEqual(self.query(runtime, "SELECT status FROM downloads WHERE id=?", (child,)), [("queued",)])
+            options = json.loads(self.query(runtime, "SELECT download_options FROM downloads WHERE id=?", (child,))[0][0])
+            await queue._run_task(child, child_url, "best", await reopened.state.settings.get_all(), options)
+            self.assertEqual(delivered, [(parent_url, child_url, None)])
+            self.assertEqual(self.query(runtime, "SELECT status FROM downloads WHERE id=?", (parent,)), [("complete",)])
+
+    async def test_unknown_foreign_and_protected_playlist_referrers_require_refresh_after_reopen(self):
+        parent_url = "https://fixture.invalid/list"
+        cases = (
+            ("unknown", "https://fixture.invalid/one", "https://fixture.invalid/private?token=unpersisted-header", None, "BROWSER_CONTEXT_REQUIRED"),
+            ("foreign", "https://fixture.invalid:8443/one", parent_url, None, "BROWSER_CONTEXT_REQUIRED"),
+            ("zero-port", "https://fixture.invalid:0/one", parent_url, None, "BROWSER_CONTEXT_REQUIRED"),
+            ("scheme", "http://fixture.invalid/one", parent_url, None, "BROWSER_CONTEXT_REQUIRED"),
+            ("protected", "https://fixture.invalid/one", parent_url,
+             [{"domain": "fixture.invalid", "name": "session", "value": "unpersisted-cookie"}], "AUTH_REQUIRED"),
+        )
+        for name, child_url, referer, cookies, code in cases:
+            with self.subTest(name=name):
+                runtime = self.runtime(name)
+                app = self.app(runtime, download_runner=lambda **_: {"playlist": {"entries": [
+                    {"position": 1, "url": child_url, "referer": referer}]}})
+                async with app.router.lifespan_context(app):
+                    queue = app.state.queue
+                    parent = await queue.enqueue(parent_url, "best", is_playlist=True, cookies=cookies)
+                    await queue._run_task(parent, parent_url, "best", await app.state.settings.get_all(), {})
+                    child, options = self.query(runtime, "SELECT id,download_options FROM downloads WHERE parent_id=?", (parent,))[0]
+                    self.assertNotIn("unpersisted-", options)
+                reopened = self.app(runtime)
+                async with reopened.router.lifespan_context(reopened):
+                    self.assertEqual(self.query(runtime, "SELECT status,error_code,attempt_count FROM downloads WHERE id=?", (child,)),
+                                     [("waiting_for_auth", code, 0)])
+                    self.assertIsNone(await reopened.state.queue._claim(child))
+                    self.assertNotIn(child, reopened.state.queue.task_headers)
+                    self.assertNotIn(child, reopened.state.queue.task_cookies)
+
     async def test_parent_cancel_cancels_all_children_and_retry_keeps_child_ids(self):
         app, parent, children = await self.expanded()
         queue = app.state.queue

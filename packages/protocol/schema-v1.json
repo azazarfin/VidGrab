@@ -69,7 +69,6 @@
               "$ref": "#/$defs/BrowserCookie"
             },
             "maxItems": 128,
-            "minItems": 1,
             "title": "Cookies",
             "type": "array"
           },
@@ -136,8 +135,7 @@
         },
         "required": [
           "instance_id",
-          "url",
-          "cookies"
+          "url"
         ],
         "title": "AuthParams",
         "type": "object"
@@ -527,6 +525,19 @@
           },
           "options": {
             "$ref": "#/$defs/DownloadOptions"
+          },
+          "probe_id": {
+            "anyOf": [
+              {
+                "pattern": "^[!-~]{1,128}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Probe Id"
           },
           "thumbnail_url": {
             "anyOf": [
@@ -1256,6 +1267,11 @@
             "minimum": 1,
             "title": "Format Limit",
             "type": "integer"
+          },
+          "fresh": {
+            "default": false,
+            "title": "Fresh",
+            "type": "boolean"
           },
           "job_id": {
             "anyOf": [
@@ -2376,7 +2392,12 @@
               "NOT_FOUND",
               "REQUEST_BUDGET_EXHAUSTED",
               "NETWORK_ERROR",
-              "HTTP_ERROR"
+              "HTTP_ERROR",
+              "PROBE_EXPIRED",
+              "PROBE_CONTEXT_SCOPE",
+              "FORMAT_UNAVAILABLE",
+              "BROWSER_CONTEXT_EXPIRED",
+              "BROWSER_CONTEXT_REQUIRED"
             ],
             "title": "Code",
             "type": "string"

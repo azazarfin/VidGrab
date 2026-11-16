@@ -1,6 +1,7 @@
 """Transactional job claims and attempt-fenced lifecycle persistence."""
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 from dataclasses import dataclass
@@ -121,7 +122,7 @@ class AttemptStore:
             raise ValueError("Invalid attempt outcome")
         async with self.transaction() as db:
             await require_owner(db, self.owner)
-            async with db.execute("SELECT status, current_attempt_id FROM downloads WHERE id=?", (job_id,)) as cursor:
+            async with db.execute("SELECT status, current_attempt_id, download_options FROM downloads WHERE id=?", (job_id,)) as cursor:
                 row = await cursor.fetchone()
             if row is None or row["status"] not in expected or row["current_attempt_id"] != attempt_id:
                 return False
@@ -140,6 +141,10 @@ class AttemptStore:
                 await record_artifacts(db, attempt_id, now, artifacts)
             elif artifacts:
                 raise ValueError("Artifacts require an owned attempt")
+            if status == "waiting_for_auth" and fields.get("error_code") == "AUTH_REQUIRED":
+                options = json.loads(row["download_options"] or "{}")
+                options["browser_context_requires_cookies"] = True
+                fields["download_options"] = json.dumps(options)
             fields.update(status=status, speed=0.0, eta=None, current_attempt_id=None,
                           completed_at=now if status in TERMINAL else None)
             if status != "retry_wait":
@@ -209,10 +214,16 @@ class AttemptStore:
                                  speed=0, eta=NULL, current_attempt_id=NULL, retry_at=NULL, error_code=NULL
                                  WHERE status IN ({placeholders})""",
                              (now, *states))
-            cursor = await db.execute("""UPDATE downloads SET status='waiting_for_auth',
-                error_message='Fresh browser authentication is required'
-                WHERE status='queued' AND auth_required=1 RETURNING id""")
-            recovered_ids.extend(row["id"] for row in await cursor.fetchall())
+            async with db.execute("SELECT id,download_options FROM downloads WHERE status='queued' AND auth_required=1") as cursor:
+                waiting = await cursor.fetchall()
+            transitions = []
+            for row in waiting:
+                cookies_required = json.loads(row["download_options"] or "{}").get("browser_context_requires_cookies", True) is not False
+                code = "AUTH_REQUIRED" if cookies_required else "BROWSER_CONTEXT_REQUIRED"
+                message = "Fresh browser authentication is required" if cookies_required else "A fresh browser context is required"
+                transitions.append((message, code, row["id"]))
+            await db.executemany("UPDATE downloads SET status='waiting_for_auth',error_message=?,error_code=? WHERE id=?", transitions)
+            recovered_ids.extend(row["id"] for row in waiting)
             recovered_ids.extend(await sync_parents(db, now))
             if not recovered_ids:
                 return []

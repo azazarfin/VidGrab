@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from backend.db.enqueue import insert_download
 from backend.db.ownership import require_owner, require_recoverable, transaction
 from backend.services.job_state import RUNNABLE, TERMINAL
-from backend.services.playlists import PlaylistError, parse_selection, validate_playlist_result
+from backend.services.playlists import PlaylistError, parse_selection, public_parent_referer, validate_playlist_result
 
 
 async def sync_parent(db, parent_id, now):
@@ -107,18 +107,17 @@ class PlaylistStore:
             children = []
             for entry in entries:
                 child_options = {**options, "duration": entry["duration"]}
-                if entry["referer"]:
-                    extra = dict(options.get("extra_args") or {})
-                    if extra.get("http_headers") is not None and not isinstance(extra["http_headers"], dict):
-                        raise PlaylistError("Invalid playlist request headers")
-                    headers = dict(extra.get("http_headers") or {})
-                    headers.setdefault("Referer", entry["referer"])
-                    child_options["extra_args"] = {**extra, "http_headers": headers}
+                derived_referer = bool(entry["referer"] and entry["referer"] == public_parent_referer(
+                    parent["url"], entry["url"], auth_required=parent["auth_required"]))
+                if derived_referer:
+                    child_options["playlist_referer_from_parent"] = True
+                if entry["referer"] and not parent["auth_required"]:
+                    child_options.setdefault("browser_context_requires_cookies", False)
                 child = {"id": str(uuid4()), "url": entry["url"], "title": entry["title"],
                          "thumbnail_url": entry["thumbnail_url"], "status": "queued", "progress": 0.0,
                          "speed": 0.0, "created_at": now, "format_selected": parent["format_selected"],
                          "download_options": json.dumps(child_options), "scheduled_at": None,
-                         "auth_required": parent["auth_required"], "job_kind": "media",
+                         "auth_required": int(bool(parent["auth_required"] or (entry["referer"] and not derived_referer))), "job_kind": "media",
                          "parent_id": job_id, "playlist_index": entry["position"]}
                 await insert_download(db, child)
                 children.append(child)

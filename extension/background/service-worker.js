@@ -1,12 +1,15 @@
 if (typeof importScripts === 'function') {
-  importScripts('../lib/protocol.js', '../lib/api.js', '../lib/utils.js', '../lib/native.js');
+  importScripts('../lib/media.js', '../lib/protocol.js', '../lib/api.js', '../lib/utils.js', '../lib/native.js', 'discovery.js', 'observation.js');
 }
 
 const api = self.vidGrabAPI;
-const DEFAULT_SETTINGS = { cookieForwardingEnabled: false, notificationPreference: 'both' };
+const DEFAULT_SETTINGS = { cookieForwardingEnabled: false, requestObservationEnabled: false, notificationPreference: 'both' };
 const read = keys => new Promise(resolve => chrome.storage.local.get(keys, resolve));
 
-chrome.tabs?.onRemoved?.addListener(tabId => chrome.storage.local.remove('detected_videos_' + tabId));
+chrome.tabs?.onRemoved?.addListener(tabId => self.vidGrabDiscovery.clear(tabId).catch(() => {}));
+chrome.tabs?.onUpdated?.addListener((tabId, change) => {
+  if (change.url || change.status === 'loading') return self.vidGrabDiscovery.clear(tabId).catch(() => {});
+});
 chrome.runtime.onInstalled.addListener(async () => {
   const current = await read(Object.keys(DEFAULT_SETTINGS));
   const missing = Object.fromEntries(Object.entries(DEFAULT_SETTINGS).filter(([key]) => current[key] === undefined));
@@ -78,10 +81,14 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
           if (message.job_id !== null && message.job_id !== undefined && (typeof message.job_id !== 'string' || message.job_id.length > 256)) {
             throw { code: 'BAD_REQUEST', message: 'Invalid download identity' };
           }
-          respond({ ok: true, data: await api.prepareAuth(message.url, message.job_id || null, message.fresh === true) });
+          respond({ ok: true, data: await api.prepareAuth(message.url, message.job_id || null, message.fresh === true, message.candidate_id ?? null) });
         } else if (message.type === 'companion.pending') respond({ ok: true, data: await api.getPending() });
         else if (message.type === 'companion.dismiss') {
           await api.dismissPending(message.key);
+          respond({ ok: true });
+        }
+        else if (message.type === 'companion.discovery.remove') {
+          await self.vidGrabDiscovery.removeCandidates(message.tab_id, message.ids);
           respond({ ok: true });
         }
         else throw { code: 'UNSUPPORTED_OPERATION', message: 'Unsupported companion message' };
@@ -90,38 +97,12 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     return true;
   }
   if (!content(sender)) return false;
-  if (message.type === 'video_detected') {
-    const candidates = Array.isArray(message.videos) ? message.videos.slice(0, 128) : [];
-    const videos = candidates.flatMap(video => {
-      try {
-        self.vidGrabMediaUrl(video.url);
-        return [{ url: video.url, title: String(video.title || '').slice(0, 512),
-          thumbnail: typeof video.thumbnail === 'string' ? video.thumbnail.slice(0, 16384) : null,
-          type: typeof video.type === 'string' ? video.type.slice(0, 32) : 'video' }];
-      } catch { return []; }
-    });
-    const key = 'detected_videos_' + sender.tab.id;
-    void read([key]).then(current => {
-      const merged = new Map((Array.isArray(current[key]) ? current[key] : []).map(video => [video.url, video]));
-      for (const video of videos) merged.set(video.url, video);
-      const bounded = [...merged.values()].slice(-128);
-      chrome.storage.local.set({ [key]: bounded });
-      chrome.action.setBadgeText({ text: bounded.length ? String(bounded.length) : '', tabId: sender.tab.id });
-      chrome.action.setBadgeBackgroundColor({ color: '#7C6BF0', tabId: sender.tab.id });
-    });
+  if (message.type === 'video_detected' || message.type === 'video_selected') {
+    const action = message.type === 'video_detected' ? 'report' : 'select';
+    void self.vidGrabDiscovery[action](message, sender).then(respond, () => respond({ success: false }));
+    return true;
   } else if (message.type === 'open_popup') {
     chrome.action?.openPopup?.();
-  } else if (message.type === 'download_request') {
-    void triggerQuickDownload(message.url);
-  } else if (message.type === 'probe_request' || message.type === 'download_with_options') {
-    void (async () => {
-      try {
-        const data = message.type === 'probe_request' ? await api.probeUrl(message.url)
-          : await api.startDownload(message.url, message.formatId || null, message.title || null, message.thumbnailUrl || null, message.options || {});
-        respond({ success: true, data });
-      } catch (error) { respond({ success: false, error: error.message, code: error.code }); }
-    })();
-    return true;
   }
   return false;
 });

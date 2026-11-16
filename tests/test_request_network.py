@@ -182,6 +182,31 @@ class RequestNetworkTests(OfflineTestCase):
         redirected.close()
         self.assertEqual(len(self.requests), 2)
 
+    def test_wire_credential_scope_keeps_explicit_zero_ports_distinct(self):
+        from backend.services.request_network import BudgetedRequests
+        cases = (
+            ("https://fixture.invalid/start", "https://fixture.invalid:0/media", False),
+            ("https://fixture.invalid:0/start", "https://fixture.invalid/media", False),
+            ("https://fixture.invalid:0/start", "https://fixture.invalid:0/media", True),
+            ("https://fixture.invalid/start", "https://fixture.invalid:443/media", True),
+        )
+        for source, target, permitted in cases:
+            with self.subTest(source=source, target=target):
+                coordinator = self.gate().coordinator
+                gate = BudgetedRequests(coordinator, lambda: False, credential_url=source)
+                request = Request(target, headers={"Cookie": "wire-scope-secret", "Referer": source})
+                observed = []
+                def send(current):
+                    observed.append((current.get_header("Cookie"), current.get_header("Referer")))
+                    return self.response()
+                try:
+                    response = gate.open(send, request)
+                    response.close()
+                    self.assertEqual(observed, [("wire-scope-secret", source)] if permitted else [(None, None)])
+                    self.assertEqual(self.active, set())
+                finally:
+                    gate.close()
+
     def test_upstream_cooldown_is_sticky_and_prevents_inner_request_retries(self):
         gate = self.gate()
         with self.assertRaisesRegex(Exception, "UPSTREAM_RATE_LIMITED"):

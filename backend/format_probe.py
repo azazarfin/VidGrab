@@ -10,10 +10,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import yt_dlp
 
-from backend.sanitizer import sanitize_text
 from backend.runtime import RuntimeConfig
 from backend.engine.execution import join_owned_task
 from backend.services.retry_policy import RequestFailure, retry_after
+from backend.services.diagnostics import redact_diagnostic, redact_exception
 
 logger = logging.getLogger("vidgrab.format_probe")
 
@@ -33,6 +33,8 @@ class FormatInfo(BaseModel):
     fps: Optional[float] = None
     tbr: Optional[float] = None  # Total bitrate
     container: Optional[str] = None
+    height: Optional[int] = None
+    width: Optional[int] = None
 
 class PlaylistEntry(BaseModel):
     id: str
@@ -66,6 +68,8 @@ def _run_probe(url: str, runtime: RuntimeConfig, *, request_context=None, cancel
     }
 
     from backend.services.request_network import constrain_network_options, install_request_budget
+    from backend.downloader import YtDlpLogger
+    ydl_opts['logger'] = YtDlpLogger()
     constrain_network_options(ydl_opts)
     if components is not None:
         ydl_opts['ffmpeg_location'] = str(Path(components['ffmpeg']).parent)
@@ -118,7 +122,7 @@ def _parse_probe_result(url: str, info: Dict[str, Any]) -> ProbeResponse:
                 
                 entries.append(PlaylistEntry(
                     id=str(entry.get('id', '')),
-                    title=sanitize_text(entry.get('title', 'Unknown Video')),
+                    title=str(entry.get('title') or 'Unknown Video')[:512],
                     duration=entry.get('duration'),
                     thumbnail=entry.get('thumbnail'),
                     url=entry_url or ""
@@ -139,7 +143,7 @@ def _parse_probe_result(url: str, info: Dict[str, Any]) -> ProbeResponse:
                 acodec=f.get('acodec'),
                 fps=f.get('fps'),
                 tbr=f.get('tbr'),
-                container=f.get('container')
+                container=f.get('container'), height=f.get('height'), width=f.get('width')
             ))
             
         # Parse subtitles
@@ -155,10 +159,10 @@ def _parse_probe_result(url: str, info: Dict[str, Any]) -> ProbeResponse:
 
     return ProbeResponse(
         url=url,
-        title=sanitize_text(info.get('title', 'Unknown Title')),
+        title=str(info.get('title') or 'Unknown Title')[:512],
         thumbnail=info.get('thumbnail'),
         duration=info.get('duration'),
-        uploader=sanitize_text(info.get('uploader') or info.get('playlist_uploader')),
+        uploader=str(info.get('uploader') or info.get('playlist_uploader'))[:512] if info.get('uploader') or info.get('playlist_uploader') else None,
         is_playlist=is_playlist,
         entries=entries,
         formats=formats if not is_playlist else None,
@@ -207,12 +211,18 @@ class ProbeService:
         finally:
             self.inflight.pop(key, None)
 
-    async def probe(self, url: str, *, auth_context=None) -> ProbeResponse:
+    def cache_expiry(self, url, auth_context=None):
+        key = url if auth_context is None else (url, auth_context['identity'])
+        return self.cache.get(key, (self.clock(), None))[0] + CACHE_TTL
+
+    async def probe(self, url: str, *, auth_context=None, fresh=False) -> ProbeResponse:
         url = url.strip()
         if not url:
             raise ValueError("URL cannot be empty")
         key = url if auth_context is None else (url, auth_context['identity'])
         now = self.clock()
+        if fresh:
+            self.cache.pop(key, None)
         if key in self.cache:
             timestamp, data = self.cache[key]
             if now - timestamp < CACHE_TTL:
@@ -241,9 +251,9 @@ def create_probe_router(service: ProbeService) -> APIRouter:
             raise HTTPException(status_code=status, detail={"code": error.code, "retry_at": error.retry_at},
                                 headers={"Retry-After": str(max(0, math.ceil(deadline - service.clock())))}) from error
         except ValueError as error:
-            raise HTTPException(status_code=400, detail=f"Failed to extract video info: {error}") from error
-        except Exception:
-            logger.exception("Unexpected error during probing")
+            raise HTTPException(status_code=400, detail="Failed to extract video info: " + redact_diagnostic(error)) from error
+        except Exception as error:
+            logger.error("Unexpected error during probing: %s", redact_exception(error))
             raise HTTPException(status_code=500, detail="Internal server error during video probing")
 
     return router

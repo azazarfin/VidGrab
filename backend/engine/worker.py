@@ -6,6 +6,7 @@ import sys
 import threading
 
 from backend.engine.worker_owner import BOOTSTRAP_LIMIT, read_message, send_message
+from backend.services.diagnostics import redact_diagnostic
 
 
 def main():
@@ -43,7 +44,7 @@ def main():
         send_message({"type": "result", "data": result})
     except Exception as error:
         from backend.services.resume import requires_fresh_auth
-        reply = {"type": "error", "message": str(error)[:4096]}
+        reply = {"type": "error", "message": redact_diagnostic(error)[:4096]}
         if requires_fresh_auth(error):
             reply["code"] = "AUTH_REQUIRED"
             reply["message"] = "Fresh browser authentication is required"

@@ -10,6 +10,7 @@ from backend.runtime import OutputPathError, RuntimeConfig
 from backend.services.artifacts import is_link, result_artifacts, validate_workspace
 from backend.services.artifact_postprocessing import CaptureArtifactMovesPP, RecordFinalArtifactsPP
 from backend.services.publication import record_result
+from backend.services.diagnostics import redact_diagnostic
 
 logger = logging.getLogger("vidgrab.downloader")
 
@@ -17,16 +18,16 @@ class YtDlpLogger:
     def debug(self, msg):
         # Filter progress updates to avoid flooding system logs
         if not (msg.startswith('[download]') or msg.startswith('[SponsorBlock]')):
-            logger.debug(msg)
+            logger.debug(redact_diagnostic(msg))
 
     def info(self, msg):
-        logger.info(msg)
+        logger.info(redact_diagnostic(msg))
 
     def warning(self, msg):
-        logger.warning(msg)
+        logger.warning(redact_diagnostic(msg))
 
     def error(self, msg):
-        logger.error(msg)
+        logger.error(redact_diagnostic(msg))
 
 def parse_and_sanitize_args(args_str: str) -> dict:
     if not args_str or not args_str.strip():
@@ -34,7 +35,7 @@ def parse_and_sanitize_args(args_str: str) -> dict:
     try:
         args = shlex.split(args_str)
     except Exception as e:
-        logger.warning(f"Failed to split custom args: {e}")
+        logger.warning("Failed to split custom args: %s", redact_diagnostic(e))
         return {}
         
     disallowed_flags = {
@@ -82,7 +83,7 @@ def parse_and_sanitize_args(args_str: str) -> dict:
             custom_opts[k] = v
         return custom_opts
     except Exception as e:
-        logger.warning(f"Failed to parse/sanitize custom arguments: {e}")
+        logger.warning("Failed to parse/sanitize custom arguments: %s", redact_diagnostic(e))
         return {}
 
 def make_progress_hook(
@@ -183,6 +184,7 @@ def run_download(
     resume_attempt: Optional[Dict[str, Any]] = None,
     referer: Optional[str] = None,
     credential_url: Optional[str] = None,
+    format_intent: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Synchronous yt-dlp attempt, normally run inside an owned worker process."""
     
@@ -368,6 +370,9 @@ def run_download(
             budget = install_request_budget(ydl, runtime, {"owner_id": resume_attempt["owner_id"],
                 "attempt_id": resume_attempt["id"]}, is_cancelled_cb or (lambda: False), credential_url=credential_url)
             cleanup.callback(budget.close)
+        if format_intent is not None and not audio_only and not is_playlist:
+            from backend.services.format_selection import install_format_refresh
+            install_format_refresh(ydl, format_intent)
         if is_playlist or playlist_items:
             from backend.services.playlists import extract_playlist
             # Raw extraction neither downloads media nor runs playlist postprocessors.

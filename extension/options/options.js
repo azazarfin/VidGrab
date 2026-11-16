@@ -33,6 +33,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const inputBackendUrl = document.getElementById("input-backend-url");
   const btnTestBackend = document.getElementById("btn-test-backend");
   const chkCookieForwarding = document.getElementById("chk-cookie-forwarding");
+  const chkRequestObservation = document.getElementById("chk-request-observation");
   const selectNotifications = document.getElementById("select-notifications");
   const selectSpeedLimit = document.getElementById("select-speed-limit");
   const customSpeedGroup = document.getElementById("custom-speed-group");
@@ -173,6 +174,7 @@ document.addEventListener("DOMContentLoaded", () => {
         ? "Cookies: " + (permissions.cookies_granted ? "granted" : "not granted")
           + " · Native messaging: " + (permissions.native_granted ? "granted" : "not granted")
           + " · Notifications: " + (permissions.notifications_granted ? "granted" : "not granted")
+          + " · Request observation: " + (permissions.request_observation_granted ? "granted" : "not granted")
           + ". Site access: " + (permissions.origins.length ? permissions.origins.join(", ") : "none")
         : "This browser cannot report its granted permissions.";
     } catch { permissionStatus.textContent = "Browser permissions could not be read."; }
@@ -248,9 +250,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function loadSettings() {
     showStatus("Loading settings...", "");
-    const store = await new Promise(resolve => chrome.storage.local.get(["backendUrl", "cookieForwardingEnabled", "notificationPreference"], resolve));
+    const store = await new Promise(resolve => chrome.storage.local.get(["backendUrl", "cookieForwardingEnabled", "requestObservationEnabled", "notificationPreference"], resolve));
     inputBackendUrl.value = store.backendUrl || "";
     chkCookieForwarding.checked = store.cookieForwardingEnabled === true;
+    chkRequestObservation.checked = store.requestObservationEnabled === true;
+    chkRequestObservation.disabled = !chrome.permissions?.request;
     selectNotifications.value = store.notificationPreference || "both";
     await refreshPermissions();
     await refreshNotices();
@@ -420,8 +424,28 @@ document.addEventListener("DOMContentLoaded", () => {
     if (area !== "local") return;
     if (changes.cookieForwardingEnabled) chkCookieForwarding.checked = changes.cookieForwardingEnabled.newValue === true;
     if (changes.notificationPreference) selectNotifications.value = changes.notificationPreference.newValue || "both";
-    if (changes.cookieForwardingEnabled || changes.notificationPreference) void refreshPermissions();
+    if (changes.requestObservationEnabled) chkRequestObservation.checked = changes.requestObservationEnabled.newValue === true;
+    if (changes.cookieForwardingEnabled || changes.notificationPreference || changes.requestObservationEnabled) void refreshPermissions();
     if (changes.vidgrabPendingMutations) void refreshNotices();
+  });
+  chkRequestObservation.addEventListener("change", async () => {
+    const requested = chkRequestObservation.checked;
+    chkRequestObservation.disabled = true;
+    try {
+      const granted = !requested || await new Promise(resolve => chrome.permissions.request(
+        { permissions: ["webRequest", "webNavigation"] }, result => resolve(!chrome.runtime.lastError && result === true)));
+      const enabled = requested && granted;
+      await new Promise((resolve, reject) => chrome.storage.local.set({ requestObservationEnabled: enabled },
+        () => chrome.runtime.lastError ? reject(new Error("Browser preference could not be saved.")) : resolve()));
+      chkRequestObservation.checked = enabled;
+      await refreshPermissions();
+      showStatus(requested && !granted ? "Permission was not granted. Media element discovery remains available."
+        : enabled ? "Media request observation enabled for sites the browser permits." : "Media request observation disabled.",
+        requested && !granted ? "error" : "success");
+    } catch (error) {
+      chkRequestObservation.checked = !requested;
+      showStatus(error.message, "error");
+    } finally { chkRequestObservation.disabled = !chrome.permissions?.request; }
   });
   window.addEventListener("pagehide", () => api.disconnect());
 

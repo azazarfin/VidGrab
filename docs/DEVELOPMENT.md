@@ -1,14 +1,14 @@
 # VidGrab development
 
-Current milestone: scoped P04 is accepted; [native client acceptance](#p04-native-client-acceptance--2026-11-16) records the final selected-VM scope. P05 detection/context/actionable failures is next. Earlier dated records retain their original scope.
+Current milestone: P05 discovery/context/actionable failures is implemented with the [Fedora development checks](VALIDATION.md#p05-discovery-development-checkpoint--2026-11-16); P05 acceptance remains open for changed-byte Ubuntu/Windows and actual browser/window journeys plus the separate live-site matrix. Scoped P04 is accepted for its earlier selected-VM bytes. Earlier dated records retain their original scope.
 
-The P02 fixture desktop/engine/native bridge is accepted for the selected Ubuntu/GNOME and Windows 11 preview baselines. P03 backend durability is accepted for the selected controlled fixtures. P04's ten v1 operations, schema-10 action receipts, ordinary media with volatile scoped authentication and migrated browser/desktop clients pass selected Fedora/Ubuntu-userspace/Windows runtime and Chromium renderer checks. Native GUI, installed-browser and final release acceptance remain open. The ASGI development adapter is `backend.main:app`; it resolves user paths without initializing SQLite or starting workers during import.
+The P02 fixture desktop/engine/native bridge, scoped P03 durability and scoped P04 native/browser clients are accepted for their recorded selected baselines. P05 adds normalized discovery, optional request metadata, volatile header/cookie contexts, probe witnesses and actionable failures while retaining schema 10 and the same ten v1 operations. Changed P05 native/installed-browser and final release acceptance remain open. The ASGI development adapter is `backend.main:app`; it resolves user paths without initializing SQLite or starting workers during import.
 
 ## Locked setup and deterministic checks
 
 Run from the repository root with Python 3.11+ and uv. `pyproject.toml` pins the selected direct dependencies; `uv.lock` locks their transitive dependencies and artifacts.
 
-The project baseline is >=3.11; `yt-dlp==2026.6.9` itself declares >=3.10. Existing platform evidence uses Fedora Python 3.14.8, Ubuntu userspace 3.12.3 and Windows 11 3.12.16; Python 3.11 remains unexecuted. All 433 current guarded cases pass on Fedora and Ubuntu userspace in complete discovery runs. Windows discovers 433, with 424 passing and nine POSIX skips. P04 generated/session/background, source/fresh-frozen/native and Chromium renderer checks cover those selected targets; native GUI/installed-browser acceptance remains open. Read [VALIDATION.md](VALIDATION.md) for each checkpoint and its limits.
+The project baseline is >=3.11; `yt-dlp==2026.6.9` itself declares >=3.10. Existing platform evidence uses Fedora Python 3.14.8, Ubuntu userspace 3.12.3 and Windows 11 3.12.16; Python 3.11 remains unexecuted. All 472 P05 guarded cases pass on Fedora. The preceding P04 target runs discover 433: Ubuntu passes all, Windows passes 424 with nine POSIX skips. Those target/native/browser results cover earlier bytes and must be repeated for P05. Read [VALIDATION.md](VALIDATION.md) for each checkpoint and its limits.
 
 ```sh
 uv sync --frozen
@@ -565,3 +565,27 @@ Evidence is `packaging/out/p04-native-clients-afl2yjvl/`, via `p04-native-client
 Cleanup restores Ubuntu's two apt timers/removes 27 exact registrations, preserves ext4 state/profiles and 1,298 container artifacts, removes only the verified idle container and normally stops only the owned overlay with exact QEMU exit observed. Controls record stopped state; original disks/packages/prior files remain. Windows's 24 protected/89 installed files, unchanged Chrome, existing E: and four null HKCU values verify; 19 exact idle tasks/one old harness WebView2 orphan are cleaned. Windows stays running; private metadata remains unreadable/unverified without new access attempts.
 
 [Native validation](VALIDATION.md#p04-native-client-acceptance--2026-11-16) and [HANDOFF](../HANDOFF.md#p04-native-client-acceptance-checkpoint--2026-11-16) accept scoped P04 and identify P05 next. Temporary development loading/software input, loopback media and reply filters add no physical/store/installer/new Snap/Flatpak/live-site claim. Pairing, expired-format reprobe and prior unsupported/parent-race/power-loss/SQLite/release limits remain separate. No formatting, push or export ran.
+
+
+## P05 discovery development — 2026-11-16
+
+The shared classic source is `extension/lib/media.js`; both browser backgrounds load it with `background/discovery.js` and `background/observation.js`. Preserve Chrome service-worker and Firefox background-document wiring. Content candidates carry actual document/frame scope, and the overlay selects `pendingVideoCandidate` without enqueueing. Navigation invalidates stale selection/dismissal state. Optional request observation defaults off and requires actual webRequest/webNavigation grants. Cookie preferences and actual grants remain distinct.
+
+Header-only `auth.create` needs User-Agent or Referer purpose and keeps payloads volatile. Probes and explicit selected-format enqueue share an exact URL/context identity. `backend/services/format_selection.py` owns bounded volatile witnesses and one equivalent selection repair within each owned yt-dlp instance. Defaults/audio/playlists omit stale witnesses. Definite scope mismatch requires explicit fresh probe; an expired-list refresh requires review. Never automatically repeat a lost mutation or weaken a cookie-required job with headers.
+
+From the repository root, in the locked environment:
+
+```sh
+.venv/bin/python -B -m packages.protocol.generate --check
+node --test tests/check_media_detection.mjs tests/check_extension_control.mjs
+.venv/bin/python -B -m tests.check_detection_ui --output /absolute/fresh/detection-report
+.venv/bin/python -B -m tests.check_format_repair --tools /absolute/verified-tools --report /absolute/fresh/format-report.json
+```
+
+`check_detection_ui` uses isolated headless Chrome and mocked browser/native delivery against a real non-executing temporary v1 service. Its fifteen journeys cover overlay/handoff, frame scope, selection, permissions, expired lists, login/throttle/unsupported/update recovery, context mismatch, default/audio/playlist witness omission and explicit lost-reply review. It is not installed-extension or Firefox evidence. Supply `--chrome` when selecting a verified target executable. `check_format_repair` runs actual probes and owned media workers using generated clear loopback fixtures; add `--engine /absolute/frozen-engine` for frozen workers. The probe/caller remains source instrumentation, as recorded in its report.
+
+The P05 native/source/frozen runner retains the existing private bwrap network/PID/home recipe and all ten process suites plus thirteen native lifecycle cases. The playlist crash fixture waits for a committed sibling completion or admission retry before crashing the response-gated child; its original assertions/deadlines remain, with an added completed-byte check. Unfenced publication can correctly recover as failed and must not be treated as a timeout that needs retry relaxation. Fresh bundles must select unused temporary state/media paths; no actual runtime or browser registration is part of these checks. The final source adapter uses the absolute locked interpreter inside the owned process, and native Linux binaries are unchanged hash-verified copies. Both fresh bundles pass empty-PATH self-checks. Preserve prior bundles and every failed report; packaging browser ZIPs is separate and would replace the protected archives.
+
+Evidence is `packaging/out/p05-discovery-2q62w6tl/`, via `p05-discovery-current.json`. Bundle generation 3 follows the reproduced wire-origin port-0 regression; generations 1 and 2 remain preserved. Source validation 7 plus corrected playlist suite 8 and frozen validation 8 certify its unchanged 132 runtime inputs; `source-4/` binds the final docs/harness. The checkpoint has 472 guarded Fedora cases, 102 browser/content checks, fifteen detection journeys, combined browser/desktop rendering, twelve options layouts and final desktop lifecycle rendering at three sizes. The one Impeccable scan covers seven regex-only source files; it does not certify parsed-page contrast. Renderer sampling separately measures 4.8584:1 minimum options contrast. Read [validation](VALIDATION.md#p05-discovery-development-checkpoint--2026-11-16) before extending any claim.
+
+Rebuild/revalidate changed bytes on Ubuntu 24.04 LTS and Windows next, then actual WebKit/WebView2 plus installed Chrome/Firefox P05 journeys and the separate live-site matrix. Response-header Referrer-Policy discovery remains unimplemented; visible document/meta policy is the current evidence. Partitioned/FPI cookies are excluded. Format repair is bounded per owned instance rather than durably across outer attempts. P05 acceptance and final release remain open.

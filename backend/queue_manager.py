@@ -9,6 +9,7 @@ import sqlite3
 from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Dict, Any, List, Optional
+from urllib.parse import urlsplit
 from fastapi import WebSocket, APIRouter, HTTPException, Request
 from pydantic import BaseModel
 import aiosqlite
@@ -23,7 +24,7 @@ from backend.db.jobs import AttemptStore
 from backend.db.enqueue import EnqueueStore
 from backend.db.control_actions import ControlActionStore
 from backend.db.playlists import PlaylistStore, sync_parent
-from backend.services.playlists import PlaylistError, parse_selection, validate_playlist_result
+from backend.services.playlists import PlaylistError, parse_selection, public_parent_referer, validate_playlist_result
 from backend.services.artifacts import completed_artifacts, prepare_workspace
 from backend.services.publication import reconcile_publication
 from backend.services.job_state import RUNNABLE, TERMINAL, accepts_progress
@@ -31,6 +32,7 @@ from backend.services.resume import FreshAuthRequired
 from backend.services.auth_context import validate_fresh_cookies
 from backend.services.retry_policy import decide
 from backend.services.control_errors import ControlError
+from backend.services.diagnostics import redact_diagnostic, redact_exception
 from backend.db.ownership import require_owner
 
 logger = logging.getLogger("vidgrab.queue_manager")
@@ -106,7 +108,7 @@ class ConnectionManager:
             try:
                 await connection.send_json(message)
             except Exception as e:
-                logger.warning(f"Failed to send WS message, removing stale connection: {e}")
+                logger.warning("Failed to send WS message, removing stale connection: %s", redact_diagnostic(e))
                 self.disconnect(connection)
 
 # Queue Manager State
@@ -151,13 +153,17 @@ class QueueManager:
     async def _claim(self, task_id, row=None):
         async with self._state_lock(task_id):
             async with aiosqlite.connect(self.runtime.db_path) as db:
-                async with db.execute("SELECT auth_required, status FROM downloads WHERE id=?", (task_id,)) as cursor:
+                async with db.execute("SELECT auth_required, status, download_options FROM downloads WHERE id=?", (task_id,)) as cursor:
                     auth = await cursor.fetchone()
-            if auth and auth[0] and auth[1] == "queued" and not self.task_cookies.get(task_id):
+            cookie_required = auth and json.loads(auth[2] or "{}").get("browser_context_requires_cookies", True) is not False
+            headers = self.task_headers.get(task_id, {})
+            context_ready = bool(self.task_cookies.get(task_id)) if cookie_required else bool(headers.get("referer") or headers.get("user_agent"))
+            if auth and auth[0] and auth[1] == "queued" and not context_ready:
+                code = "AUTH_REQUIRED" if cookie_required else "BROWSER_CONTEXT_REQUIRED"
                 await self.attempts.finish(task_id, "waiting_for_auth", self._now(),
-                                           error_message="Fresh browser authentication is required")
+                                           error_message="A fresh browser context is required", error_code=code)
                 if task_id in self.in_memory_progress:
-                    self.in_memory_progress[task_id].update(status="waiting_for_auth", error_message="Fresh browser authentication is required")
+                    self.in_memory_progress[task_id].update(status="waiting_for_auth", error_message="A fresh browser context is required", error_code=code)
                 return None
             attempt = await self.attempts.claim(task_id, self._now())
             if attempt is None:
@@ -265,6 +271,7 @@ class QueueManager:
         idempotency_key: Optional[str] = None,
         idempotency_intent: Optional[dict] = None,
         credential_loader=None,
+        format_intent_loader=None,
         requires_auth=False,
         fixture_only=False,
     ) -> str:
@@ -325,17 +332,25 @@ class QueueManager:
             "auth_required": int(bool(cookies) or requires_auth),
             "job_kind": "playlist" if is_playlist or playlist_items else "media",
         }
-        operation = asyncio.create_task(self._admit(record, cookies, idempotency_key, idempotency_intent, credential_loader))
+        operation = asyncio.create_task(self._admit(record, cookies, idempotency_key, idempotency_intent, credential_loader, format_intent_loader))
         return await join_owned_task(operation)
 
-    async def _admit(self, record, cookies, idempotency_key, idempotency_intent=None, credential_loader=None):
+    async def _admit(self, record, cookies, idempotency_key, idempotency_intent=None, credential_loader=None, format_intent_loader=None):
         if self.stopping:
             raise HTTPException(503, "Engine is stopping")
         auth = None
         def prepare_credentials():
             nonlocal auth
-            auth = credential_loader()
-        if credential_loader is not None:
+            auth = credential_loader() if credential_loader else None
+            if format_intent_loader is not None:
+                options = json.loads(record["download_options"])
+                options["format_intent"] = format_intent_loader()
+                record["download_options"] = json.dumps(options)
+            if auth is not None:
+                options = json.loads(record["download_options"])
+                options["browser_context_requires_cookies"] = bool(auth["cookies"])
+                record["download_options"] = json.dumps(options)
+        if credential_loader is not None or format_intent_loader is not None:
             record, created = await self.enqueues.admit(record, idempotency_key, intent=idempotency_intent,
                                                        before_insert=prepare_credentials)
         elif idempotency_intent is None:
@@ -455,51 +470,65 @@ class QueueManager:
                     cookies = context["cookies"]
                     headers = {name: context[name] for name in ("user_agent", "referer") if context.get(name)}
                     headers["credential_url"] = context["scope_url"]
+                options = json.loads(row["download_options"] or "{}")
                 if row["status"] == "waiting_for_auth" or row["auth_required"]:
+                    cookie_required = (options.get("browser_context_requires_cookies", True) is not False
+                                       or row["error_code"] == "AUTH_REQUIRED" or bool(cookies))
                     try:
-                        validate_fresh_cookies(row["url"], cookies, self.clock())
+                        if cookie_required:
+                            validate_fresh_cookies(row["url"], cookies, self.clock())
+                        elif not headers or not (headers.get("referer") or headers.get("user_agent")):
+                            raise ValueError("Share a fresh browser context")
                     except ValueError as error:
                         if control_action is not None:
-                            raise ControlError("AUTH_REQUIRED", 401, "Share fresh browser cookies before retrying this download") from error
+                            code = "AUTH_REQUIRED" if cookie_required else "BROWSER_CONTEXT_REQUIRED"
+                            message = "Share fresh browser cookies before retrying this download" if cookie_required else "Select the source frame and share a fresh browser context before retrying"
+                            raise ControlError(code, 401, message) from error
                         raise HTTPException(status_code=400, detail=str(error)) from error
-                options = json.loads(row["download_options"] or "{}")
+                if headers is not None:
+                    options["browser_context_requires_cookies"] = bool(cookies)
                 async with db.execute("SELECT * FROM downloads WHERE parent_id=? ORDER BY playlist_index", (task_id,)) as cursor:
                     children = [dict(child) for child in await cursor.fetchall()]
                 if children:
-                    selected, current = await self._retry_children(db, dict(row), children, cookies, user_agent)
+                    if headers is not None:
+                        await db.execute("UPDATE downloads SET download_options=?,auth_required=1 WHERE id=?",
+                                         (json.dumps(options), task_id))
+                    selected, current = await self._retry_children(db, dict(row), children, cookies, user_agent, headers)
                 else:
                     if user_agent:
                         options["user_agent"] = user_agent
                     options_json = json.dumps(options)
                     await db.execute("""UPDATE downloads SET status='queued', error_message=NULL,
                         error_code=NULL, retry_at=NULL, progress=0, speed=0, eta=NULL, completed_at=NULL, download_options=?,
-                        auth_required=? WHERE id=?""", (options_json, int(bool(cookies) or row["auth_required"]), task_id))
+                        auth_required=? WHERE id=?""", (options_json, int(bool(cookies) or bool(headers) or row["auth_required"]), task_id))
                     if row["parent_id"] is not None:
                         await sync_parent(db, row["parent_id"], self._now())
                     current = dict(row)
                     current.update(status="queued", error_message=None, progress=0.0, speed=0.0,
                                    eta=None, completed_at=None, error_code=None, retry_at=None, download_options=options_json,
-                                   auth_required=int(bool(cookies) or row["auth_required"]))
+                                   auth_required=int(bool(cookies) or bool(headers) or row["auth_required"]))
                 if control_action is not None:
                     accepted = await self.control_actions.record(db, control_action, task_id)
                     async with db.execute("SELECT * FROM downloads WHERE id=?", (task_id,)) as cursor:
                         current = dict(await cursor.fetchone())
             if children:
-                for child, scoped in selected:
-                    if scoped:
-                        self.task_cookies[child["id"]] = cookies
-                        if headers is not None:
-                            self.task_headers[child["id"]] = dict(headers)
-                        else:
-                            self.task_headers.pop(child["id"], None)
+                for child, scoped_cookies, scoped_headers in selected:
+                    if scoped_cookies:
+                        self.task_cookies[child["id"]] = scoped_cookies
                     else:
                         self.task_cookies.pop(child["id"], None)
+                    if scoped_headers:
+                        self.task_headers[child["id"]] = scoped_headers
+                    else:
                         self.task_headers.pop(child["id"], None)
                     self.cancelled_tasks.discard(child["id"])
                     self.in_memory_progress[child["id"]] = child
                     messages.append({"event": "task_" + child["status"], "data": child})
-            elif cookies:
-                self.task_cookies[task_id] = cookies
+            elif cookies or headers:
+                if cookies:
+                    self.task_cookies[task_id] = cookies
+                else:
+                    self.task_cookies.pop(task_id, None)
                 if headers is not None:
                     self.task_headers[task_id] = dict(headers)
                 else:
@@ -516,32 +545,47 @@ class QueueManager:
         await self._refresh_playlist(task_id)
         return accepted
 
-    async def _retry_children(self, db, parent, children, cookies, user_agent):
+    def _child_context(self, url, cookies, headers):
+        if headers:
+            source, target = urlsplit(headers.get("credential_url") or ""), urlsplit(url)
+            origin = lambda value: (value.scheme, value.hostname, value.port if value.port is not None else (443 if value.scheme == "https" else 80))
+            if source.scheme not in ("http", "https") or origin(source) != origin(target):
+                return None, None
+        scoped_cookies = None
+        if cookies:
+            try:
+                validate_fresh_cookies(url, cookies, self.clock())
+                scoped_cookies = cookies
+            except ValueError:
+                pass
+        return scoped_cookies, dict(headers) if headers else None
+
+    async def _retry_children(self, db, parent, children, cookies, user_agent, headers=None):
         if any(child["status"] not in TERMINAL and child["status"] != "waiting_for_auth" for child in children):
             raise HTTPException(400, "Playlist children are still active")
         selected = []
         for child in children:
             if child["status"] == "complete":
                 continue
-            scoped = False
-            if cookies:
-                try:
-                    validate_fresh_cookies(child["url"], cookies, self.clock())
-                    scoped = True
-                except ValueError:
-                    pass
-            status = "waiting_for_auth" if child["auth_required"] and not scoped else "queued"
             options = json.loads(child["download_options"] or "{}")
+            scoped_cookies, scoped_headers = self._child_context(child["url"], cookies, headers)
+            cookie_required = child["auth_required"] and (options.get("browser_context_requires_cookies", True) is not False
+                                                          or child["error_code"] == "AUTH_REQUIRED")
+            scoped = bool(scoped_cookies) if cookie_required else bool(scoped_cookies or scoped_headers)
+            status = "waiting_for_auth" if child["auth_required"] and not scoped else "queued"
+            if scoped_headers and scoped:
+                options["browser_context_requires_cookies"] = bool(scoped_cookies)
+            error_code = ("AUTH_REQUIRED" if cookie_required else "BROWSER_CONTEXT_REQUIRED") if status == "waiting_for_auth" else None
             if user_agent:
                 options["user_agent"] = user_agent
             child.update(status=status, progress=0.0, speed=0.0, eta=None, completed_at=None,
-                         error_code=None, retry_at=None,
-                         error_message="Fresh browser authentication is required" if status == "waiting_for_auth" else None,
+                         error_code=error_code, retry_at=None,
+                         error_message="A fresh browser context is required" if status == "waiting_for_auth" else None,
                          download_options=json.dumps(options), auth_required=int(scoped or child["auth_required"]))
             await db.execute("""UPDATE downloads SET status=?, progress=0, speed=0, eta=NULL, completed_at=NULL,
-                error_message=?, download_options=?, auth_required=?, error_code=NULL, retry_at=NULL WHERE id=?""",
-                (status, child["error_message"], child["download_options"], child["auth_required"], child["id"]))
-            selected.append((child, scoped))
+                error_message=?, download_options=?, auth_required=?, error_code=?, retry_at=NULL WHERE id=?""",
+                (status, child["error_message"], child["download_options"], child["auth_required"], error_code, child["id"]))
+            selected.append((child, scoped_cookies if scoped else None, scoped_headers if scoped else None))
         await sync_parent(db, parent["id"], self._now())
         async with db.execute("SELECT * FROM downloads WHERE id=?", (parent["id"],)) as cursor:
             current = dict(await cursor.fetchone())
@@ -656,7 +700,7 @@ class QueueManager:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Error in scheduler loop: {e}")
+                logger.error("Error in scheduler loop: %s", redact_exception(e))
 
     async def _worker_loop(self):
         while True:
@@ -726,7 +770,7 @@ class QueueManager:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Error in queue worker loop: {e}")
+                logger.error("Error in queue worker loop: %s", redact_exception(e))
                 await asyncio.sleep(5)
 
     async def _run_task(self, task_id: str, url: str, format_id: str, config: Dict[str, Any], options: Dict[str, Any], retry_count: int = 0, *, attempt=None):
@@ -748,7 +792,7 @@ class QueueManager:
         try:
             # A cancellation may finish while the claim's broadcast is awaiting.
             async with aiosqlite.connect(self.runtime.db_path) as db:
-                async with db.execute("SELECT status, current_attempt_id, job_kind FROM downloads WHERE id=?", (task_id,)) as cursor:
+                async with db.execute("SELECT status, current_attempt_id, job_kind, parent_id, download_options, auth_required, url FROM downloads WHERE id=?", (task_id,)) as cursor:
                     row = await cursor.fetchone()
             if row is None or row[0] not in RUNNABLE or row[1] != attempt.id or self.is_cancelled(task_id):
                 return
@@ -758,6 +802,15 @@ class QueueManager:
             workspace_ready = True
             cookies = self.task_cookies.pop(task_id, None)
             headers = self.task_headers.pop(task_id, {})
+            if (not headers and row[3] and not row[5] and row[6] == url
+                    and json.loads(row[4] or "{}").get("playlist_referer_from_parent") is True):
+                async with aiosqlite.connect(self.runtime.db_path) as db:
+                    async with db.execute("SELECT url,auth_required FROM downloads WHERE id=? AND job_kind='playlist'", (row[3],)) as cursor:
+                        parent = await cursor.fetchone()
+                if parent:
+                    referer = public_parent_referer(parent[0], url, auth_required=parent[1])
+                    if referer:
+                        headers = {"referer": referer, "credential_url": url}
             if cookies:
                 creation = asyncio.create_task(asyncio.to_thread(create_cookie_file, cookies, self.runtime, attempt))
                 cookies_file_path = await join_owned_task(creation)
@@ -783,6 +836,7 @@ class QueueManager:
                 extra_args=options.get("extra_args") if self.allow_legacy_options else None,
                 user_agent=headers.get("user_agent", options.get("user_agent")), referer=headers.get("referer"),
                 credential_url=headers.get("credential_url"),
+                **({"format_intent": options["format_intent"]} if options.get("format_intent") else {}),
                 fixture_only=options.get("fixture_only", False),
             )
             if self.is_cancelled(task_id):
@@ -811,9 +865,9 @@ class QueueManager:
             status = "cancelled" if task_id in self.cancelled_tasks else "waiting_for_auth"
             outcome = "cancelled" if status == "cancelled" else "failed"
             fields = {"error_message": "Fresh browser authentication is required", "auth_required": 1,
-                      "retry_count": previous_retry_count}
+                      "error_code": "AUTH_REQUIRED", "retry_count": previous_retry_count}
         except Exception as error:
-            error_message = sanitize_text(str(error))
+            error_message = sanitize_text(redact_diagnostic(error))
             if task_id in self.cancelled_tasks:
                 status = "cancelled"
                 outcome = "cancelled"
@@ -844,7 +898,7 @@ class QueueManager:
             if cookie_error is not None:
                 if not isinstance(cookie_error, (OSError, ValueError)):
                     raise cookie_error
-                logger.error("Retained unverifiable cookie ownership for task %s: %s", task_id, cookie_error)
+                logger.error("Retained unverifiable cookie ownership for task %s: %s", task_id, redact_diagnostic(cookie_error))
                 status = "cancelled" if task_id in self.cancelled_tasks else "failed"
                 outcome = status
                 fields = {"error_message": "Cookie ownership could not be verified; files retained",
@@ -868,7 +922,7 @@ class QueueManager:
                         status = outcome = "failed"
                     elif recovery.error:
                         status = outcome = "failed"
-                        fields = {"error_message": sanitize_text(recovery.error), "retry_count": previous_retry_count}
+                        fields = {"error_message": sanitize_text(redact_diagnostic(recovery.error)), "retry_count": previous_retry_count}
                     elif recovery.result is not None:
                         status = outcome = "complete"
                         artifacts = [record for record in artifacts if record["path"] not in recovery.witness_paths]
@@ -879,13 +933,13 @@ class QueueManager:
                             if not current.get(key) and recovery.result.get(key):
                                 fields[key] = sanitize_text(recovery.result[key]) if key == "title" else recovery.result[key]
                 except (OSError, ValueError) as error:
-                    logger.exception("Failed to record retained artifacts for task %s", task_id)
+                    logger.error("Failed to record retained artifacts for task %s: %s", task_id, redact_exception(error))
                     if status != "cancelled":
                         status = outcome = "failed"
                         artifacts = []
-                        fields = {"error_message": sanitize_text(str(error)), "retry_count": previous_retry_count}
+                        fields = {"error_message": sanitize_text(redact_diagnostic(error)), "retry_count": previous_retry_count}
         if expansion is not None and status == "complete":
-            operation = asyncio.create_task(self._expand_playlist(task_id, attempt.id, expansion, cookies))
+            operation = asyncio.create_task(self._expand_playlist(task_id, attempt.id, expansion, cookies, headers))
             await join_owned_task(operation)
             return
         transition = asyncio.create_task(self._finish(task_id, status, attempt_id=attempt.id,
@@ -894,7 +948,7 @@ class QueueManager:
         if changed and status in ("queued", "retry_wait") and not self.stopping:
             self.wakeup_event.set()
 
-    async def _expand_playlist(self, task_id, attempt_id, result, cookies):
+    async def _expand_playlist(self, task_id, attempt_id, result, cookies, headers=None):
         try:
             children = await self.attempts.expand(task_id, attempt_id, result, self._now())
         except (ValueError, OSError, sqlite3.DatabaseError):
@@ -904,14 +958,17 @@ class QueueManager:
         if children is None:
             return
         self.active_attempts.pop(task_id, None)
+        entries = {entry["position"]: entry for entry in result["playlist"]["entries"]}
         for child in children:
             self.in_memory_progress[child["id"]] = child
-            if cookies:
-                try:
-                    validate_fresh_cookies(child["url"], cookies, self.clock())
-                    self.task_cookies[child["id"]] = cookies
-                except ValueError:
-                    pass
+            scoped_cookies, scoped_headers = self._child_context(child["url"], cookies, headers)
+            if scoped_cookies:
+                self.task_cookies[child["id"]] = scoped_cookies
+            entry = entries[child["playlist_index"]]
+            if not cookies and not headers and entry.get("referer"):
+                scoped_headers = {"referer": entry["referer"], "credential_url": child["url"]}
+            if scoped_headers:
+                self.task_headers[child["id"]] = scoped_headers
         self.wakeup_event.set()
         await self._refresh_playlist(task_id)
         for child in children:
