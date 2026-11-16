@@ -41,7 +41,7 @@ The 2026-11-16 P04 recovery uses
 `/home/azaz/.local/share/vidgrab-validation/ubuntu-p04-i2ailciy/vm.json` and a fresh
 overlay under `packaging/out/p04-native-clients-afl2yjvl/`. The original repaired
 disk, original guest disk and Noble cloud image are preserved. Recovery proves
-control availability; native P04 client acceptance remains a separate check.
+control availability. Subsequent [P04 native acceptance](../../HANDOFF.md#p04-native-client-acceptance-checkpoint--2026-11-16) passes GNOME/Wayland/WebKit and Chrome/Firefox journeys. Both apt timers are restored, exact temporary registrations removed, ext4 profiles/state preserved, and only the owned overlay stopped normally with exact QEMU exit observed. Recovered controls now record stopped state; original backing disks remain preserved. Reverify controls before any later authorized boot.
 
 ## Inputs and launch
 

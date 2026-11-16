@@ -1,5 +1,7 @@
 # VidGrab development
 
+Current milestone: scoped P04 is accepted; [native client acceptance](#p04-native-client-acceptance--2026-11-16) records the final selected-VM scope. P05 detection/context/actionable failures is next. Earlier dated records retain their original scope.
+
 The P02 fixture desktop/engine/native bridge is accepted for the selected Ubuntu/GNOME and Windows 11 preview baselines. P03 backend durability is accepted for the selected controlled fixtures. P04's ten v1 operations, schema-10 action receipts, ordinary media with volatile scoped authentication and migrated browser/desktop clients pass selected Fedora/Ubuntu-userspace/Windows runtime and Chromium renderer checks. Native GUI, installed-browser and final release acceptance remain open. The ASGI development adapter is `backend.main:app`; it resolves user paths without initializing SQLite or starting workers during import.
 
 ## Locked setup and deterministic checks
@@ -526,3 +528,40 @@ Client/options/lifecycle renderer journeys pass on both through isolated headles
 Evidence is `packaging/out/p04-client-targets-qi_6vb2i/`, via `p04-client-targets-current.json`: one 270-file snapshot, thirty accepted concrete command steps and 741 hash-verified Windows members. Final Windows native checks run serially from the source root with explicit `VIDGRAB_COMPONENT_DIR`; source embeds verified CPython inside the exact supervisor-owned process. Preserve the initial unknown Firefox settings reply (cause unproven), incomplete-context probe and all cache/helper/audit/cleanup failures. Production code, timeouts, readiness identity and mutation replay rules are unchanged.
 
 Windows preserves Node/uv artifacts by verified same-volume rename. Ubuntu copies/verifies 1,291 regular tmpfs artifacts before removing only the exact owned idle container. Protected local files, prior Fedora bundles, SDK inputs and Ubuntu disks/backing verify; Windows's 24 protected/89 installed files and four restored canonical HKCU values verify. SID-private metadata contents remain unreadable/unverified. Windows stays running on existing E:; recover Ubuntu controls before startup. Native GUI and installed-browser defaults/events/conflicts/reconnect/auth/permission acceptance is next. No installer journey, real runtime, public media, VM boot/power/storage mutation, formatting, push or Git export ran. [HANDOFF](../HANDOFF.md#p04-client-target-validation-checkpoint--2026-11-16) owns the next task.
+
+## P04 native client acceptance — 2026-11-16
+
+`tests/check_native_clients.py` is opt-in, outside guarded discovery. It requires the selected isolated Ubuntu/Windows VM identity plus `VIDGRAB_VALIDATION_VM_ISOLATED=1`, fresh home/report/screenshots paths, matching compiled desktop/frozen bundle, Python Playwright, Chrome, Firefox and Geckodriver. Linux also needs GNOME Wayland/the guest probe and `/usr/bin/WebKitWebDriver`; display comes from `systemctl --user show-environment`. Other computers/hostnames are rejected. Helpers import without starting anything and preserve test evidence/state.
+
+From the source root **inside the selected VM**, with actual absolute verified paths:
+
+```sh
+VIDGRAB_VALIDATION_VM_ISOLATED=1 /absolute/playwright-venv/bin/python -B tests/check_native_clients.py \
+  --bundle /absolute/bundle-gui-ubuntu \
+  --app /absolute/bundle-gui-ubuntu/vidgrab-desktop \
+  --home /tmp/fresh-vidgrab-native-home \
+  --report /absolute/new-report.json \
+  --screenshots /absolute/new-screenshots \
+  --chrome /opt/google/chrome/chrome \
+  --firefox /absolute/verified/firefox \
+  --geckodriver /absolute/verified/geckodriver
+```
+
+Windows uses `.exe`/fresh E: paths and an owned `--chrome-launcher` descriptor for the private installed Chrome. Its predeclared auxiliary task is bound by exported XML hash, nonce/profile/port, executable hash, PID/creation FILETIME/session and CDP browser identity. Accepted desktop/Firefox are unelevated Azaz/session 1; Chrome uses the explicit administrator token. Saved cycle-13 scripts/descriptors are historical evidence templates, with their tasks now removed; later authorized checks need fresh unique owned definitions/paths. No credential, logon-right or ACL change belongs to this workflow.
+
+Local regressions need no GUI/VM:
+
+```sh
+.venv/bin/python -B tests/check_native_client_helpers.py
+.venv/bin/python -B -m packages.protocol.generate --check
+```
+
+All three helpers pass locally/on both targets: exact VidGrab worker selection, valid strong-validator range suffix and filtering an actual returned reply through read-only Tauri callbacks. Both browsers pass nine actual native defaults/event/conflict/media/permission/auth/cancel/review/reconnect/incompatibility checks; desktop separately checks lost replies/disabled incompatibility. Reply faults are filters after a real response, preserving mutation forwarding and explicit review.
+
+Final Ubuntu attempt 18 (**156.367 s**) uses actual kernel 6.8.0-147-generic/GNOME Wayland/WebKit wry 0.57.1, installed Chrome 157.0.8103.38 and archived Firefox 160.0; 104 GUI files/51 ELFs fit glibc 2.39. Windows attempt 13 (**96.266 s**) uses WebView2 157.0.4341.46/Chrome 157.0.8103.51/Firefox 160.0. Each completes seven jobs. The Windows busy-pipe fix passes 35 supervisor + two native-host Rust and eight source/eight frozen native cases, with two ignored/four nested filtered helpers explicit. Original 62 inputs are unchanged; the changed Windows module is additionally bound and waits at most two seconds before writing any bytes. Peer/deadline/single-forwarding checks remain.
+
+Evidence is `packaging/out/p04-native-clients-afl2yjvl/`, via `p04-native-clients-current.json`; acceptance binds snapshot 20, eleven builds, journeys and audits. Preserve every failure/snapshot/bundle/profile and abort/reset fixture trace. Windows Firefox self-updated 159.0.1 to 160.0 during failed attempt 12. Remaining restarted profile files were copied/hash-verified after identity-joined cleanup; Geckodriver had deleted the original failed profile. Existing real Firefox was excluded; final attempt 13 pins identical before/after hashes. Historical lost-settings-reply cause remains unproven.
+
+Cleanup restores Ubuntu's two apt timers/removes 27 exact registrations, preserves ext4 state/profiles and 1,298 container artifacts, removes only the verified idle container and normally stops only the owned overlay with exact QEMU exit observed. Controls record stopped state; original disks/packages/prior files remain. Windows's 24 protected/89 installed files, unchanged Chrome, existing E: and four null HKCU values verify; 19 exact idle tasks/one old harness WebView2 orphan are cleaned. Windows stays running; private metadata remains unreadable/unverified without new access attempts.
+
+[Native validation](VALIDATION.md#p04-native-client-acceptance--2026-11-16) and [HANDOFF](../HANDOFF.md#p04-native-client-acceptance-checkpoint--2026-11-16) accept scoped P04 and identify P05 next. Temporary development loading/software input, loopback media and reply filters add no physical/store/installer/new Snap/Flatpak/live-site claim. Pairing, expired-format reprobe and prior unsupported/parent-race/power-loss/SQLite/release limits remain separate. No formatting, push or export ran.

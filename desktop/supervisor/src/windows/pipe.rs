@@ -100,17 +100,40 @@ impl Pipe {
             ));
         }
         let path = wide(path.as_os_str())?;
-        let handle = Handle::new(unsafe {
-            CreateFileW(
-                path.as_ptr(),
-                GENERIC_READ | GENERIC_WRITE,
-                0,
-                null(),
-                OPEN_EXISTING,
-                SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
-                null_mut(),
-            )
-        })?;
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let handle = loop {
+            match Handle::new(unsafe {
+                CreateFileW(
+                    path.as_ptr(),
+                    GENERIC_READ | GENERIC_WRITE,
+                    0,
+                    null(),
+                    OPEN_EXISTING,
+                    SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
+                    null_mut(),
+                )
+            }) {
+                Ok(handle) => break handle,
+                Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) => {
+                    // The listener creates its next instance after accepting a
+                    // client. Concurrent requests may arrive before it is ready.
+                    // This wait happens before any request bytes are written.
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return Err(io::Error::new(io::ErrorKind::TimedOut, "IPC connect deadline exceeded"));
+                    }
+                    let milliseconds = remaining.as_millis().max(1).min(u32::MAX as u128) as u32;
+                    if unsafe { WaitNamedPipeW(path.as_ptr(), milliseconds) } == 0 {
+                        let error = io::Error::last_os_error();
+                        if error.raw_os_error() == Some(ERROR_SEM_TIMEOUT as i32) {
+                            return Err(io::Error::new(io::ErrorKind::TimedOut, "IPC connect deadline exceeded"));
+                        }
+                        return Err(error);
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        };
         let mode = PIPE_READMODE_BYTE | PIPE_NOWAIT;
         if unsafe { SetNamedPipeHandleState(handle.0, &mode, null(), null()) } == 0 {
             return Err(io::Error::last_os_error());
@@ -209,5 +232,42 @@ impl Write for Pipe {
     }
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn listener() -> (PathBuf, PipeListener) {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let path = PathBuf::from(format!(r"\\.\pipe\vidgrab-p02-busy-test-{}-{unique}", std::process::id()));
+        let mut listener = PipeListener::bind(&path).unwrap();
+        assert_eq!(listener.accept().unwrap_err().kind(), io::ErrorKind::WouldBlock);
+        (path, listener)
+    }
+
+    #[test]
+    fn connect_waits_for_the_next_listener_before_any_write() {
+        let (path, mut listener) = listener();
+        let first = Pipe::connect(&path).unwrap();
+        let second = std::thread::spawn(move || Pipe::connect(&path));
+        std::thread::sleep(Duration::from_millis(200));
+        let accepted = listener.accept().unwrap();
+        let _ = listener.accept();
+        let result = second.join().unwrap();
+        assert!(result.is_ok(), "A concurrent client must wait for an available pipe: {result:?}");
+        drop((result, first, accepted));
+    }
+
+    #[test]
+    fn a_busy_pipe_connection_has_a_bounded_prewrite_deadline() {
+        let (path, _listener) = listener();
+        let _first = Pipe::connect(&path).unwrap();
+        let started = Instant::now();
+        let error = Pipe::connect(&path).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut, "The busy connection must wait: {error:?}");
+        assert!(started.elapsed() < Duration::from_secs(3));
     }
 }
