@@ -12,6 +12,37 @@ keys in a fresh mode-0700 Linux directory under `/tmp`. A qcow2 disk may live on
 NTFS: the guest filesystem retains Unix modes. Do not bind real user homes or
 application state into the guest.
 
+## Recover missing controls
+
+If the private control directory or SSH key is gone, retain the old disks and
+recover into a **new qcow2 child overlay**, with explicit `-F qcow2` and the
+verified absolute backing path. Verify every backing link, recorded disk
+size/mtime/inode/device and the cloud-image checksum first. A disk alone does not
+restore launch, SSH or QMP authority.
+
+Create a fresh mode-0700 control directory on a Linux filesystem and a new
+disposable SSH key. Use a new NoCloud instance ID with only the existing test
+user's `ssh_authorized_keys` and read-only input mount. Do not reuse the initial
+provisioning `runcmd`. Set QEMU user networking `restrict=on` before boot, retain
+the guest drop firewall, and keep input sharing read-only. Print only the guest
+public SSH host key to the private serial output; pin it after verifying the
+launched PID/creation identity, VM name and selected new disk. Subsequent SSH must
+use batch mode and strict host checking.
+
+Record the exact launch and private paths in the new `vm.json`. Verify native
+kernel, guest identity, networking, cloud-init completion, current user display
+and GNOME probe before tests. Hash existing validation/installed files and record
+package/timer state before changes; pause only selected guest timers and restore
+their original states during cleanup. Audit the old backing disks again after
+the new guest shuts down. Private key/user-data files do not belong in Git or
+evidence exports.
+
+The 2026-11-16 P04 recovery uses
+`/home/azaz/.local/share/vidgrab-validation/ubuntu-p04-i2ailciy/vm.json` and a fresh
+overlay under `packaging/out/p04-native-clients-afl2yjvl/`. The original repaired
+disk, original guest disk and Noble cloud image are preserved. Recovery proves
+control availability; native P04 client acceptance remains a separate check.
+
 ## Inputs and launch
 
 Create a fresh read-only `inputs/` directory containing these explicitly selected
