@@ -1,6 +1,6 @@
 # VidGrab desktop-companion plan
 
-Status: P01/P02 and ADR-001 are complete for selected Ubuntu 24.04/GNOME x86_64 and Windows 11 x64 previews. Scoped P03/ADR-024 and P04/ADR-027 are accepted for their recorded controlled scope. P05 discovery/context/actionable failures is implemented with Fedora guarded/browser/renderer/source/fresh-frozen/native evidence on 2026-11-16; P05 acceptance remains open for changed-byte Ubuntu/Windows, actual browser/window journeys and the separate live-site matrix. Final release acceptance remains open.
+Status: P01/P02 and ADR-001 are complete for selected Ubuntu 24.04/GNOME x86_64 and Windows 11 x64 previews. Scoped P03/ADR-024 and P04/ADR-027 are accepted for their recorded controlled scope. P05 discovery/context/actionable failures is implemented with Fedora guarded/browser/renderer/source/fresh-frozen/native evidence on 2026-11-16; Changed-byte P05 Ubuntu-userspace/Windows validation passes on 2026-11-18; P05 acceptance remains open for matching native desktops, actual browser/window journeys and the separate live-site matrix. Final release acceptance remains open.
 
 ## Approach
 
@@ -95,7 +95,8 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 - [x] Add optional permission-gated request URL/content-type and HLS/DASH observation; preserve signed URLs, keep `blob:` local and require exact document evidence for request-only contexts.
 - [x] Share volatile scoped cookies/headers across probe/enqueue; bound/coalesce probes and witnesses, review an expired-list refresh, preserve quality/container intent through one owned-instance repair and expose actionable context/login/retry/unsupported/update failures.
 - [x] Preserve ordinary playlist retry/recovery without persisting headers: reconstruct only an exact same-origin unprotected parent Referer; retain protected/private contexts and cookie requirements. Pass 472 guarded, 102 browser/content, renderer and ten source/frozen process suites plus thirteen native cases per mode; retain failures and protected evidence.
-- [ ] Rebuild and validate changed runtime/client bytes on Ubuntu 24.04 LTS and Windows, then actual WebKit/WebView2 and installed Chrome/Firefox P05 journeys. Keep response-header policy discovery and partitioned/FPI-cookie limits explicit.
+- [x] Rebuild and validate changed runtime/client bytes on Ubuntu 24.04 LTS userspace and Windows; committed 284-file snapshot/132 inputs, fresh frozen engines, guarded/generated/browser/process/native/renderer checks pass. Linux totals are 78 process cases/76 passes/two skips; Windows totals are 78/74/four. Preserve the historical skip-count correction and unavailable temporary SDK metadata limit.
+- [ ] Build matching native desktops and run actual WebKit/WebView2 and installed Chrome/Firefox P05 journeys. Keep response-header policy discovery and partitioned/FPI-cookie limits explicit.
 - [ ] Record the live-site matrix separately and review P05 acceptance. Per-instance format repair does not promise durable once-only repair across outer attempts.
 - Acceptance: controlled fixtures pass for direct media, HLS, DASH, cookies, referer, redirects, expiring URLs, and playlists. A separately recorded live-site matrix measures current compatibility.
 - Suggested commit: `feat(extension): add context-aware media discovery`.
