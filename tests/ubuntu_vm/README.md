@@ -43,6 +43,17 @@ overlay under `packaging/out/p04-native-clients-afl2yjvl/`. The original repaire
 disk, original guest disk and Noble cloud image are preserved. Recovery proves
 control availability. Subsequent [P04 native acceptance](../../HANDOFF.md#p04-native-client-acceptance-checkpoint--2026-11-16) passes GNOME/Wayland/WebKit and Chrome/Firefox journeys. Both apt timers are restored, exact temporary registrations removed, ext4 profiles/state preserved, and only the owned overlay stopped normally with exact QEMU exit observed. Recovered controls now record stopped state; original backing disks remain preserved. Reverify controls before any later authorized boot.
 
+The 2026-11-18 [P05 native core discovery](../../HANDOFF.md#p05-native-discovery-checkpoint--2026-11-18)
+uses fresh child `packaging/out/p05-native-d76euszz/guest-p05.qcow2` and authoritative
+`/home/azaz/.local/share/vidgrab-validation/ubuntu-p05-r7ldcc0x/vm.json`.
+Both apt timers are restored active and the child is stopped normally with exact
+QEMU exit observed (PID 3647036/starttime 9214225 absent). Its controls record
+`stopped-p05-native-discovery-validated`. The immediate post-pidfd `/proc` assertion
+raced reaping; preserve that failure and the later read-only exit audit. Original
+P04 controls and the three-file backing chain remain unchanged. Reverify this
+fresh stopped control/child/backing authority before a later authorized boot;
+never reuse an obsolete launch command or write the backing disks.
+
 ## Inputs and launch
 
 Create a fresh read-only `inputs/` directory containing these explicitly selected

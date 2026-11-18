@@ -392,10 +392,22 @@ def browser_journey(browser, desktop, native, base, fixture, screenshots):
     assert native.settings()['values']['max_concurrent']==6
     page.click('.download-defaults > summary') if not page.visible('#default-format') else None
     wait(lambda:page.value('#concurrent-downloads')=='6','native desktop receives browser defaults event')
+    page.script('''this.__nativeDefaultsInput = [];
+        document.querySelector('#default-format').addEventListener('input', event =>
+            this.__nativeDefaultsInput.push({type:event.type,trusted:event.isTrusted,value:event.target.value}));''')
     page.fill('#default-format',changed_format)
+    draft = page.script('''return {value:document.querySelector('#default-format').value,
+        save_disabled:document.querySelector('.defaults-form button.primary').disabled,
+        input:this.__nativeDefaultsInput};''')
+    (screenshots/(kind+'-desktop-draft.json')).write_text(json.dumps(draft,indent=2)+'\n')
+    assert draft['value'] == changed_format and not draft['save_disabled'], draft
     options.select('#input-max-concurrent','7')
     options.click('#btn-save-settings')
     options.has_text('#status-message','saved')
+    committed = wait(lambda:(value if (value:=native.settings())['values']['max_concurrent']==7 else None),
+        'the second browser defaults change commits before desktop conflict review')
+    (screenshots/(kind+'-desktop-commit.json')).write_text(json.dumps({'revision':committed['revision'],
+        'default_format':committed['values']['default_format'],'draft':page.value('#default-format')},indent=2)+'\n')
     page.has_text('body','Your edits are kept')
     assert page.value('#default-format')==changed_format
     page.button('Save defaults')
@@ -432,7 +444,7 @@ def browser_journey(browser, desktop, native, base, fixture, screenshots):
     page.fill('#media-url',protected)
     page.click('.download-form button.primary')
     pending=wait(lambda:native.job(protected,'waiting_for_auth'),'actual HTTP 403 enters fresh-auth wait',40)
-    page.has_text('body','Fresh cookies needed')
+    page.has_text('body','Fresh browser context needed')
     popup.click('[data-tab="queue"]')
     popup.button('Share fresh cookies')
     popup.has_text('#client-status','cookie forwarding')
@@ -505,6 +517,8 @@ def main():
         parser.add_argument('--'+name,type=Path,required=True)
     parser.add_argument('--browser',choices=('chrome','firefox','both'),default='both')
     parser.add_argument('--chrome-launcher',type=Path,help='Owned Windows task descriptor for the installed Chrome diagnostic token')
+    parser.add_argument('--discovery',action='store_true',help='Include actual P05 document/frame and context journeys')
+    parser.add_argument('--discovery-grants',action='store_true',help='Request and revoke actual optional permissions in the temporary extension')
     args=parser.parse_args()
     if os.name=='nt':
         if os.environ.get('COMPUTERNAME')!='DESKTOP-OSOIBNA' or os.environ.get('VIDGRAB_VALIDATION_VM_ISOLATED')!='1':
@@ -563,7 +577,7 @@ def main():
     from playwright.sync_api import sync_playwright
     try:
         with windows_registrations(manifests) if os.name=='nt' else nullcontext():
-            with sync_playwright() as playwright,media_fixture() as (base,fixture):
+            with sync_playwright() as playwright,media_fixture(discovery=args.discovery) as (base,fixture):
                 desktop=Desktop.__new__(Desktop)
                 desktop.__init__(args,environment,native,playwright)
                 receipt['desktop']={'webview':desktop.webview,'window':desktop.window,'ready':desktop.ready}
@@ -581,6 +595,11 @@ def main():
                     try:
                         browser=Browser.__new__(Browser)
                         browser.__init__(kind,args,environment,args.home,playwright,manifests)
+                        if args.discovery:
+                            from tests.native_discovery_journeys import discovery_journey
+                            receipt.setdefault('discovery', []).append(discovery_journey(
+                                browser,native,base,fixture,args.screenshots,grants=args.discovery_grants))
+                            checkpoint()
                         receipt['browsers'].append(browser_journey(browser,desktop,native,base,fixture,args.screenshots))
                         checkpoint()
                     except BaseException:

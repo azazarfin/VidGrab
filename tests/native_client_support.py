@@ -14,6 +14,7 @@ import threading
 import time
 from uuid import uuid4
 import wave
+from urllib.parse import parse_qs, urlsplit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -165,7 +166,7 @@ class Native:
 
 
 @contextmanager
-def media_fixture():
+def media_fixture(*, discovery=False):
     output = io.BytesIO()
     with wave.open(output, 'wb') as wav:
         wav.setparams((1, 2, 44100, 0, 'NONE', 'not compressed'))
@@ -186,10 +187,45 @@ def media_fixture():
 
         def serve(self, body):
             path = self.path.split('?', 1)[0]
+            origin = f'http://127.0.0.1:{self.server.server_port}/'
             authenticated = 'vidgrab_validation_session=fresh' in self.headers.get('Cookie', '')
             range_header = self.headers.get('Range')
             state['requests'].append({'method': self.command, 'path': path,
-                'authenticated': authenticated, 'range': range_header})
+                'authenticated': authenticated, 'range': range_header,
+                'origin_referer': self.headers.get('Referer') == origin,
+                'user_agent': bool(self.headers.get('User-Agent'))})
+            if discovery and path.startswith('/discovery/'):
+                pages = {
+                    '/discovery/watch': '''<!doctype html><meta name="referrer" content="origin">
+                        <title>VidGrab বাংলা document fixture</title>
+                        <video id="video" controls preload="none" width="300" height="180"
+                            src="/discovery-referer.wav?sig=a%2Fb+Z&amp;part=2&amp;part=1"></video>
+                        <audio id="audio" controls preload="none"><source src="/discovery-audio.wav" type="audio/wav"></audio>
+                        <iframe id="frame" src="/discovery/frame"></iframe>''',
+                    '/discovery/frame': '''<!doctype html><meta name="referrer" content="origin">
+                        <title>VidGrab frame fixture</title><video id="nested" preload="none"
+                            src="/discovery-frame.wav"></video>''',
+                    '/discovery/next': '<!doctype html><title>New document</title><p>Navigation fixture</p>',
+                    '/discovery/manifest.m3u8': '#EXTM3U\n#EXT-X-ENDLIST\n',
+                }
+                if path in pages:
+                    page = pages[path]
+                    browser = parse_qs(urlsplit(self.path).query).get('browser', [None])[0]
+                    if path == '/discovery/watch' and browser in ('chrome', 'firefox'):
+                        page = page.replace('/discovery-referer.wav?', '/' + browser + '-discovery-referer.wav?')
+                    data = page.encode('utf-8')
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/vnd.apple.mpegurl' if path.endswith('.m3u8') else 'text/html; charset=utf-8')
+                    self.send_header('Content-Length', str(len(data)))
+                    self.end_headers()
+                    if body:
+                        self.wfile.write(data)
+                    return
+            if discovery and path.endswith('-referer.wav') and self.headers.get('Referer') != origin:
+                self.send_response(403)
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
             if path == '/login':
                 data = b'<!doctype html><title>VidGrab local sign-in fixture</title><p>Signed in</p>'
                 self.send_response(200)

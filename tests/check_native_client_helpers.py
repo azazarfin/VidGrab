@@ -8,6 +8,7 @@ import sys
 from types import SimpleNamespace
 import unittest
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests.check_native_clients import INSTRUMENT
@@ -43,6 +44,39 @@ class DeliveryBoundaryTests(unittest.TestCase):
                     f'bytes {start}-{len(payload)-1}/{len(payload)}')
                 self.assertEqual(response.headers['ETag'], validator)
                 self.assertEqual(response.read(), payload[start:])
+
+    def test_discovery_media_requires_the_exact_origin_referer(self):
+        with media_fixture(discovery=True) as (base, fixture):
+            url = base + '/discovery-referer.wav?sig=a%2Fb+Z&part=2&part=1'
+            for referer in (None, base + '/discovery/watch', base + ':0/'):
+                headers = {'Referer': referer} if referer else {}
+                with self.assertRaises(HTTPError) as error:
+                    urlopen(Request(url, headers=headers), timeout=5)
+                try:
+                    self.assertEqual(error.exception.code, 403)
+                finally:
+                    error.exception.close()
+            with urlopen(Request(url, headers={'Referer': base + '/'}), timeout=5) as response:
+                self.assertEqual(response.read(4), b'RIFF')
+            self.assertTrue(fixture['requests'][-1]['origin_referer'])
+            self.assertFalse(fixture['requests'][-1]['authenticated'])
+
+    def test_discovery_page_exposes_distinct_document_and_frame_routes(self):
+        with media_fixture(discovery=True) as (base, _):
+            with urlopen(base + '/discovery/watch', timeout=5) as response:
+                document = response.read().decode('utf-8')
+            self.assertIn('sig=a%2Fb+Z&amp;part=2&amp;part=1', document)
+            self.assertIn('<meta name="referrer" content="origin">', document)
+            self.assertIn('src="/discovery/frame"', document)
+            with urlopen(base + '/discovery/frame', timeout=5) as response:
+                self.assertIn(b'/discovery-frame.wav', response.read())
+
+    def test_discovery_browsers_have_distinct_signed_media_and_output_names(self):
+        with media_fixture(discovery=True) as (base, _):
+            for browser in ('chrome', 'firefox'):
+                with urlopen(base + '/discovery/watch?browser=' + browser, timeout=5) as response:
+                    document = response.read().decode('utf-8')
+                self.assertIn('/' + browser + '-discovery-referer.wav?sig=a%2Fb+Z&amp;part=2&amp;part=1', document)
 
     def test_readonly_tauri_filters_only_an_actual_returned_reply(self):
         script = r"""
