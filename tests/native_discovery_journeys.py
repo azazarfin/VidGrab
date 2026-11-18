@@ -6,6 +6,22 @@ import json
 from tests.native_client_support import wait
 
 
+def visible_grants_journey(browser, native, base, screenshots, permission_input):
+    source = browser.open('popup/popup.html')
+    source.goto(base + '/discovery/next')
+    tab = wait(lambda: browser.background('''return new Promise(resolve =>
+        this.chrome.tabs.query({}, tabs => resolve(tabs.find(tab => tab.url === arguments[0]))));''',
+        base + '/discovery/next'), 'visible grant fixture tab identity')
+    key = 'detected_videos_' + str(tab['id'])
+
+    def candidates():
+        return browser.background('''return new Promise(resolve =>
+            this.chrome.storage.local.get(arguments[0], value => resolve(value[arguments[0]] || [])));''', key)
+
+    return optional_grants_journey(browser, native, source, base, candidates, screenshots,
+        permission_input=permission_input)
+
+
 def discovery_journey(browser, native, base, fixture, screenshots, *, grants=False):
     source = browser.open('popup/popup.html')
     document_url = base + '/discovery/watch?browser=' + browser.kind
@@ -161,7 +177,7 @@ def discovery_journey(browser, native, base, fixture, screenshots, *, grants=Fal
             'top navigation rejects stale context']}
 
 
-def optional_grants_journey(browser, native, source, base, candidates, screenshots):
+def optional_grants_journey(browser, native, source, base, candidates, screenshots, *, permission_input=None):
     options = browser.options
     settings = native.settings()['values']
     initial = browser.permissions(base)
@@ -181,7 +197,20 @@ def optional_grants_journey(browser, native, source, base, candidates, screensho
 
     try:
         options.click('[data-tab="tab-advanced"]')
+        if permission_input:
+            options.click('#chk-request-observation + .slider')
+            report['denial_input'] = permission_input(browser, 'deny')
+            wait(lambda: not options.script("return document.querySelector('#chk-request-observation').disabled"),
+                'denied browser permission request finishes')
+            denied = browser.permissions(base)
+            report['after_denial'] = denied
+            record()
+            assert not denied['request_observation_granted'] and not denied['navigation_granted'], report
+            assert not denied['request_observation_enabled'], report
+            report['checks'].append('visible native denial leaves grants and preference disabled')
         options.click('#chk-request-observation + .slider')
+        if permission_input:
+            report['consent_input'] = permission_input(browser, 'allow')
         wait(lambda: not options.script("return document.querySelector('#chk-request-observation').disabled"),
             'actual browser permission request finishes')
         granted = browser.permissions(base)
@@ -191,10 +220,33 @@ def optional_grants_journey(browser, native, source, base, candidates, screensho
         assert granted['request_observation_granted'] and granted['navigation_granted'], report
         assert granted['request_observation_enabled'], report
         browser.background('return this.vidGrabObservation.configure()')
+        if permission_input:
+            browser.background('''const scope=this;
+                scope.__grantDiagnostics={events:[],before:[],admissions:[]};
+                chrome.webRequest.onBeforeRequest.addListener(details => {
+                    scope.__grantDiagnostics.before.push({tab_id:details.tabId,frame_id:details.frameId,type:details.type});
+                },{urls:['http://*/*']});
+                chrome.webRequest.onHeadersReceived.addListener(details => {
+                    scope.__grantDiagnostics.events.push({tab_id:details.tabId,frame_id:details.frameId,
+                        document_id_present:Boolean(details.documentId),status:details.statusCode,
+                        content_type:details.responseHeaders?.find(h=>h.name.toLowerCase()==='content-type')?.value});
+                },{urls:['http://*/*']},['responseHeaders']);
+                const original=scope.vidGrabDiscovery.observe;
+                scope.vidGrabDiscovery.observe=async function(...args) {
+                    const entry={entered:true};scope.__grantDiagnostics.admissions.push(entry);
+                    try {const result=await original.apply(this,args);entry.returned=true;return result;}
+                    catch(error) {entry.error_name=error.name;throw error;}
+                };return true;''', base)
         source.goto(base + '/discovery/watch?browser=' + browser.kind)
         wait(lambda: len(candidates()) == 3, 'content detection after the actual permission request')
         fetch_manifest('enabled')
-        observed = wait(lambda: request_candidates(), 'actual granted response-header observation')
+        try:
+            observed = wait(lambda: request_candidates(), 'actual granted response-header observation')
+        except AssertionError:
+            if permission_input and browser.kind == 'chrome':
+                report['request_diagnostics'] = browser.background('return this.__grantDiagnostics || null')
+                record()
+            raise
         assert any(item['url'] == base + '/discovery/manifest.m3u8?cycle=enabled'
             and item['frame_url'] == base + '/discovery/watch?browser=' + browser.kind
             and item['browser_context']['frame_id'] == 0 for item in observed), observed
@@ -221,9 +273,20 @@ def optional_grants_journey(browser, native, source, base, candidates, screensho
         assert not request_candidates()
         report['after_revoke'] = revoked
         report['checks'].append('actual grant removal disables observation while the preference stays enabled')
+        if permission_input:
+            review = options
+            review.click('[data-tab="tab-advanced"]')
+            review.button('Test connection')
+            review.has_text('#permission-status', 'Request observation: not granted')
+            review.click('[data-tab="tab-advanced"]')
+            assert review.script("return document.querySelector('#chk-request-observation').checked")
+            review.screenshot(screenshots / (browser.kind + '-optional-revoked.png'))
+            report['revocation_review'] = 'actual options Test connection; removal used the browser API'
         assert native.settings()['values'] == settings
         report['result'] = 'passed'
     finally:
+        if permission_input:
+            report['request_diagnostics'] = browser.background('return this.__grantDiagnostics || null') or report.get('request_diagnostics')
         permission = browser.permissions(base)
         if permission['request_observation_granted'] or permission['navigation_granted']:
             browser.background('''return new Promise(resolve => this.chrome.permissions.remove(

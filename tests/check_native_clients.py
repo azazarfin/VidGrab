@@ -93,8 +93,10 @@ return true;
 class Browser:
     def __init__(self, kind, args, environment, root, playwright, manifests):
         self.kind, self.context, self.driver = kind, None, None
+        self.permission_events = getattr(args, 'permission_events', False)
         self.chrome_browser, self.chrome_task = None, None
         self.pages = []
+        self.network_guards = []
         self.sandbox = None
         self.root = root / kind
         self.root.mkdir()
@@ -122,14 +124,28 @@ class Browser:
                 assert any(p['type']=='browser' and int(p['id'])==self.chrome_task.audit['pid'] for p in processes)
             else:
                 self.context = playwright.chromium.launch_persistent_context(str(profile),
-                    executable_path=str(args.chrome), headless=True, env=environment, chromium_sandbox=True,
+                    executable_path=str(args.chrome), headless=not getattr(args, 'permission_events', False), env=environment, chromium_sandbox=True,
                     ignore_default_args=['--disable-extensions'],
                     args=['--enable-unsafe-extension-debugging','--disable-background-networking',
-                        '--disable-component-update','--no-first-run','--no-default-browser-check'])
-            self.context.route('**/*', lambda route: route.abort() if route.request.url.startswith(('http:', 'https:'))
-                and not route.request.url.startswith('http://127.0.0.1:') else route.continue_())
+                        '--disable-component-update','--no-first-run','--no-default-browser-check']
+                        + (['--force-renderer-accessibility'] if getattr(args, 'permission_events', False) else []))
+            if not getattr(args, 'permission_events', False):
+                self.context.route('**/*', lambda route: route.abort() if route.request.url.startswith(('http:', 'https:'))
+                    and not route.request.url.startswith('http://127.0.0.1:') else route.continue_())
             cdp = self.context.browser.new_browser_cdp_session()
             self.version = cdp.send('Browser.getVersion')
+            developer_mode = None
+            if self.permission_events:
+                manager = self.context.new_page()
+                manager.goto('chrome://extensions/')
+                toggle = manager.locator('extensions-toolbar #devMode')
+                before = toggle.evaluate('control => control.checked') is True
+                if not before:
+                    toggle.click()
+                wait(lambda: toggle.evaluate('control => control.checked') is True, 'actual private Chrome Developer mode control')
+                developer_mode = {'before': before, 'after': True}
+                manager.screenshot(path=str(self.root / 'developer-mode.png'))
+                manager.close()
             identifier = cdp.send('Extensions.loadUnpacked', {'path':str(ROOT/'extension')})['id']
             assert identifier == CHROME_ID, identifier
             self.worker = chrome_extension_worker(self.context, identifier)
@@ -137,6 +153,7 @@ class Browser:
                 'selected_url': self.worker.url,
                 'workers': [worker.url for worker in self.context.service_workers],
                 'targets': cdp.send('Target.getTargets')['targetInfos'],
+                'developer_mode': developer_mode,
             }
             self.bootstrap=[]
             def background_ready():
@@ -160,7 +177,7 @@ class Browser:
                         out.write(path,path.relative_to(extension))
             self.driver = WebDriver(args.geckodriver, environment, self.root/'gecko.log', arguments=('--allow-system-access',))
             self.version = self.driver.start({'browserName':'firefox','moz:firefoxOptions':{
-                'binary':str(args.firefox),'args':['-headless'], 'prefs':{
+                'binary':str(args.firefox),'args':[] if getattr(args, 'permission_events', False) else ['-headless'], 'prefs':{
                     'extensions.webextensions.uuids':json.dumps({FIREFOX_ID:FIREFOX_UUID}),
                     'app.update.auto':False,'app.update.enabled':False,'extensions.update.enabled':False,
                     'datareporting.policy.dataSubmissionEnabled':False,
@@ -185,7 +202,14 @@ class Browser:
         else:
             handle = self.driver.call('/window/new',{'type':'tab'})['handle']
             page = Page(driver=self.driver,handle=handle)
-        page.goto(self.base+path)
+        if self.permission_events and page.page:
+            guard = self.context.new_cdp_session(page.page)
+            guard.send('Network.enable')
+            guard.send('Network.setBlockedURLs', {'urls': ['https://fonts.googleapis.com/*', 'https://fonts.gstatic.com/*']})
+            self.network_guards.append(guard)
+            page.page.goto(self.base+path, wait_until='domcontentloaded')
+        else:
+            page.goto(self.base+path)
         self.pages.append(page)
         return page
 
@@ -519,7 +543,10 @@ def main():
     parser.add_argument('--chrome-launcher',type=Path,help='Owned Windows task descriptor for the installed Chrome diagnostic token')
     parser.add_argument('--discovery',action='store_true',help='Include actual P05 document/frame and context journeys')
     parser.add_argument('--discovery-grants',action='store_true',help='Request and revoke actual optional permissions in the temporary extension')
+    parser.add_argument('--permission-events',action='store_true',help='Visible Ubuntu browser dialogs with bounded stdin/QMP input acknowledgements')
     args=parser.parse_args()
+    if args.permission_events and (os.name == 'nt' or not args.discovery or not args.discovery_grants):
+        parser.error('--permission-events requires Ubuntu --discovery --discovery-grants')
     if os.name=='nt':
         if os.environ.get('COMPUTERNAME')!='DESKTOP-OSOIBNA' or os.environ.get('VIDGRAB_VALIDATION_VM_ISOLATED')!='1':
             parser.error('Select the explicitly isolated Windows validation VM')
@@ -595,12 +622,21 @@ def main():
                     try:
                         browser=Browser.__new__(Browser)
                         browser.__init__(kind,args,environment,args.home,playwright,manifests)
-                        if args.discovery:
+                        if args.permission_events:
+                            from tests.native_grant_input import permission_input
+                            from tests.native_discovery_journeys import visible_grants_journey
+                            receipt.setdefault('permission_journeys', []).append({'browser': kind,
+                                'version': browser.version, 'sandbox': browser.sandbox,
+                                'background_diagnostics': getattr(browser, 'background_diagnostics', None),
+                                'journey': visible_grants_journey(browser,native,base,args.screenshots,permission_input)})
+                            checkpoint()
+                        elif args.discovery:
                             from tests.native_discovery_journeys import discovery_journey
                             receipt.setdefault('discovery', []).append(discovery_journey(
                                 browser,native,base,fixture,args.screenshots,grants=args.discovery_grants))
                             checkpoint()
-                        receipt['browsers'].append(browser_journey(browser,desktop,native,base,fixture,args.screenshots))
+                        if not args.permission_events:
+                            receipt['browsers'].append(browser_journey(browser,desktop,native,base,fixture,args.screenshots))
                         checkpoint()
                     except BaseException:
                         receipt['media_requests']=list(fixture['requests'])
