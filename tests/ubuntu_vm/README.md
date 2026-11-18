@@ -54,6 +54,22 @@ P04 controls and the three-file backing chain remain unchanged. Reverify this
 fresh stopped control/child/backing authority before a later authorized boot;
 never reuse an obsolete launch command or write the backing disks.
 
+The 2026-11-19 [Chrome optional-event diagnosis](../../HANDOFF.md#p05-chrome-optional-event-diagnosis-checkpoint--2026-11-19)
+uses authoritative `/home/azaz/.local/share/vidgrab-validation/ubuntu-p05-events-lv77voda/vm.json`
+and fresh `packaging/out/p05-chrome-events-9goglttl/guest-events-2.qcow2`.
+It is stopped after normal poweroff (QEMU 3000138/starttime 13206484 absent).
+The failed first child is retained separately. Append additional diagnostic PCI
+devices after existing devices: inserting one before the NIC changed its slot
+and stalled inherited network startup. Keep both read-only shares and restricted
+networking. Reverify all six backing files and previous stopped controls before
+boot. The guest's `D /tmp` boot-removal rule means historical temporary trees may
+be unavailable in a fresh boot; preserve verified archives and immutable backing
+images rather than reconstructing missing profiles/state/media. The original
+6,414-file archive and new 706-file archive both verify. Current host libsoup
+bytes differ from the historical SDK witness; no host SDK rebuild ran. Three
+new runtime trees are archived before two exact registration removals and timer
+restoration. Standalone Chrome permission acceptance remains open.
+
 ## Inputs and launch
 
 Create a fresh read-only `inputs/` directory containing these explicitly selected
