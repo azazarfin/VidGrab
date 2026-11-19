@@ -679,3 +679,16 @@ Exit zero means the runner completed and released its isolated authority; inspec
 Parent diagnostic counters observe probes and surfaced worker errors; child wire traffic is not instrumented.
 
 Exit zero means the harness completed and released isolated authority, not that every compatibility row matched. Preserve source-1's failed final-audit reports, separate closed audits and all source-2 cleanup/mount-path failures in the [download checkpoint](VALIDATION.md#p05-public-live-download-checkpoint--2026-11-19). HLS host/Windows and separate direct-defaults media pass; other live worker rows remain failed. Source-3 fixes the audit column/connection and typed reply reporting; its full five-row network invocation was not rerun. No production repair or native/browser/playlist/signed-in acceptance follows.
+
+## Opt-in in-worker live download diagnostics
+
+`tests/check_live_worker_diagnostics.py` instruments the unchanged `backend.engine.worker` subprocess in memory through `--observe-worker` (patching `backend.engine.execution.entry_command` only inside the test process) while preserving `ProcessDownloadExecutor` → `worker_owner` → `worker` process trees, Job Objects and identity checks. It runs the four previously failing public download cases sequentially with the same 120-second/64 MiB guards and writes allowlisted redacted worker telemetry (stages, HTTP method/status counts, symbolic `errno`, fragment counters, `ffmpeg`/`ffprobe` exit codes/allowlisted stderr signals and allowlisted error frames) without modifying any production file:
+
+```sh
+.venv/bin/python -B -m tests.check_live_worker_diagnostic_helpers
+.venv/bin/python -B -m tests.check_live_worker_diagnostics \
+  --allow-public-network --tools /absolute/path/to/engine/_internal/tools \
+  --output /absolute/path/to/fresh/live-worker-diagnostics
+```
+
+The [worker-diagnostic checkpoint](VALIDATION.md#p05-public-live-worker-diagnostic-checkpoint--2026-11-19) confirms Ubuntu HLS fails because bundled Ubuntu `ffprobe` exits `-11` (`SIGSEGV`) during `FFmpegPostProcessor.get_metadata_object`, DASH completes and full-decodes on Ubuntu/Windows while hitting the 120-second guard on host after 98 sequential `HEAD` + 75 sequential `GET` requests, YouTube fails on request 3 (`GET:403` → `AUTH_REQUIRED`) everywhere, and MDN probe-quality enqueue returns typed `FORMAT_UNAVAILABLE` everywhere. No production repair or native/browser/playlist/signed-in acceptance follows from this diagnostic harness.
