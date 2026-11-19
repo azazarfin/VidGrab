@@ -46,6 +46,38 @@ class PermissionInputTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             select_button([{**node, 'enabled': False}], 'deny')
 
+    def test_manager_revocation_is_forwarded_only_for_firefox(self):
+        from tests import check_native_grants
+        arguments = getattr(check_native_grants, 'journey_arguments', None)
+        self.assertTrue(callable(arguments), 'Ubuntu manager-revocation forwarding is missing')
+        original = ['--discovery', '--discovery-grants', '--permission-events', '--browser', 'firefox']
+        self.assertEqual(arguments('firefox', False), original)
+        self.assertEqual(arguments('firefox', True), original + ['--browser-manager-revocation'])
+        for browser in ('chrome', 'both'):
+            with self.subTest(browser=browser), self.assertRaises(ValueError):
+                arguments(browser, True)
+            self.assertEqual(arguments(browser, False), original[:-1] + [browser])
+
+    def test_diagnostic_source_requires_the_bound_readonly_mount(self):
+        from tests import check_native_grants
+        validate = getattr(check_native_grants, 'validate_source_mount', None)
+        self.assertTrue(callable(validate), 'Diagnostic source mount validation is missing')
+        source, manifest = Path('/mnt/probes/source-1'), Path('/mnt/probes/source-1-files.json')
+        mount = 'local,id=probes,path=/owned/inputs,security_model=none,readonly=on'
+        device = 'virtio-9p-pci,fsdev=probes,mount_tag=probes'
+        vm = {'diagnostic_inputs': '/owned/inputs', 'launch_command': ['-fsdev', mount, '-device', device]}
+        validate(source, manifest, vm)
+        validate(Path('/mnt/inputs/source-1'), Path('/mnt/inputs/source-1-files.json'), {})
+        for invalid in [{**vm, 'launch_command': []}, {**vm, 'diagnostic_inputs': '/foreign'},
+                {**vm, 'launch_command': ['-fsdev', mount.replace('readonly=on', 'readonly=off'), '-device', device]}]:
+            with self.subTest(vm=invalid), self.assertRaises(AssertionError):
+                validate(source, manifest, invalid)
+        for path in (Path('/mnt/foreign/source-1'), Path('/mnt/probes/../foreign/source-1')):
+            with self.subTest(source=path), self.assertRaises(AssertionError):
+                validate(path, manifest, vm)
+        with self.assertRaises(AssertionError):
+            validate(source, Path('/mnt/inputs/source-1-files.json'), vm)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

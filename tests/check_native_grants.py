@@ -20,6 +20,28 @@ from tests.check_gnome_pointer import QMP
 from tests.native_grant_input import permission_button
 
 
+def journey_arguments(browser, manager_revocation):
+    if manager_revocation and browser != 'firefox':
+        raise ValueError('--browser-manager-revocation requires --browser firefox')
+    arguments = ['--discovery', '--discovery-grants', '--permission-events', '--browser', browser]
+    if manager_revocation:
+        arguments.append('--browser-manager-revocation')
+    return arguments
+
+
+def validate_source_mount(source, manifest, vm):
+    assert '..' not in source.parts and '..' not in manifest.parts
+    if source.is_relative_to('/mnt/inputs'):
+        assert manifest.is_relative_to('/mnt/inputs')
+        return
+    assert source.is_relative_to('/mnt/probes') and manifest.is_relative_to('/mnt/probes')
+    mount = 'local,id=probes,path=' + vm['diagnostic_inputs'] + ',security_model=none,readonly=on'
+    launch = vm['launch_command']
+    assert any(launch[index:index + 2] == ['-fsdev', mount] for index in range(len(launch)))
+    assert any(launch[index:index + 2] == ['-device', 'virtio-9p-pci,fsdev=probes,mount_tag=probes']
+        for index in range(len(launch)))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('vm', 'manifest', 'report', 'screenshots'):
@@ -28,7 +50,13 @@ def main():
             'guest-screenshots', 'chrome', 'firefox', 'geckodriver', 'node'):
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--browser', choices=('chrome', 'firefox', 'both'), default='both')
+    parser.add_argument('--browser-manager-revocation', action='store_true',
+        help='Use the visible Firefox Add-ons manager to revoke navigation permission')
     args = parser.parse_args()
+    try:
+        command = journey_arguments(args.browser, args.browser_manager_revocation)
+    except ValueError as error:
+        parser.error(str(error))
     vm = json.loads(args.vm.read_text())
     control = Path(vm['control_dir'])
     if args.vm.resolve().parent != control or control.stat().st_mode & 0o077 \
@@ -48,10 +76,9 @@ def main():
     repo = Path(__file__).resolve().parents[1]
     for name in ('tests/check_native_grants.py', 'tests/native_grant_input.py'):
         assert hashlib.sha256((repo / name).read_bytes()).hexdigest() == manifest['files'][name]
-    assert Path(args.source).is_relative_to('/mnt/inputs') and Path(args.guest_manifest).is_relative_to('/mnt/inputs')
+    validate_source_mount(Path(args.source), Path(args.guest_manifest), vm)
     assert Path(args.home).is_relative_to('/tmp') or Path(args.home).is_relative_to('/home/vidgrabtest/validation')
     args.screenshots.mkdir(parents=True, mode=0o700)
-    command = ['--discovery', '--discovery-grants', '--permission-events', '--browser', args.browser]
     for name in ('bundle', 'app', 'home', 'chrome', 'firefox', 'geckodriver'):
         command.extend(['--' + name, getattr(args, name)])
     command.extend(['--report', args.guest_report, '--screenshots', args.guest_screenshots])
@@ -75,8 +102,11 @@ runpy.run_path(sys.argv[0],run_name='__main__')'''
         'source_manifest_sha256': hashlib.sha256(args.manifest.read_bytes()).hexdigest(),
         'limits': ['owned native Ubuntu VM; temporary profiles and development extension',
             'Chrome QMP keyboard and Firefox native AT-SPI button actions',
-            'QMP tablet browser focus; actual grant removal uses the browser API',
-            'no physical-input, browser-manager revocation, Windows or live-site claim']}
+            'QMP tablet browser focus; navigation removal uses the visible Firefox manager'
+                if args.browser_manager_revocation else 'QMP tablet browser focus; actual grant removal uses the browser API',
+            'remaining API grants are removed separately by the original finally boundary'
+                if args.browser_manager_revocation else 'no browser-manager revocation claim',
+            'no physical-input, Windows or live-site claim']}
     qmp = QMP(control)
     errors = (args.screenshots / 'guest-stderr.log').open('xb')
     try:
