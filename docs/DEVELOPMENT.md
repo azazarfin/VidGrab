@@ -659,3 +659,23 @@ The six defaults cover extractor, direct MP4, HLS, DASH, playlist and unsupporte
 The [diagnostic checkpoint](VALIDATION.md#p05-public-live-diagnostic-checkpoint--2026-11-19) preserves the original unavailable sample and changing W3C 200/403 outcomes; separate controls pass metadata checks on all three runtimes. No production repair or download acceptance follows. Signed-in execution remains pending by user choice.
 
 Exit zero means the runner completed and released its isolated authority; inspect each row's `assessment` for compatibility. External mismatches remain recorded and do not trigger another probe. This is outside deterministic unittest discovery and does not enqueue/download, exercise a frozen probe or validate browser/native behavior. The [dated matrix](LIVE_COMPATIBILITY.md) records failures and the signed-in row pending by user choice.
+
+## Opt-in bounded public downloads
+
+`tests/check_live_downloads.py` uses actual v1 probes/enqueue/owned workers in fresh retained state/media outside the repository. Its five defaults cover the named YouTube/MDN/HLS/DASH samples and unsupported HTML. Playlist and signed-in downloads are pending. Run from the source root with the existing verified bundled tools:
+
+```sh
+.venv/bin/python -B -m tests.check_live_download_helpers
+.venv/bin/python -B -m tests.check_live_downloads \
+  --allow-public-network --tools /absolute/path/to/engine/_internal/tools \
+  --output /absolute/path/to/fresh/live-downloads
+.venv/bin/python -B -m tests.check_live_downloads --direct-defaults \
+  --allow-public-network --tools /absolute/path/to/engine/_internal/tools \
+  --output /absolute/path/to/fresh/direct-defaults
+```
+
+`--direct-defaults` executes a separately named direct-MP4 lane with explicitly selected `best` and no probe-quality binding. It does not replay a rejected selection automatically. The 120-second/64 MiB guard samples every 250 ms, stops on first retry/auth state and cancels once through v1 with joined worker exit; it is not a hard wire-byte ceiling. Concrete completed outputs receive bundled ffprobe, full FFmpeg decode, duration checks when metadata supplies duration and stable-byte hashes. All state/media remain for review; reports omit source/extracted URLs, titles, job/probe IDs, paths and raw errors.
+
+Parent diagnostic counters observe probes and surfaced worker errors; child wire traffic is not instrumented.
+
+Exit zero means the harness completed and released isolated authority, not that every compatibility row matched. Preserve source-1's failed final-audit reports, separate closed audits and all source-2 cleanup/mount-path failures in the [download checkpoint](VALIDATION.md#p05-public-live-download-checkpoint--2026-11-19). HLS host/Windows and separate direct-defaults media pass; other live worker rows remain failed. Source-3 fixes the audit column/connection and typed reply reporting; its full five-row network invocation was not rerun. No production repair or native/browser/playlist/signed-in acceptance follows.
