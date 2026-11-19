@@ -705,3 +705,17 @@ The [worker-diagnostic checkpoint](VALIDATION.md#p05-public-live-worker-diagnost
 ```
 
 The [playlist checkpoint](VALIDATION.md#p05-public-live-playlist-checkpoint--2026-11-19) confirms parent expansion commits two children cleanly on all three runtimes (`GET:200`, `POST:200`), followed by one child hitting `GET:403` → `AUTH_REQUIRED` and the concurrently launched sibling hitting `request_budget.acquire` → `ADMISSION_LIMITED` under `MAX_PER_HOST=1`, with one parent cancel cleanly joining all three workers and releasing all authority. Signed-in execution remains pending by user choice.
+
+## Opt-in read-only bundled `ffprobe`/`ffmpeg` `gconv` diagnosis
+
+`tests/check_live_ffprobe_diagnostics.py` inspects the bundled `ffprobe` and `ffmpeg` binaries (`backend.engine.resources.check_components`) against an explicit existing MPEG-TS sample completely offline, checks embedded static-glibc/multiarch `gconv` markers and system `gconv-modules.cache` presence, and runs read-only `ffprobe` JSON, `ffprobe -v trace`, and `ffmpeg -f null -` with `GCONV_PATH` unset, empty (`""`) and pointing to a nonexistent directory:
+
+```sh
+.venv/bin/python -B -m tests.check_live_ffprobe_diagnostic_helpers
+.venv/bin/python -B -m tests.check_live_ffprobe_diagnostics \
+  --tools /absolute/path/to/engine/_internal/tools \
+  --sample /absolute/path/to/mpegts-sample.mp4 \
+  --output /absolute/path/to/fresh/live-ffprobe-diagnosis
+```
+
+The [ffprobe-diagnostic checkpoint](VALIDATION.md#p05-public-live-ffprobe-diagnostic-checkpoint--2026-11-20) confirms why Debian 8 static `7.0.2-static` `ffprobe`/`ffmpeg` crash (`-11` `SIGSEGV`) at MPEG-TS DVB SDT descriptor `0x48` on Ubuntu 24.04.5 (`/usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache` glibc 2.39 format) while Fedora (`/usr/lib64/gconv/`) and Windows PE (`gyan.dev` 7.0.2) exit `0`, and confirms immediate `0`-exit recovery in Ubuntu when `GCONV_PATH` is isolated. Next: replace the Linux FFmpeg pin with BtbN `n7.1.5` (glibc 2.28 dynamic) and re-validate Ubuntu HLS.
