@@ -692,3 +692,16 @@ Exit zero means the harness completed and released isolated authority, not that 
 ```
 
 The [worker-diagnostic checkpoint](VALIDATION.md#p05-public-live-worker-diagnostic-checkpoint--2026-11-19) confirms Ubuntu HLS fails because bundled Ubuntu `ffprobe` exits `-11` (`SIGSEGV`) during `FFmpegPostProcessor.get_metadata_object`, DASH completes and full-decodes on Ubuntu/Windows while hitting the 120-second guard on host after 98 sequential `HEAD` + 75 sequential `GET` requests, YouTube fails on request 3 (`GET:403` → `AUTH_REQUIRED`) everywhere, and MDN probe-quality enqueue returns typed `FORMAT_UNAVAILABLE` everywhere. No production repair or native/browser/playlist/signed-in acceptance follows from this diagnostic harness.
+
+## Opt-in bounded public playlist downloads
+
+`tests/check_live_playlists.py` executes the pinned public two-entry YouTube playlist (`playlist_items: "1-2"`, `options.is_playlist: true`, `format_id: "best"`) through v1 `probes.create` and `downloads.enqueue` with actual owned workers, per-worker redacted `--observe-worker` telemetry, 120-second/64 MiB group guards and parent group cancellation:
+
+```sh
+.venv/bin/python -B -m tests.check_live_playlist_helpers
+.venv/bin/python -B -m tests.check_live_playlists \
+  --allow-public-network --tools /absolute/path/to/engine/_internal/tools \
+  --output /absolute/path/to/fresh/live-playlists
+```
+
+The [playlist checkpoint](VALIDATION.md#p05-public-live-playlist-checkpoint--2026-11-19) confirms parent expansion commits two children cleanly on all three runtimes (`GET:200`, `POST:200`), followed by one child hitting `GET:403` → `AUTH_REQUIRED` and the concurrently launched sibling hitting `request_budget.acquire` → `ADMISSION_LIMITED` under `MAX_PER_HOST=1`, with one parent cancel cleanly joining all three workers and releasing all authority. Signed-in execution remains pending by user choice.
