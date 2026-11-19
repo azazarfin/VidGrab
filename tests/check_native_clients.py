@@ -542,10 +542,16 @@ def main():
     parser.add_argument('--browser',choices=('chrome','firefox','both'),default='both')
     parser.add_argument('--chrome-launcher',type=Path,help='Owned Windows task descriptor for the installed Chrome diagnostic token')
     parser.add_argument('--discovery',action='store_true',help='Include actual P05 document/frame and context journeys')
+    parser.add_argument('--format-review',action='store_true',help='Separate real HTTP failures and native format/context review lane')
+    parser.add_argument('--format-expiry',action='store_true',help='Wait for the unchanged 300-second probe TTL in the review lane')
     parser.add_argument('--discovery-grants',action='store_true',help='Request and revoke actual optional permissions in the temporary extension')
     parser.add_argument('--permission-events',action='store_true',help='Visible selected-VM browser dialogs with bounded native input')
     parser.add_argument('--browser-manager-revocation',action='store_true',help='Use the visible Firefox Add-ons manager to revoke navigation permission')
     args=parser.parse_args()
+    if args.format_expiry and not args.format_review:
+        parser.error('--format-expiry requires --format-review')
+    if args.format_review and (args.discovery or args.permission_events):
+        parser.error('--format-review is a separate lane from discovery and permission input')
     if args.permission_events and (not args.discovery or not args.discovery_grants):
         parser.error('--permission-events requires --discovery --discovery-grants')
     if args.browser_manager_revocation and (not args.permission_events or args.browser != 'firefox'):
@@ -607,7 +613,7 @@ def main():
     from playwright.sync_api import sync_playwright
     try:
         with windows_registrations(manifests) if os.name=='nt' else nullcontext():
-            with sync_playwright() as playwright,media_fixture(discovery=args.discovery) as (base,fixture):
+            with sync_playwright() as playwright,media_fixture(discovery=args.discovery,review_failures=args.format_review) as (base,fixture):
                 desktop=Desktop.__new__(Desktop)
                 desktop.__init__(args,environment,native,playwright)
                 receipt['desktop']={'webview':desktop.webview,'window':desktop.window,'ready':desktop.ready}
@@ -625,7 +631,12 @@ def main():
                     try:
                         browser=Browser.__new__(Browser)
                         browser.__init__(kind,args,environment,args.home,playwright,manifests)
-                        if args.permission_events:
+                        if args.format_review:
+                            from tests.native_review_journeys import review_journey
+                            receipt.setdefault('format_review', []).append(review_journey(
+                                browser,native,base,fixture,args.screenshots,args.bundle,expiry=args.format_expiry))
+                            checkpoint()
+                        elif args.permission_events:
                             if os.name == 'nt':
                                 from tests.native_windows_grant_input import permission_input
                             else:
@@ -646,7 +657,7 @@ def main():
                             receipt.setdefault('discovery', []).append(discovery_journey(
                                 browser,native,base,fixture,args.screenshots,grants=args.discovery_grants))
                             checkpoint()
-                        if not args.permission_events:
+                        if not args.permission_events and not args.format_review:
                             receipt['browsers'].append(browser_journey(browser,desktop,native,base,fixture,args.screenshots))
                         checkpoint()
                     except BaseException:

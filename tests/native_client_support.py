@@ -166,7 +166,7 @@ class Native:
 
 
 @contextmanager
-def media_fixture(*, discovery=False):
+def media_fixture(*, discovery=False, review_failures=False):
     output = io.BytesIO()
     with wave.open(output, 'wb') as wav:
         wav.setparams((1, 2, 44100, 0, 'NONE', 'not compressed'))
@@ -194,6 +194,21 @@ def media_fixture(*, discovery=False):
                 'authenticated': authenticated, 'range': range_header,
                 'origin_referer': self.headers.get('Referer') == origin,
                 'user_agent': bool(self.headers.get('User-Agent'))})
+            if review_failures and path == '/review-throttle.wav':
+                self.send_response(429)
+                self.send_header('Retry-After', '60')
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
+            if review_failures and path == '/review-unsupported.wav':
+                data = b'<!doctype html><title>No media here</title>'
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.send_header('Content-Length', str(len(data)))
+                self.end_headers()
+                if body:
+                    self.wfile.write(data)
+                return
             if discovery and path.startswith('/discovery/'):
                 pages = {
                     '/discovery/watch': '''<!doctype html><meta name="referrer" content="origin">
