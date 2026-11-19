@@ -543,10 +543,13 @@ def main():
     parser.add_argument('--chrome-launcher',type=Path,help='Owned Windows task descriptor for the installed Chrome diagnostic token')
     parser.add_argument('--discovery',action='store_true',help='Include actual P05 document/frame and context journeys')
     parser.add_argument('--discovery-grants',action='store_true',help='Request and revoke actual optional permissions in the temporary extension')
-    parser.add_argument('--permission-events',action='store_true',help='Visible Ubuntu browser dialogs with bounded stdin/QMP input acknowledgements')
+    parser.add_argument('--permission-events',action='store_true',help='Visible selected-VM browser dialogs with bounded native input')
+    parser.add_argument('--browser-manager-revocation',action='store_true',help='Use the visible Firefox Add-ons manager to revoke navigation permission')
     args=parser.parse_args()
-    if args.permission_events and (os.name == 'nt' or not args.discovery or not args.discovery_grants):
-        parser.error('--permission-events requires Ubuntu --discovery --discovery-grants')
+    if args.permission_events and (not args.discovery or not args.discovery_grants):
+        parser.error('--permission-events requires --discovery --discovery-grants')
+    if args.browser_manager_revocation and (not args.permission_events or args.browser != 'firefox'):
+        parser.error('--browser-manager-revocation requires --permission-events --browser firefox')
     if os.name=='nt':
         if os.environ.get('COMPUTERNAME')!='DESKTOP-OSOIBNA' or os.environ.get('VIDGRAB_VALIDATION_VM_ISOLATED')!='1':
             parser.error('Select the explicitly isolated Windows validation VM')
@@ -623,12 +626,20 @@ def main():
                         browser=Browser.__new__(Browser)
                         browser.__init__(kind,args,environment,args.home,playwright,manifests)
                         if args.permission_events:
-                            from tests.native_grant_input import permission_input
+                            if os.name == 'nt':
+                                from tests.native_windows_grant_input import permission_input
+                            else:
+                                from tests.native_grant_input import permission_input
                             from tests.native_discovery_journeys import visible_grants_journey
+                            revocation_input = None
+                            if args.browser_manager_revocation:
+                                from tests.native_browser_permission_review import revoke_navigation
+                                revocation_input = revoke_navigation
                             receipt.setdefault('permission_journeys', []).append({'browser': kind,
                                 'version': browser.version, 'sandbox': browser.sandbox,
                                 'background_diagnostics': getattr(browser, 'background_diagnostics', None),
-                                'journey': visible_grants_journey(browser,native,base,args.screenshots,permission_input)})
+                                'journey': visible_grants_journey(browser,native,base,args.screenshots,permission_input,
+                                    revocation_input=revocation_input)})
                             checkpoint()
                         elif args.discovery:
                             from tests.native_discovery_journeys import discovery_journey

@@ -6,7 +6,7 @@ import json
 from tests.native_client_support import wait
 
 
-def visible_grants_journey(browser, native, base, screenshots, permission_input):
+def visible_grants_journey(browser, native, base, screenshots, permission_input, *, revocation_input=None):
     source = browser.open('popup/popup.html')
     source.goto(base + '/discovery/next')
     tab = wait(lambda: browser.background('''return new Promise(resolve =>
@@ -19,7 +19,7 @@ def visible_grants_journey(browser, native, base, screenshots, permission_input)
             this.chrome.storage.local.get(arguments[0], value => resolve(value[arguments[0]] || [])));''', key)
 
     return optional_grants_journey(browser, native, source, base, candidates, screenshots,
-        permission_input=permission_input)
+        permission_input=permission_input, revocation_input=revocation_input)
 
 
 def discovery_journey(browser, native, base, fixture, screenshots, *, grants=False):
@@ -177,7 +177,7 @@ def discovery_journey(browser, native, base, fixture, screenshots, *, grants=Fal
             'top navigation rejects stale context']}
 
 
-def optional_grants_journey(browser, native, source, base, candidates, screenshots, *, permission_input=None):
+def optional_grants_journey(browser, native, source, base, candidates, screenshots, *, permission_input=None, revocation_input=None):
     options = browser.options
     settings = native.settings()['values']
     initial = browser.permissions(base)
@@ -262,8 +262,12 @@ def optional_grants_journey(browser, native, source, base, candidates, screensho
         report['checks'].append('grants remain distinct from the disabled preference')
         options.click('#chk-request-observation + .slider')
         wait(lambda: browser.permissions(base)['request_observation_enabled'], 'observer enabled with existing grants')
-        removed = browser.background('''return new Promise(resolve => this.chrome.permissions.remove(
-            {permissions:['webRequest','webNavigation']}, resolve));''')
+        if revocation_input:
+            report['browser_manager_revoke'] = revocation_input(browser, screenshots)
+            removed = True
+        else:
+            removed = browser.background('''return new Promise(resolve => this.chrome.permissions.remove(
+                {permissions:['webRequest','webNavigation']}, resolve));''')
         assert removed is True
         revoked = wait(lambda: (value if not (value := browser.permissions(base))['request_observation_granted'] else None),
             'actual optional permissions revoked')
@@ -281,7 +285,8 @@ def optional_grants_journey(browser, native, source, base, candidates, screensho
             review.click('[data-tab="tab-advanced"]')
             assert review.script("return document.querySelector('#chk-request-observation').checked")
             review.screenshot(screenshots / (browser.kind + '-optional-revoked.png'))
-            report['revocation_review'] = 'actual options Test connection; removal used the browser API'
+            report['revocation_review'] = 'actual options Test connection; removal used ' + (
+                'the visible browser manager' if revocation_input else 'the browser API')
         assert native.settings()['values'] == settings
         report['result'] = 'passed'
     finally:
