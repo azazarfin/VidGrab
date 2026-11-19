@@ -3,12 +3,12 @@
   "target": "x86_64-unknown-linux-gnu",
   "assets": {
     "ffmpeg": {
-      "version": "7.0.2",
-      "file": "ffmpeg.tar.xz",
-      "url": "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz",
-      "sha256": "abda8d77ce8309141f83ab8edf0596834087c52467f6badf376a6a2a4c87cf67",
+      "version": "n7.1.5-12-g1fdbca85aa",
+      "file": "ffmpeg-n7.1.5-12-g1fdbca85aa-linux64-gpl-7.1.tar.xz",
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/ffmpeg-n7.1.5-12-g1fdbca85aa-linux64-gpl-7.1.tar.xz",
+      "sha256": "c1e6caf48923dd8e6bc5e54d51ba70c321175b8162ae9c414c392990e72f0e79",
       "license": "GPL-3.0",
-      "provenance": "Downloaded over HTTPS and checked against the upstream archive MD5 on 2026-11-04; SHA-256 pins these exact bytes."
+      "provenance": "Downloaded over HTTPS on 2026-11-20 and verified against the upstream autobuild-2026-07-31-14-10 checksums.sha256; glibc 2.28 dynamic ELF replaces static 7.0.2 that crashed under Ubuntu glibc 2.39 gconv cache."
     },
     "deno": {
       "version": "2.9.8",

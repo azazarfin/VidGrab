@@ -98,6 +98,44 @@ class ComponentPackagingTests(OfflineTestCase):
         self.assertEqual(sorted(path.name for path in directory.iterdir()), ["GPLv3.ffmpeg.txt", "ffmpeg", "ffprobe"])
         self.assertFalse((self.root.parent / "escaped").exists())
 
+    def test_btbn_tar_extracts_binaries_and_license_txt(self):
+        fetcher = self.fetcher()
+        archive = self.root / "btbn.tar.xz"
+        with tarfile.open(archive, "w:xz") as output:
+            for name, contents in (
+                ("ffmpeg-n7.1.5-12-g1fdbca85aa-linux64-gpl-7.1/bin/ffmpeg", b"btbn-ffmpeg"),
+                ("ffmpeg-n7.1.5-12-g1fdbca85aa-linux64-gpl-7.1/bin/ffprobe", b"btbn-ffprobe"),
+                ("ffmpeg-n7.1.5-12-g1fdbca85aa-linux64-gpl-7.1/LICENSE.txt", b"GPLv3-btbn"),
+                ("ffmpeg-n7.1.5-12-g1fdbca85aa-linux64-gpl-7.1/doc/ffplay.html", b"ignored"),
+            ):
+                entry = tarfile.TarInfo(name)
+                entry.size = len(contents)
+                output.addfile(entry, io.BytesIO(contents))
+        directory = self.root / "tools"
+        directory.mkdir()
+        fetcher.extract_ffmpeg(archive, directory)
+        self.assertEqual(sorted(path.name for path in directory.iterdir()), ["GPLv3.ffmpeg.txt", "ffmpeg", "ffprobe"])
+        self.assertEqual((directory / "GPLv3.ffmpeg.txt").read_bytes(), b"GPLv3-btbn")
+        self.assertEqual((directory / "ffmpeg").read_bytes(), b"btbn-ffmpeg")
+        self.assertEqual((directory / "ffprobe").read_bytes(), b"btbn-ffprobe")
+
+    def test_linux_tar_rejects_ambiguous_or_missing_license(self):
+        fetcher = self.fetcher()
+        for label, entries in (
+            ("missing", (("bin/ffmpeg", b"f"), ("bin/ffprobe", b"p"))),
+            ("ambiguous", (("bin/ffmpeg", b"f"), ("bin/ffprobe", b"p"), ("LICENSE.txt", b"a"), ("GPLv3.txt", b"b"))),
+        ):
+            archive = self.root / f"{label}.tar.xz"
+            with tarfile.open(archive, "w:xz") as output:
+                for name, contents in entries:
+                    entry = tarfile.TarInfo(name)
+                    entry.size = len(contents)
+                    output.addfile(entry, io.BytesIO(contents))
+            directory = self.root / f"tools-{label}"
+            directory.mkdir()
+            with self.assertRaisesRegex(ValueError, "Expected one regular"):
+                fetcher.extract_ffmpeg(archive, directory)
+
     def test_windows_zip_extracts_only_selected_tools_and_license(self):
         fetcher = self.fetcher()
         archive = self.root / "windows.zip"

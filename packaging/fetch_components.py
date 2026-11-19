@@ -48,13 +48,18 @@ def extract_ffmpeg(archive, directory, *, target="x86_64-unknown-linux-gnu"):
         raise ValueError("Unsupported FFmpeg target")
     # Select regular files by exact basename, rather than extracting tar paths.
     with tarfile.open(archive, "r:xz") as source:
-        for name, destination in (("ffmpeg", "ffmpeg"), ("ffprobe", "ffprobe"), ("GPLv3.txt", "GPLv3.ffmpeg.txt")):
-            matches = [entry for entry in source.getmembers() if entry.isfile() and Path(entry.name).name == name]
+        members = [entry for entry in source.getmembers() if entry.isfile()]
+        for candidates, destination in (
+            (("ffmpeg",), "ffmpeg"),
+            (("ffprobe",), "ffprobe"),
+            (("LICENSE.txt", "GPLv3.txt"), "GPLv3.ffmpeg.txt"),
+        ):
+            matches = [entry for entry in members if Path(entry.name).name in candidates]
             if len(matches) != 1:
-                raise ValueError(f"Expected one regular {name} in the pinned archive")
+                raise ValueError(f"Expected one regular {' or '.join(candidates)} in the pinned archive")
             with source.extractfile(matches[0]) as contents:
                 (directory / destination).write_bytes(contents.read())
-            if name in ("ffmpeg", "ffprobe"):
+            if destination in ("ffmpeg", "ffprobe"):
                 (directory / destination).chmod(0o755)
 
 
