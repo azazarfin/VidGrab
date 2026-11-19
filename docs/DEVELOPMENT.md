@@ -629,3 +629,19 @@ Attempt 1/source-2 passes native Deny/Allow, request observation, preference sep
 Use `--format-review --format-expiry` only in a fresh selected validation VM runtime. Scoped Ubuntu Chrome attempt 3/source-3, complete Firefox attempt 4/source-4 and Windows both browsers attempt 5/source-5 pass six native checks each and five scoped accepted jobs per target. Four new/six existing helpers pass; all 132 runtime inputs remain unchanged. The unchanged 300-second TTL is tested by an actual 302-second wait; Windows also honors hostname-wide 429 cooldown. Final enclosing bounds are separate from the original 25-/40-second checks.
 
 [Validation](VALIDATION.md#p05-native-format-review-checkpoint--2026-11-19) and [HANDOFF](../HANDOFF.md#p05-native-format-review-checkpoint--2026-11-19) bind the five snapshots, verified 848/3,380-file archives, exact seven-registration/nine-task cleanup and eventual normal Ubuntu shutdown after the original 60-second exit bound fails. Preserve the failed combined Ubuntu report, Windows localhost ENGINE_UNAVAILABLE with unproven cause, literal paths versus Ubuntu font-rendering limits, and unrelated public Optimization Guide traffic versus public-media/live-site scope. P05 remains open for Chrome fresh-grant support/UX and the separate live-site matrix; no production repair is selected.
+
+## Opt-in public live probes
+
+`tests/check_live_sites.py` runs actual source v1 probes in fresh isolated state with the scheduler disabled. It retains that state outside the repository and writes redacted rows as each probe finishes. It uses existing hash-verified bundled tools and requires an explicit public-network flag:
+
+```sh
+uv sync --frozen --group packaging
+.venv/bin/python -B -m tests.check_live_site_helpers
+.venv/bin/python -B -m tests.check_live_sites \
+  --allow-public-network --tools /absolute/path/to/engine/_internal/tools \
+  --output /absolute/path/to/fresh/live-probe-reports
+```
+
+The six defaults cover extractor, direct MP4, HLS, DASH, playlist and unsupported HTML. `--cases /absolute/path/to/cases.json` accepts an external array of at most sixteen objects with exactly `id`, `media_type`, `authentication`, `url` and `expected`. Use non-sensitive lowercase slug IDs; authentication must be `public`; expectations are `media`, `playlist` or `unsupported`. Credential-bearing URLs, cookies and signed-in execution are rejected. Input URLs and extracted metadata are not copied into reports.
+
+Exit zero means the runner completed and released its isolated authority; inspect each row's `assessment` for compatibility. External mismatches remain recorded and do not trigger another probe. This is outside deterministic unittest discovery and does not enqueue/download, exercise a frozen probe or validate browser/native behavior. The [dated matrix](LIVE_COMPATIBILITY.md) records failures and the signed-in row pending by user choice.
