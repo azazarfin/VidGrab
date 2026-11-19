@@ -226,7 +226,9 @@ def restart_browser(browser, source, args, environment, playwright, identifier, 
     finally:
         cdp.detach()
     after = browser.permissions(source.page.url)
-    assert after == before
+    assert before['request_observation_restart_required'] is True
+    assert after['request_observation_restart_required'] is False
+    assert {**after, 'request_observation_restart_required': True} == before
     record({'phase': 'same-granted-profile-reopened', 'version': version, 'permissions': after,
         'inventory': standalone_inventory(browser, identifier), 'profile_identity': identity,
         'launcher': browser.chrome_task.audit, 'extension_loaded_again': False})

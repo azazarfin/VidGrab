@@ -27,6 +27,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const detectedList = document.getElementById("detected-list");
   const detectedEmpty = document.getElementById("detected-empty");
+  const detectedRestartNotice = document.getElementById("detected-restart-notice");
+  const detectedRestartSettingsBtn = document.getElementById("detected-restart-settings-btn");
 
   // Batch / Selection DOM Elements
   const detectedActions = document.getElementById("detected-actions");
@@ -147,9 +149,21 @@ document.addEventListener("DOMContentLoaded", () => {
     try { window.vidGrabMediaUrl(value); return true; } catch { return false; }
   }
 
+  async function refreshPermissions() {
+    if (!detectedRestartNotice) return;
+    try {
+      const permissions = await api.getPermissions();
+      detectedRestartNotice.hidden = !permissions?.request_observation_restart_required;
+    } catch {
+      detectedRestartNotice.hidden = true;
+    }
+  }
+  if (detectedRestartSettingsBtn) detectedRestartSettingsBtn.addEventListener("click", () => settingsBtn.click());
+
   let ffmpegAvailable = false;
   function connect() {
     api.connect();
+    void refreshPermissions();
     void api.getPending().then(pending => {
       reviewRequestBtn.hidden = pending.length === 0;
       if (pending.length) showClientStatus("A previous request may have succeeded. Review downloads before submitting the same request again.", true);
@@ -1170,6 +1184,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (areaName === "local" && activeTabId !== null && changes[`detected_videos_${activeTabId}`]) {
         renderDetectedVideos(changes[`detected_videos_${activeTabId}`].newValue || []);
       }
+      if (areaName === "local" && changes.requestObservationEnabled) void refreshPermissions();
     });
   }
 

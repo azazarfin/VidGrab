@@ -2,11 +2,65 @@
 (function (global) {
   'use strict';
   const media = global.vidGrabMedia, pending = new Map();
-  let enabled = null, configuring = Promise.resolve();
+  const SESSION_KEY = 'vidgrabRequestObservationSession';
+  const isChromium = () => !chrome.runtime?.getURL?.('').startsWith('moz-extension://');
+  let enabled = null, configuring = Promise.resolve(), sessionQueue = Promise.resolve(), memorySession = null;
+
+  function readSession() {
+    if (!chrome.storage?.session?.get) return Promise.resolve(memorySession);
+    return new Promise(resolve => chrome.storage.session.get([SESSION_KEY], value =>
+      resolve(chrome.runtime.lastError ? memorySession : value?.[SESSION_KEY] || null)));
+  }
+
+  function writeSession(state) {
+    memorySession = state;
+    if (!chrome.storage?.session?.set) return Promise.resolve();
+    return new Promise(resolve => chrome.storage.session.set({ [SESSION_KEY]: state }, () => resolve()));
+  }
+
+  async function syncSessionState(granted) {
+    const current = await readSession();
+    let next;
+    if (!isChromium()) {
+      next = { wasUngranted: !granted, pendingRestart: false, delivered: false };
+    } else if (!current) {
+      next = { wasUngranted: !granted, pendingRestart: false, delivered: false };
+    } else if (!granted) {
+      next = { wasUngranted: true, pendingRestart: false, delivered: false };
+    } else if (current.delivered) {
+      next = { wasUngranted: false, pendingRestart: false, delivered: true };
+    } else if (current.wasUngranted || current.pendingRestart) {
+      next = { wasUngranted: false, pendingRestart: true, delivered: false };
+    } else {
+      next = { wasUngranted: false, pendingRestart: false, delivered: false };
+    }
+    if (!current || current.wasUngranted !== next.wasUngranted || current.pendingRestart !== next.pendingRestart || current.delivered !== next.delivered) {
+      await writeSession(next);
+    }
+    return next;
+  }
+
+  function syncSession(granted) {
+    const run = sessionQueue.then(() => syncSessionState(granted), () => syncSessionState(granted));
+    sessionQueue = run.catch(() => {});
+    return run;
+  }
+
+  function markDelivered() {
+    const run = sessionQueue.then(async () => {
+      const current = await readSession();
+      if (!isChromium() || (current && current.delivered && !current.pendingRestart)) return;
+      await writeSession({ wasUngranted: false, pendingRestart: false, delivered: true });
+    }, () => {});
+    sessionQueue = run.catch(() => {});
+    return run;
+  }
 
   async function observe(details) {
     if (!enabled || !Number.isInteger(details.tabId) || details.tabId < 0 || !Number.isInteger(details.frameId)
-        || details.frameId < 0 || !media.httpUrl(details.url) || (details.statusCode && (details.statusCode < 200 || details.statusCode >= 300))) return;
+        || details.frameId < 0 || !media.httpUrl(details.url)) return;
+    await markDelivered();
+    if (details.statusCode && (details.statusCode < 200 || details.statusCode >= 300)) return;
     const mime = media.contentType(details.responseHeaders?.find(item => item.name.toLowerCase() === 'content-type')?.value);
     const path = media.httpUrl(details.url).pathname;
     if (mime === 'video/mp2t' || /\.(?:ts|m4s|m4f|cmfv|cmfa)$/iu.test(path) || !media.mediaHint(details.url, mime)) return;
@@ -57,6 +111,6 @@
   chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes.requestObservationEnabled) void configure(); });
   chrome.permissions?.onAdded?.addListener(() => { void configure(); });
   chrome.permissions?.onRemoved?.addListener(() => { void configure(); });
-  global.vidGrabObservation = { configure };
+  global.vidGrabObservation = { configure, syncSession };
   void configure();
 })(globalThis);

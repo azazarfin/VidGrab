@@ -73,8 +73,11 @@ class ClientFixture:
                             "cookieForwardingEnabled": False, "requestObservationEnabled": False, "notificationPreference": "none"}
         self.permission_requests = []
         self.permission_approval = True
+        self.is_firefox = False
+        self._was_ungranted = True
+        self._pending_restart = False
         self.permissions = {"cookies_granted": True, "native_granted": True, "notifications_granted": True,
-                            "site_granted": True, "permission_api_available": True, "origins": ["<all_urls>"]}
+                            "request_observation_granted": False, "site_granted": True, "permission_api_available": True, "origins": ["<all_urls>"]}
         self.contexts = {}
         self.context_calls = []
         self.now = time.time()
@@ -98,6 +101,9 @@ class ClientFixture:
         self.client = self.stack.enter_context(TestClient(self.engine, base_url="http://127.0.0.1:43210",
                                                          headers={"Authorization": "Bearer " + "a" * 64}))
         self.engine.app.state.control.component_versions = {"ffmpeg": "fixture", "yt_dlp": "2026.6.9"}
+
+    def restart_browser(self):
+        self._pending_restart = False
 
     def close(self):
         self.stack.close()
@@ -154,12 +160,28 @@ class ClientFixture:
                 self.preferences.pop(key, None)
             return None
         if kind == "companion.permissions":
+            granted = bool(self.permissions.get("request_observation_granted"))
+            enabled = bool(self.preferences["requestObservationEnabled"])
+            restart_required = bool(not self.is_firefox and enabled and granted and self._pending_restart)
             return {"ok": True, "data": {**self.permissions, "cookie_forwarding_enabled": self.preferences["cookieForwardingEnabled"],
-                                          "request_observation_enabled": self.preferences["requestObservationEnabled"],
+                                          "request_observation_enabled": enabled,
+                                          "request_observation_restart_required": restart_required,
                                           "notification_preference": self.preferences["notificationPreference"]}}
         if kind == "fixture.permissions.request":
             self.permission_requests.append(message["value"])
-            self.permissions["request_observation_granted"] = self.permission_approval
+            previous = bool(self.permissions.get("request_observation_granted"))
+            next_granted = bool(self.permission_approval)
+            self.permissions["request_observation_granted"] = next_granted
+            if not self.is_firefox:
+                if not next_granted:
+                    self._was_ungranted = True
+                    self._pending_restart = False
+                elif not previous or self._was_ungranted:
+                    self._was_ungranted = False
+                    self._pending_restart = True
+            else:
+                self._was_ungranted = not next_granted
+                self._pending_restart = False
             return self.permission_approval
         if kind == "companion.pending":
             return {"ok": True, "data": self.pending}

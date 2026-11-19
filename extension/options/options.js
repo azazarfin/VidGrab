@@ -53,6 +53,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnReloadSettings = document.getElementById("btn-reload-settings");
   const btnCheckRequest = document.getElementById("btn-check-request");
   const permissionStatus = document.getElementById("permission-status");
+  const requestObservationRestartNotice = document.getElementById("request-observation-restart-notice");
   const requestNotices = document.getElementById("request-notices");
   const requestNoticeList = document.getElementById("request-notice-list");
   const requestNoticeStatus = document.getElementById("request-notice-status");
@@ -174,10 +175,18 @@ document.addEventListener("DOMContentLoaded", () => {
         ? "Cookies: " + (permissions.cookies_granted ? "granted" : "not granted")
           + " · Native messaging: " + (permissions.native_granted ? "granted" : "not granted")
           + " · Notifications: " + (permissions.notifications_granted ? "granted" : "not granted")
-          + " · Request observation: " + (permissions.request_observation_granted ? "granted" : "not granted")
+          + " · Request observation: " + (permissions.request_observation_granted
+            ? (permissions.request_observation_restart_required ? "granted (restart Chrome to activate)" : "granted")
+            : "not granted")
           + ". Site access: " + (permissions.origins.length ? permissions.origins.join(", ") : "none")
         : "This browser cannot report its granted permissions.";
-    } catch { permissionStatus.textContent = "Browser permissions could not be read."; }
+      if (requestObservationRestartNotice) requestObservationRestartNotice.hidden = !permissions?.request_observation_restart_required;
+      return permissions;
+    } catch {
+      permissionStatus.textContent = "Browser permissions could not be read.";
+      if (requestObservationRestartNotice) requestObservationRestartNotice.hidden = true;
+      return null;
+    }
   }
 
   async function refreshNotices() {
@@ -438,9 +447,13 @@ document.addEventListener("DOMContentLoaded", () => {
       await new Promise((resolve, reject) => chrome.storage.local.set({ requestObservationEnabled: enabled },
         () => chrome.runtime.lastError ? reject(new Error("Browser preference could not be saved.")) : resolve()));
       chkRequestObservation.checked = enabled;
-      await refreshPermissions();
+      const permissions = await refreshPermissions();
       showStatus(requested && !granted ? "Permission was not granted. Media element discovery remains available."
-        : enabled ? "Media request observation enabled for sites the browser permits." : "Media request observation disabled.",
+        : enabled
+          ? (permissions?.request_observation_restart_required
+            ? "Permission granted. Restart Chrome to activate request metadata observation; page discovery works now."
+            : "Media request observation enabled for sites the browser permits.")
+          : "Media request observation disabled.",
         requested && !granted ? "error" : "success");
     } catch (error) {
       chkRequestObservation.checked = !requested;

@@ -172,7 +172,9 @@ def restart_browser(browser, source, args, environment, playwright, identifier, 
     finally:
         cdp.detach()
     after = browser.permissions(source.page.url)
-    assert after == before
+    assert before['request_observation_restart_required'] is True
+    assert after['request_observation_restart_required'] is False
+    assert {**after, 'request_observation_restart_required': True} == before
     inventory = standalone_inventory(browser, identifier)
     record({'phase': 'same-granted-profile-reopened', 'pid': restarted_pid, 'version': browser.version,
         'permissions': after, 'inventory': inventory, 'sandbox': browser.sandbox,

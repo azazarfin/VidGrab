@@ -141,37 +141,164 @@ def popup_selection(browser, root):
             context.close()
 
 
+def _measure_notice_contrast(page, selectors):
+    return page.evaluate("""(selectors) => {
+      const channels = color => color.match(/[\\d.]+/g).map(Number);
+      const composite = (top, base) => top.slice(0, 3).map((v, i) => v * (top[3] ?? 1) + base[i] * (1 - (top[3] ?? 1)));
+      const luminance = rgb => rgb.map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)
+        .reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
+      const ratio = (a, b) => (Math.max(luminance(a), luminance(b)) + .05) / (Math.min(luminance(a), luminance(b)) + .05);
+      const background = el => {
+        const layers = [];
+        for (let node = el; node; node = node.parentElement) layers.push(channels(getComputedStyle(node).backgroundColor));
+        return layers.reverse().reduce((base, top) => composite(top, base), [7, 7, 12]);
+      };
+      return selectors.map(selector => {
+        const el = document.querySelector(selector);
+        if (!el || !el.getClientRects().length) return { selector, visible: false, contrast: 0, fontSize: 0 };
+        const style = getComputedStyle(el);
+        return {
+          selector,
+          visible: true,
+          fontSize: parseFloat(style.fontSize),
+          contrast: ratio(channels(style.color), background(el)),
+          rightClipped: el.getBoundingClientRect().right > innerWidth + 1 || el.scrollWidth > el.clientWidth + 1,
+        };
+      });
+    }""", selectors)
+
+
 def observation_preference(browser, root):
+    notice_metrics = {}
     with ClientFixture(root / "service") as fixture:
         context = browser.new_context(viewport={"width": 1100, "height": 820})
         fixture.install(context)
         context.route("**/*", lambda route: route.continue_() if route.request.url.startswith("file:") else route.abort())
         page = context.new_page()
+        popup = None
         try:
             page.goto((Path.cwd() / "extension/options/options.html").as_uri())
             page.wait_for_load_state("networkidle")
             page.locator('[data-tab="tab-advanced"]').click()
             toggle = page.get_by_label("Observe media requests", exact=True)
+            restart_notice = page.locator("#request-observation-restart-notice")
             expect(toggle).to_have_count(1)
+            expect(restart_notice).to_be_hidden()
+
+            # Before granting, Popup Detected notice stays hidden even though CSS sets display: flex when visible.
+            popup = context.new_page()
+            popup.set_viewport_size({"width": 320, "height": 580})
+            popup.goto((Path.cwd() / "extension/popup/popup.html").as_uri())
+            popup.wait_for_load_state("networkidle")
+            popup.locator('[data-tab="detected"]').click()
+            expect(popup.locator("#detected-restart-notice")).to_be_hidden()
+            popup.close()
+            popup = None
+
             assert fixture.preferences["requestObservationEnabled"] is False
             fixture.permission_approval = False
             toggle.locator("..").click()
             expect(toggle).not_to_be_checked()
+            expect(restart_notice).to_be_hidden()
             assert fixture.preferences["requestObservationEnabled"] is False
             fixture.permission_approval = True
             toggle.locator("..").click()
             expect(toggle).to_be_checked()
             page.wait_for_function("document.querySelector('#permission-status').textContent.includes('Request observation: granted')")
+            expect(restart_notice).to_be_visible()
+            expect(restart_notice).to_contain_text("Restart Chrome")
+            expect(page.locator("#status-message")).to_contain_text("Restart Chrome")
             assert fixture.preferences["requestObservationEnabled"] is True
             assert fixture.permission_requests == [{"permissions": ["webRequest", "webNavigation"]}] * 2
+
+            # Verify visible Options notice contrast, font size and zero overflow at narrow 390x844 viewport.
+            page.set_viewport_size({"width": 390, "height": 844})
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            options_samples = _measure_notice_contrast(page, ["#request-observation-restart-notice", "#request-observation-restart-notice strong"])
+            for sample in options_samples:
+                assert sample["visible"] and not sample["rightClipped"]
+                assert sample["fontSize"] >= 12, sample
+                assert sample["contrast"] >= 4.5, sample
+            notice_metrics["options_min_contrast"] = min(sample["contrast"] for sample in options_samples)
+            page.set_viewport_size({"width": 1100, "height": 820})
+
+            # Persistent notice remains visible independently of transient footer status and in Popup Detected panel without overflow.
+            popup = context.new_page()
+            popup.set_viewport_size({"width": 320, "height": 580})
+            popup.goto((Path.cwd() / "extension/popup/popup.html").as_uri())
+            popup.wait_for_load_state("networkidle")
+            popup.locator('[data-tab="detected"]').click()
+            popup_notice = popup.locator("#detected-restart-notice")
+            expect(popup_notice).to_be_visible()
+            expect(popup_notice).to_contain_text("Restart Chrome")
+            assert popup.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            popup_samples = _measure_notice_contrast(
+                popup, ["#detected-restart-notice p", "#detected-restart-notice strong", "#detected-restart-settings-btn"]
+            )
+            for sample in popup_samples:
+                assert sample["visible"] and not sample["rightClipped"]
+                assert sample["fontSize"] >= 12, sample
+                assert sample["contrast"] >= 4.5, sample
+            notice_metrics["popup_min_contrast"] = min(sample["contrast"] for sample in popup_samples)
+            popup.screenshot(path=str(root / "popup-chrome-restart-notice.png"))
+            popup.close()
+            popup = None
+
             toggle.locator("..").click()
             expect(toggle).not_to_be_checked()
+            expect(restart_notice).to_be_hidden()
             assert fixture.preferences["requestObservationEnabled"] is False
-            assert not any(item["operation"] == "settings.patch" for item in fixture.requests)
+            toggle.locator("..").click()
+            expect(toggle).to_be_checked()
+            expect(restart_notice).to_be_visible()
             page.screenshot(path=str(root / "observation-preferences.png"))
-            return {"declined_keeps_off": True, "explicit_grants": True, "browser_only": True}
+
+            # Full browser restart clears the Chrome fresh-grant restart notice in both Options and Popup.
+            fixture.restart_browser()
+            page.reload()
+            page.wait_for_load_state("networkidle")
+            page.locator('[data-tab="tab-advanced"]').click()
+            expect(restart_notice).to_be_hidden()
+            popup = context.new_page()
+            popup.goto((Path.cwd() / "extension/popup/popup.html").as_uri())
+            popup.wait_for_load_state("networkidle")
+            popup.locator('[data-tab="detected"]').click()
+            expect(popup.locator("#detected-restart-notice")).to_be_hidden()
+            popup.close()
+            popup = None
+            assert not any(item["operation"] == "settings.patch" for item in fixture.requests)
         finally:
+            if popup is not None:
+                popup.close()
             context.close()
+
+    with ClientFixture(root / "firefox") as ff_fixture:
+        ff_fixture.is_firefox = True
+        context = browser.new_context(viewport={"width": 1100, "height": 820})
+        ff_fixture.install(context)
+        context.route("**/*", lambda route: route.continue_() if route.request.url.startswith("file:") else route.abort())
+        page = context.new_page()
+        popup = None
+        try:
+            page.goto((Path.cwd() / "extension/options/options.html").as_uri())
+            page.wait_for_load_state("networkidle")
+            page.locator('[data-tab="tab-advanced"]').click()
+            toggle = page.get_by_label("Observe media requests", exact=True)
+            toggle.locator("..").click()
+            expect(toggle).to_be_checked()
+            expect(page.locator("#request-observation-restart-notice")).to_be_hidden()
+            popup = context.new_page()
+            popup.goto((Path.cwd() / "extension/popup/popup.html").as_uri())
+            popup.wait_for_load_state("networkidle")
+            popup.locator('[data-tab="detected"]').click()
+            expect(popup.locator("#detected-restart-notice")).to_be_hidden()
+            popup.close()
+            popup = None
+        finally:
+            if popup is not None:
+                popup.close()
+            context.close()
+    return {"declined_keeps_off": True, "explicit_grants": True, "browser_only": True, "chrome_restart_notice": True, **notice_metrics}
 
 
 def expired_format_review(browser, root):

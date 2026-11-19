@@ -124,9 +124,14 @@
         }),
       ]);
       const parsed = url ? mediaUrl(url) : null;
+      const requestObservationEnabled = preferences.requestObservationEnabled === true;
+      const requestObservationGranted = permissions?.permissions?.includes('webRequest') === true
+        && permissions?.permissions?.includes('webNavigation') === true;
+      const session = await global.vidGrabObservation?.syncSession?.(requestObservationGranted);
       return { cookie_forwarding_enabled: preferences.cookieForwardingEnabled === true,
-        request_observation_enabled: preferences.requestObservationEnabled === true,
-        request_observation_granted: permissions?.permissions?.includes('webRequest') === true && permissions?.permissions?.includes('webNavigation') === true,
+        request_observation_enabled: requestObservationEnabled,
+        request_observation_granted: requestObservationGranted,
+        request_observation_restart_required: Boolean(requestObservationEnabled && requestObservationGranted && session?.pendingRestart),
         navigation_granted: permissions?.permissions?.includes('webNavigation') === true,
         notification_preference: preferences.notificationPreference || 'both', permission_api_available: permissions !== null,
         cookies_granted: permissions?.permissions?.includes('cookies') === true,

@@ -72,6 +72,10 @@
 
       <!-- Detected Panel -->
       <section class="tab-content" id="panel-detected">
+        <div class="detected-restart-notice" id="detected-restart-notice" role="status" hidden>
+          <p><strong>Restart Chrome to activate request observation:</strong> Page detection works now; close all Chrome windows and reopen Chrome once to capture request metadata.</p>
+          <button class="text-button" id="detected-restart-settings-btn" type="button">Settings</button>
+        </div>
         <div class="panel-header-actions" id="detected-actions" style="display: none; justify-content: space-between; align-items: center; padding: 6px 8px; background: rgba(255,255,255,0.02); border-radius: 6px; margin-bottom: 8px; border: 1px solid rgba(255,255,255,0.04);">
           <div style="display: flex; align-items: center; gap: 8px;">
             <label class="checkbox-container" style="margin: 0; padding-left: 20px;">

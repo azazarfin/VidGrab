@@ -315,6 +315,11 @@ input[type="range"] {
   font-size: 14px;
 }
 
+.observation-restart-notice {
+  margin: 12px 0;
+  overflow-wrap: anywhere;
+}
+
 .argument-warning {
   display: flex;
   align-items: center;

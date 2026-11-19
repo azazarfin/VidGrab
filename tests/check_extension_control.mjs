@@ -14,7 +14,7 @@ const plain = value => JSON.parse(JSON.stringify(value));
 const id = 'ikjpekhbbaehdhigakbahlhafaojbjpm';
 const url = 'https://fixture.invalid/media.mp4';
 
-function environment(browser, storage = {}, engine = {}) {
+function environment(browser, storage = {}, engine = {}, sessionStorage = {}) {
   const browserId = browser === 'firefox' ? 'vidgrab@azaz.local' : id;
   const base = browser === 'firefox' ? 'moz-extension://fixture-extension/' : 'chrome-extension://' + id + '/';
   const listeners = {};
@@ -65,18 +65,24 @@ function environment(browser, storage = {}, engine = {}) {
         callback({ spike_version: 1, id: outer.id, ok: true, data: outer.op === 'v1.request'
           ? { protocol_version: 1, request_id: request.request_id, ok: true, data } : data });
       } },
-    storage: { onChanged: event('storage'), local: {
-      get(keys, callback) { callback(keys === null ? plain(storage) : Object.fromEntries((Array.isArray(keys) ? keys : [keys]).map(key => [key, storage[key]]))); },
-      set(values, callback) {
-        if (++storageWrites === engine.failStorageWrite) {
-          chrome.runtime.lastError = {message: 'Fixture storage failure'};
-          callback?.(); chrome.runtime.lastError = null; return;
-        }
-        Object.assign(storage, plain(values)); callback?.();
+    storage: { onChanged: event('storage'),
+      local: {
+        get(keys, callback) { callback(keys === null ? plain(storage) : Object.fromEntries((Array.isArray(keys) ? keys : [keys]).map(key => [key, storage[key]]))); },
+        set(values, callback) {
+          if (++storageWrites === engine.failStorageWrite) {
+            chrome.runtime.lastError = {message: 'Fixture storage failure'};
+            callback?.(); chrome.runtime.lastError = null; return;
+          }
+          Object.assign(storage, plain(values)); callback?.();
+        },
+        remove(keys, callback) { for (const key of (Array.isArray(keys) ? keys : [keys])) delete storage[key]; callback?.(); },
       },
-      remove(keys, callback) { for (const key of (Array.isArray(keys) ? keys : [keys])) delete storage[key]; callback?.(); },
-    } },
-    permissions: { getAll(callback) { callback({ permissions: engine.permissions ?? ['cookies', 'nativeMessaging', 'notifications'], origins: engine.origins ?? ['<all_urls>'] }); }, onAdded: event('permissions'), onRemoved: event('permissions') },
+      session: {
+        get(keys, callback) { callback(keys === null ? plain(sessionStorage) : Object.fromEntries((Array.isArray(keys) ? keys : [keys]).map(key => [key, sessionStorage[key]]))); },
+        set(values, callback) { Object.assign(sessionStorage, plain(values)); callback?.(); },
+        remove(keys, callback) { for (const key of (Array.isArray(keys) ? keys : [keys])) delete sessionStorage[key]; callback?.(); },
+      } },
+    permissions: { getAll(callback) { callback({ permissions: engine.permissions ?? ['cookies', 'nativeMessaging', 'notifications'], origins: engine.origins ?? ['<all_urls>'] }); }, onAdded: event('permissions-added'), onRemoved: event('permissions-removed') },
     cookies: { getAll(filter, callback) { cookieReads.push(filter); callback(engine.cookies ?? [{ domain: '.fixture.invalid', path: '/', name: 'session', value: 'cookie-secret', secure: true,
       httpOnly: true, storeId: 'ignored', expirationDate: Date.now() / 1000 + 3600 }]); },
       getAllCookieStores(callback) { callback([{ id: engine.storeId || '0', tabIds: [0] }]); } },
@@ -117,7 +123,7 @@ function environment(browser, storage = {}, engine = {}) {
     for (const listener of listeners.message || []) asynchronous = listener(value, sender, resolve) || asynchronous;
     if (!asynchronous) resolve(undefined);
   });
-  return { context, chrome, storage, engine, calls, cookieReads, listeners, notifications, message };
+  return { context, chrome, storage, sessionStorage, engine, calls, cookieReads, listeners, notifications, message };
 }
 
 for (const browser of ['chrome', 'firefox']) {
@@ -623,5 +629,66 @@ for (const browser of ['chrome', 'firefox']) {
     await assert.rejects(e.context.vidGrabAPI.retryDownload(e.engine.jobs[0]), error => error.code === 'REQUEST_OUTCOME_UNKNOWN');
     assert.equal(e.cookieReads.length, before);
     assert.equal(e.calls.filter(item => item.params.operation === 'downloads.action').length, 0);
+  });
+  test(browser + ': fresh request-observation grants track Chrome session restart requirement without automatic reload or replay', async () => {
+    const manifest = JSON.parse(readFileSync('extension/' + (browser === 'chrome' ? 'manifest.json' : 'manifest.firefox.json'), 'utf8'));
+    assert.ok(manifest.optional_permissions.includes('webRequest'));
+    assert.ok(manifest.optional_permissions.includes('webNavigation'));
+    assert.ok(!manifest.permissions.includes('webRequest'));
+    assert.ok(!manifest.permissions.includes('webNavigation'));
+
+    // Fresh session where grants are absent -> not restart-required yet.
+    const e = environment(browser, { requestObservationEnabled: false }, { tabUrl: pageUrl, permissions: ['cookies', 'nativeMessaging'] });
+    await e.context.vidGrabObservation.configure();
+    let permission = await e.context.vidGrabAPI.getPermissions(mediaUrl);
+    assert.equal(permission.request_observation_restart_required, false);
+
+    // Fresh grant transition false -> true inside the same session.
+    e.engine.permissions = ['cookies', 'nativeMessaging', 'webRequest', 'webNavigation'];
+    e.storage.requestObservationEnabled = true;
+    for (const listener of e.listeners['permissions-added'] || []) await listener({ permissions: ['webRequest', 'webNavigation'] });
+    for (const listener of e.listeners.storage || []) await listener({ requestObservationEnabled: { oldValue: false, newValue: true } }, 'local');
+    await e.context.vidGrabObservation.configure();
+    permission = await e.context.vidGrabAPI.getPermissions(mediaUrl);
+    assert.equal(permission.request_observation_granted, true);
+    assert.equal(permission.request_observation_restart_required, browser === 'chrome');
+    assert.equal(e.calls.length, 0, 'Fresh-grant tracking must never invoke companion mutations');
+
+    // Service worker wake/restart in the same browser session preserves pending restart state.
+    const sameSession = environment(browser, e.storage, e.engine, e.sessionStorage);
+    await sameSession.context.vidGrabObservation.configure();
+    permission = await sameSession.context.vidGrabAPI.getPermissions(mediaUrl);
+    assert.equal(permission.request_observation_restart_required, browser === 'chrome');
+
+    // Toggling preference off hides notice; turning back on in the same session restores it.
+    sameSession.storage.requestObservationEnabled = false;
+    for (const listener of sameSession.listeners.storage || []) await listener({ requestObservationEnabled: { oldValue: true, newValue: false } }, 'local');
+    await sameSession.context.vidGrabObservation.configure();
+    assert.equal((await sameSession.context.vidGrabAPI.getPermissions(mediaUrl)).request_observation_restart_required, false);
+    sameSession.storage.requestObservationEnabled = true;
+    for (const listener of sameSession.listeners.storage || []) await listener({ requestObservationEnabled: { oldValue: false, newValue: true } }, 'local');
+    await sameSession.context.vidGrabObservation.configure();
+    assert.equal((await sameSession.context.vidGrabAPI.getPermissions(mediaUrl)).request_observation_restart_required, browser === 'chrome');
+
+    // Receiving an actual onHeadersReceived observation clears the restart notice (self-heals).
+    await sameSession.listeners['headers-received'][0]({ tabId: 0, frameId: 7, documentId: 'document-7', statusCode: 200,
+      type: 'xmlhttprequest', url: 'https://cdn.fixture.invalid/manifest.m3u8',
+      responseHeaders: [{ name: 'Content-Type', value: 'application/vnd.apple.mpegurl' }] });
+    assert.equal((await sameSession.context.vidGrabAPI.getPermissions(mediaUrl)).request_observation_restart_required, false);
+
+    // Revoking and re-granting in Chrome marks restart required again; full browser restart (fresh empty sessionStorage) clears it.
+    sameSession.engine.permissions = ['cookies', 'nativeMessaging'];
+    for (const listener of sameSession.listeners['permissions-removed'] || []) await listener({ permissions: ['webRequest', 'webNavigation'] });
+    await sameSession.context.vidGrabObservation.configure();
+    assert.equal((await sameSession.context.vidGrabAPI.getPermissions(mediaUrl)).request_observation_restart_required, false);
+    sameSession.engine.permissions = ['cookies', 'nativeMessaging', 'webRequest', 'webNavigation'];
+    for (const listener of sameSession.listeners['permissions-added'] || []) await listener({ permissions: ['webRequest', 'webNavigation'] });
+    await sameSession.context.vidGrabObservation.configure();
+    assert.equal((await sameSession.context.vidGrabAPI.getPermissions(mediaUrl)).request_observation_restart_required, browser === 'chrome');
+
+    // Simulated full browser restart on same granted profile -> fresh empty chrome.storage.session.
+    const restarted = environment(browser, plain(sameSession.storage), { tabUrl: pageUrl, permissions: ['cookies', 'nativeMessaging', 'webRequest', 'webNavigation'] }, {});
+    await restarted.context.vidGrabObservation.configure();
+    assert.equal((await restarted.context.vidGrabAPI.getPermissions(mediaUrl)).request_observation_restart_required, false);
   });
 }
