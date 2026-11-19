@@ -644,4 +644,18 @@ uv sync --frozen --group packaging
 
 The six defaults cover extractor, direct MP4, HLS, DASH, playlist and unsupported HTML. `--cases /absolute/path/to/cases.json` accepts an external array of at most sixteen objects with exactly `id`, `media_type`, `authentication`, `url` and `expected`. Use non-sensitive lowercase slug IDs; authentication must be `public`; expectations are `media`, `playlist` or `unsupported`. Credential-bearing URLs, cookies and signed-in execution are rejected. Input URLs and extracted metadata are not copied into reports.
 
+`tests/check_live_diagnostics.py` adds separate in-memory observations of the original source probe and wire boundaries. It preserves request/response/exception behavior, retaining only allowlisted signals, status counts, exception types and typed request-failure codes. Defaults diagnose the original YouTube/W3C samples; `--public-controls` chooses separate named YouTube Me at the zoo/MDN CC0 flower samples. Each invocation requires a fresh output directory and retains its isolated state:
+
+```sh
+.venv/bin/python -B -m tests.check_live_diagnostic_helpers
+.venv/bin/python -B -m tests.check_live_diagnostics \
+  --allow-public-network --tools /absolute/path/to/engine/_internal/tools \
+  --output /absolute/path/to/fresh/live-diagnostics
+.venv/bin/python -B -m tests.check_live_diagnostics --public-controls \
+  --allow-public-network --tools /absolute/path/to/engine/_internal/tools \
+  --output /absolute/path/to/fresh/live-controls
+```
+
+The [diagnostic checkpoint](VALIDATION.md#p05-public-live-diagnostic-checkpoint--2026-11-19) preserves the original unavailable sample and changing W3C 200/403 outcomes; separate controls pass metadata checks on all three runtimes. No production repair or download acceptance follows. Signed-in execution remains pending by user choice.
+
 Exit zero means the runner completed and released its isolated authority; inspect each row's `assessment` for compatibility. External mismatches remain recorded and do not trigger another probe. This is outside deterministic unittest discovery and does not enqueue/download, exercise a frozen probe or validate browser/native behavior. The [dated matrix](LIVE_COMPATIBILITY.md) records failures and the signed-in row pending by user choice.
