@@ -1,0 +1,64 @@
+name: Bug Report
+description: Report a bug in VidGrab desktop companion, browser extension, or installer
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting an issue! Please avoid pasting cookies, tokens, or private URLs.
+        You can use **VidGrab → Diagnostics → Copy redacted diagnostics** to safely share runtime details.
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Operating System & Package
+      options:
+        - Linux (.deb)
+        - Linux (AppImage)
+        - Windows (NSIS setup.exe)
+        - Built from source (Linux)
+        - Built from source (Windows)
+        - macOS (experimental / P08)
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: VidGrab Version
+      placeholder: e.g. 0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser & Version (if extension-related)
+      placeholder: e.g. Chrome 157 / Firefox 160 (native, Snap, or Flatpak)
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Clear description of the bug and what you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      placeholder: |
+        1. Open VidGrab...
+        2. Click...
+        3. Observe error...
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted Diagnostics / Logs
+      description: Paste output from VidGrab → Diagnostics → Copy redacted diagnostics (if available).
+      render: text

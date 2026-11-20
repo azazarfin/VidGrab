@@ -1,77 +1,88 @@
-# 🛠️ Contributing to VidGrab
+# Contributing to VidGrab
 
-Thank you for your interest in contributing to VidGrab! This guide outlines the project structure, development workflows, and coding conventions to help you get started.
-
----
-
-## 📂 Repository Structure
-
-- `backend/`: Fast API server, queue systems, SQLite models, and `yt-dlp` hooks.
-  - `main.py`: Lifespan events, router compilation, CORS configurations.
-  - `queue_manager.py`: Downloader task concurrency queues and scheduling logic.
-  - `downloader.py`: Direct wrapper around `yt_dlp.YoutubeDL` with progress streaming callbacks.
-  - `config.py`: Local settings schema, persisted to SQLite.
-- `extension/`: Raw source code of the extension.
-  - `manifest.json` / `manifest.firefox.json`: Browser manifests.
-  - `popup/`: Popup controls, progress tabs, download forms, formats selection.
-  - `options/`: Options interface containing accordion card sections.
-  - `background/service-worker.js`: Background task routing, badge handlers, browser native notifications.
-  - `content/`: Floating download buttons overlays and mutation scanners.
-  - `lib/api.js`: Client side wrapper mapping REST endpoints and WebSocket channels.
-- `installer/`: Bootstrap installation scripts.
-- `dist/`: Output packaged archives created by build commands.
+Thank you for contributing to VidGrab! This guide explains the repository layout, locked development environment, protocol code generation, test suites, and pull request expectations.
 
 ---
 
-## 💻 Developer Setup
+## Repository Structure
 
-1. **Clone the Repository**:
-   Ensure you have Python 3.10+ and Node/NPM/zip command utilities available.
-
-2. **Initialize Local Virtual Environment**:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r backend/requirements.txt
-   ```
-
-3. **Run the Backend in Auto-Reload Mode**:
-   ```bash
-   uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
-   ```
-
-4. **Serve static assets for testing options/popups**:
-   ```bash
-   python3 -m http.server 8080 --directory .
-   ```
-
-5. **Package and Load the Extension**:
-   ```bash
-   ./build.sh
-   ```
-   Open your browser developer page and load unpacked extensions pointing to the unpacked directories inside `dist/`.
+- `desktop/` — Tauri 2 + React + TypeScript desktop manager (`src/` UI, `src-tauri/` native host shell, `supervisor/` Rust owner/IPC/installation/Ed25519 updater crate).
+- `native-host/` — Rust Native Messaging stdio bridge (`vidgrab-native-host`) used by Chrome and Firefox.
+- `backend/` — Python FastAPI local engine, SQLite migrations & durable job store (`db/`), isolated per-attempt worker execution (`engine/`), and download/media services (`services/`).
+- `packages/protocol/` — Single source of truth for the versioned v1 contract (`generate.py` generates synchronized Python, Rust, TypeScript, and JavaScript bindings).
+- `extension/` — Lightweight Vanilla JS browser extension (`manifest.json` for Chrome MV3, `manifest.firefox.json` for Firefox, `popup/`, `options/`, `background/`, `content/`, `lib/`).
+- `packaging/` — Reproducible component fetching (`components.lock.json`, `windows.components.lock.json`), PyInstaller freeze spec (`engine.spec`), desktop/AppImage/NSIS bundling, deterministic extension packager (`package_extension.py`), Ed25519 release manifest tooling (`release_manifest.py`), and `THIRD_PARTY.md`.
+- `tests/` — Python unit/contract tests (`test_*.py`), Node extension/protocol tests (`check_*.mjs`), offline helpers (`check_*_helpers.py`), Playwright UI checks, and opt-in native/VM integration suites.
+- `docs/` — Architecture, ADRs (`DECISIONS.md`), development workflow, validation records, and user guides.
+- `installer/` — Retained legacy backend bootstrap scripts (superseded by packaged desktop releases).
 
 ---
 
-## 🎨 Coding Guidelines
+## Developer Setup
 
-### Python (Backend)
-- Use standard PEP 8 naming conventions.
-- Always use `async`/`await` for I/O operations and database queries.
-- Database access is managed asynchronously via `aiosqlite`. Ensure connections are properly closed or managed via `async with` context managers.
-- Keep critical credentials or netscape cookies strictly in-memory or inside secure temporal files (deleted inside `finally` blocks).
+### Prerequisites
 
-### Javascript (Frontend Extension)
-- Keep styling rules strictly inside CSS documents. Do not write inline styles unless elements require dynamic relative positions (e.g. the floating overlay button tracking video coordinates).
-- Use Vanilla JS without heavyweight frameworks. Keep the popup footprint minimal.
-- Namespace API requests through `lib/api.js` wrapper class instance (`VidGrabAPI`) to avoid code replication.
-- Always handle disconnected states: if backend pings fail, trigger `onBackendOffline()` to lock operations.
+- **Python 3.11+** and [`uv`](https://docs.astral.sh/uv/)
+- **Rust** stable toolchain (`cargo`, `rustc`)
+- **Node.js 22+** and `npm`
+
+### Install Locked Dependencies
+
+```bash
+# Python runtime + dev dependencies (add --group packaging if building frozen bundles)
+uv sync --locked
+
+# Desktop frontend dependencies
+npm --prefix desktop ci --ignore-scripts
+```
+
+Do not modify lockfiles (`Cargo.lock`, `uv.lock`, `desktop/package-lock.json`, `packaging/*.lock.json`) unless your change explicitly intends to update a pinned dependency.
 
 ---
 
-## 🚀 Submitting Changes
+## Verification & Test Commands
 
-1. Fork the repository and create your feature branch: `git checkout -b feature/my-amazing-feature`.
-2. Commit your changes with descriptive messages: `git commit -m 'Add support for custom output directories'`.
-3. Verify your changes end-to-end: run installer audits, build extension packages, and test operations in both Chrome and Firefox.
-4. Open a Pull Request detailing the changes, testing steps, and attaching screenshots of any modified user interfaces.
+Run these from the repository root before opening a pull request:
+
+```bash
+# 1. Verify protocol schema & generated bindings are in sync
+.venv/bin/python -m packages.protocol.generate --check
+
+# 2. Python guarded test suite (external network/process guards enabled)
+.venv/bin/python -B -m unittest discover -s tests -p "test_*.py"
+
+# 3. Rust supervisor & native-host tests
+cargo test --locked -p vidgrab-supervisor -p vidgrab-native-host
+
+# 4. Extension JS syntax & Node unit/contract tests
+node --test tests/check_*.mjs
+
+# 5. Desktop TypeScript check & Vite bundle
+npm --prefix desktop run build
+
+# 6. Non-destructive extension archive build (never modifies tracked dist/)
+.venv/bin/python packaging/package_extension.py --output packaging/out/extension
+```
+
+On Windows PowerShell, use `.venv\Scripts\python.exe` in place of `.venv/bin/python`.
+
+For opt-in Playwright UI tests, signed-update E2E (`tests/check_updates_e2e.py`), frozen engine staging, and VM checks, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+---
+
+## Coding Guidelines
+
+- **Protocol changes:** Update the schema in `packages/protocol/` and regenerate all targets with `.venv/bin/python -m packages.protocol.generate`. Never hand-edit generated client/server contract files.
+- **Python (`backend/`, `packaging/`):** Follow PEP 8, use `async`/`await` for I/O and `aiosqlite` access, keep runtime data strictly outside the source/install tree, and ensure temporary cookie jars are created with restricted permissions and removed in `finally` blocks.
+- **Rust (`desktop/supervisor/`, `desktop/src-tauri/`, `native-host/`):** Avoid blocking IPC/runtime threads, validate paths against traversal and symlinks/reparse points (`O_NOFOLLOW` / `FILE_FLAG_OPEN_REPARSE_POINT`), and keep diagnostics strictly redacted (never log cookies, tokens, or private keys).
+- **Desktop UI (`desktop/src/`):** Keep React components typed cleanly (`tsc --noEmit`), accessible (keyboard navigation, ARIA roles, contrast), and responsive across desktop and narrow viewports.
+- **Browser Extension (`extension/`):** Keep the popup/options footprint minimal with Vanilla JS and CSS (no heavy runtime frameworks), keep optional permissions optional (`webRequest`/`webNavigation`), and handle offline/disconnected companion states gracefully.
+
+---
+
+## Submitting a Pull Request
+
+1. Fork the repository and create a focused branch (e.g. `fix/windows-path-escaping` or `feat/queue-filter`).
+2. Keep commits clean and descriptive (Conventional Commits style such as `feat(desktop): ...`, `fix(backend): ...`, `docs(release): ...`).
+3. Ensure all verification checks above pass and CI (`VidGrab CI`) is green across Linux and Windows.
+4. Fill out the pull request template with what changed, how it was tested, and screenshots for UI changes.

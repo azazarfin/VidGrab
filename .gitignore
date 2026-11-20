@@ -1,42 +1,135 @@
-# Byte-compiled / optimized / DLL files
+# =============================================================================
+# Python / uv / PyInstaller
+# =============================================================================
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+build/
+develop-eggs/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+*.manifest
+*.spec.bak
 
 # Virtual environments
+.venv/
 venv/
 env/
 ENV/
-.venv/
+env.bak/
+venv.bak/
 
-# Download artifacts & temporary files
+# Python test, lint & coverage caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+*.cover
+
+# =============================================================================
+# Rust / Cargo / Tauri
+# =============================================================================
+/target/
+**/*.rs.bk
+/desktop/src-tauri/target/
+/desktop/src-tauri/resources/
+/desktop/src-tauri/binaries/
+/desktop/src-tauri/gen/
+/desktop/src-tauri/WixTools/
+
+# =============================================================================
+# Node.js / Vite / TypeScript
+# =============================================================================
+/desktop/node_modules/
+/desktop/dist/
+/desktop/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tsbuildinfo
+
+# =============================================================================
+# Packaging, Staging & Release Outputs
+# =============================================================================
+/packaging/out/
+/packaging/work/
+/release-linux/
+/release-windows/
+/release-extensions/
+/dist-release/
+*.AppImage
+*.deb
+*.rpm
+*-setup.exe
+*.msi
+
+# =============================================================================
+# Runtime State, Downloads, Logs & Databases
+# =============================================================================
 *.part
 *.ytdl
 *.temp
+*.tmp
 downloads/
-
-# Logs and databases
 *.log
 
 # Preserved legacy runtime state; new application data lives outside the repo
 /backend/vidgrab.db
 /backend/vidgrab.db-*
+*.sqlite
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
 
-# Editor & tool directories
-.kilo/
+# =============================================================================
+# Local Secrets & Signing Keys (never commit)
+# =============================================================================
+.env
+.env.*
+!.env.example
+*ed25519*key*.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# =============================================================================
+# Editors, Local Tooling & Scratch
+# =============================================================================
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+.kilo/
+.impeccable/hook.cache.json
 scratch/
 /.handoff/
-/target/
-/desktop/node_modules/
-/desktop/dist/
-/desktop/src-tauri/resources/
-/desktop/src-tauri/binaries/
-/desktop/src-tauri/gen/
-/packaging/out/
-/packaging/work/
 
-# OS generated files
+# =============================================================================
+# OS Generated Files
+# =============================================================================
 .DS_Store
+.AppleDouble
+.LSOverride
 Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/

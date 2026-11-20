@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability Report
+    url: https://github.com/azazarfin/VidGrab/security/advisories/new
+    about: Privately report a security vulnerability instead of opening a public issue.
+  - name: Documentation & Guides
+    url: https://github.com/azazarfin/VidGrab/tree/planning/desktop-companion/docs
+    about: Check browser connection, Linux installation, and migration guides before filing an issue.

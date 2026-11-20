@@ -1,125 +1,136 @@
-# 🎥 VidGrab — Cross-Browser Video Downloader & Queue Manager
+# VidGrab
 
-VidGrab combines Google Chrome/Firefox extensions with a desktop companion for local media downloads. The app owns the queue, shared download defaults and bundled Python/yt-dlp/FFmpeg execution, so downloads can continue after the browser closes.
+[![CI](https://github.com/azazarfin/VidGrab/actions/workflows/ci.yml/badge.svg)](https://github.com/azazarfin/VidGrab/actions/workflows/ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/azazarfin/VidGrab?label=release)](https://github.com/azazarfin/VidGrab/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platforms-Linux%20x86__64%20%7C%20Windows%20x64-informational)](https://github.com/azazarfin/VidGrab/releases/latest)
 
-## Desktop companion development
+**VidGrab** is a standalone desktop media download manager and cross-browser companion for **Google Chrome** and **Mozilla Firefox**.
 
-The selected Linux/Windows desktop feasibility previews and scoped durable backend are implemented. Current source popup/options and desktop downloads/defaults use the generated native v1 contract; use a matching companion build. P04 is accepted for its controlled scope. P05 detection/context/actionable failures is implemented, and matching WebKit/WebView2 plus installed Chrome/Firefox core discovery passes on controlled Ubuntu/Windows VMs. Visible optional-grant dialogs, additional native format/failure journeys, the live-site matrix and final release acceptance remain open. See [native discovery validation](docs/VALIDATION.md#p05-native-discovery-checkpoint--2026-11-18), [browser connection guidance](docs/BROWSER_CONNECTION.md), [the plan](docs/PLAN.md) and [HANDOFF.md](HANDOFF.md). macOS follows the selected Linux/Windows targets.
-
-The backend setup and endpoint examples below document retained legacy ASGI development. Current source clients use the native companion; per-request scheduling and arbitrary executable arguments are unavailable in that interface.
+The desktop application owns the download queue, shared settings, and bundled `Python` / `yt-dlp` / `FFmpeg` / `Deno` runtime — so downloads continue reliably even after you close your browser, with no external Python or FFmpeg installation required.
 
 ---
 
-## 🏗️ Legacy backend architecture
-
-VidGrab uses a hybrid architecture: a lightweight, responsive browser extension UI communicates via REST and WebSockets with a locally hosted background Python service.
+## Architecture
 
 ```mermaid
-graph TD
-    Browser[Browser Extension: Chrome / Firefox]
-    Popup[Popup UI: Manager & Queue]
-    Background[Service Worker / Background Script]
-    Content[Content Scripts: Detector & Overlay]
-    Backend[Local Python Backend: FastAPI]
-    DB[(SQLite Database)]
-    ytdlp[yt-dlp Engine]
-    ffmpeg[FFmpeg System Utility]
-    
-    Content -->|Video detection events| Background
-    Popup -->|REST Requests & WebSocket Progress| Backend
-    Background -->|REST & WebSocket connection| Backend
-    Background -->|Cookie injection jar| Backend
-    Backend -->|Settings, queue & history| DB
-    Backend -->|Download operations| ytdlp
-    ytdlp -->|Transcoding, subtitles & thumbnails| ffmpeg
+graph LR
+    Ext["Browser Extension<br/>(Chrome / Firefox)"] -->|Native Messaging stdio| Host["vidgrab-native-host<br/>(Rust)"]
+    Host -->|Local IPC / Named Pipe| Sup["vidgrab-supervisor<br/>(Rust owner & updater)"]
+    UI["VidGrab Desktop UI<br/>(Tauri + React)"] --> Sup
+    Sup -->|Private Loopback API| Eng["vidgrab-engine<br/>(Frozen Python + FastAPI)"]
+    Eng --> DB[("SQLite<br/>Queue & History")]
+    Eng -->|Isolated per-job workers| Tools["Bundled yt-dlp + FFmpeg + Deno"]
 ```
 
----
-
-## ✨ Features
-
-- **Hybrid Video Detection**: Content scripts scan page DOMs dynamically and display a smooth, floating download button above active video elements.
-- **Unified Download Manager**: Track active speeds, ETA, and progress bar updates in real-time via WebSocket streaming.
-- **Power-User post-processing**: Change format containers (MP4/MKV/WebM), extract audios (MP3/FLAC/Opus), and normalize volume levels automatically.
-- **SponsorBlock Integration**: Cut out sponsors, intros, outros, or self-promotions from YouTube videos automatically during download.
-- **Cookie Jar Forwarding**: Securely forwards active browser cookies to download age-gated, private, or member-only videos.
-- **Task Scheduler**: Schedule downloads to start automatically during off-peak hours (e.g. overnight).
-- **Pinned Engine**: Uses a locked `yt-dlp` release; startup and status checks stay offline. Install a newer VidGrab release to update the engine.
-- **Custom yt-dlp Flags**: Input custom CLI flags with warning verification and sanitization blocks to filter dangerous inputs.
+- **Local-only execution:** No open public network ports; browsers talk to the desktop companion over OS-verified Native Messaging (`com.vidgrab.companion`).
+- **Crash & exit resilience:** A Rust supervisor manages the frozen engine lifecycle, process-tree cleanup (POSIX groups / Windows Job Objects), durable SQLite state, and pre-update/pre-migration backups.
+- **Zero system dependencies:** Desktop packages bundle `yt-dlp`, `yt-dlp-ejs`, `FFmpeg`/`ffprobe`, and `Deno` with checksum-pinned build inputs.
 
 ---
 
-## 🚀 Installation & Setup
+## Key Features
 
-Backend development requires Python 3.11+. For locked setup, isolated tests, runtime paths and explicit legacy-state import, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). The standalone desktop app is still planned; the commands below are the legacy extension/backend workflow. Keep the current unauthenticated backend bound to loopback only.
+- **Standalone 5-Tab Desktop Manager:** Add single URLs or batches (multi-line paste or `.txt` import), inspect formats before downloading, manage active queues with priority/scheduling/pause/resume, search & filter history (non-destructive clear keeps files on disk), configure defaults, manage browser connections, and export redacted diagnostics.
+- **Slim Cross-Browser Extension (Chrome & Firefox):** Floating on-page video detector overlay, format/quality picker modal, quick Queue & Recent controls, and one-click **Open in VidGrab** handoff.
+- **Post-Processing & Format Control:** Container remux/transcoding (`MP4`, `MKV`, `WebM`), audio extraction (`MP3`, `FLAC`, `Opus`, etc.), audio normalization, subtitle embedding, thumbnail embedding, optional Bangla-to-Latin filename transliteration, and **SponsorBlock** integration.
+- **Privacy-First Auth Contexts:** Optional, explicit browser permission grants with short-lived, volatile cookie jars cleaned up automatically after each download attempt.
+- **Signed Updates & Automatic Rollback:** Engine updates are verified in pure Rust using RFC 8032 **Ed25519** signatures and SHA-256 checksums, snapshot active data before applying, and automatically roll back to the previous known-good bundle if health verification fails.
 
-### 1. Run the Backend Installer
+---
 
-VidGrab provides automated install scripts to set up Python virtual environments, fetch dependencies, and register background processes.
+## Download & Install
 
-#### 🐧 Linux & 🍎 macOS
-Open your terminal and run:
+Grab the latest installers and extension archives from [**GitHub Releases**](https://github.com/azazarfin/VidGrab/releases/latest):
+
+| Platform / Target | Package | Notes |
+| --- | --- | --- |
+| **Linux (Ubuntu 24.04+ / Debian x86_64)** | `VidGrab_<ver>_amd64.deb` | System package (`sudo apt install ./VidGrab_*.deb` or App Center). See [docs/LINUX_INSTALLATION.md](docs/LINUX_INSTALLATION.md). |
+| **Linux (Portable x86_64)** | `VidGrab_<ver>_amd64.AppImage` | `chmod +x` and run directly, or install into your user Applications menu from inside the app. |
+| **Windows (x64)** | `VidGrab_<ver>_x64-setup.exe` | Per-user NSIS installer (no administrator rights required). |
+| **Google Chrome / Chromium** | `vidgrab-chrome-extension.zip` | Unzip and load via `chrome://extensions/` → **Developer mode** → **Load unpacked** (until store listing is live). |
+| **Mozilla Firefox** | `vidgrab-firefox-extension.xpi` / `.zip` | Load via `about:debugging` → **This Firefox** → **Load Temporary Add-on…** (or install signed store build once listed). |
+| **macOS** | *Planned (P08)* | Apple Silicon & Intel support is scheduled for a future milestone. |
+
+> **Browser Connection Setup:** After installing the desktop app and extension, open **VidGrab → Browser** and click **Connect browsers**. For Firefox Snap/Flatpak portal setup or Chrome optional request-observation permissions, see [docs/BROWSER_CONNECTION.md](docs/BROWSER_CONNECTION.md).
+
+### Verify Release Checksums
+
+Every release ships a unified `SHA256SUMS.txt`:
+
 ```bash
-bash installer/install.sh
-```
-*On Linux, this automatically configures and starts a user-level background systemd service (`vidgrab-backend.service`).*
+# Linux / macOS
+sha256sum --ignore-missing -c SHA256SUMS.txt
 
-#### 🪟 Windows
-Open PowerShell as Administrator and run:
-```powershell
-Set-ExecutionPolicy Bypass -Scope Process -Force
-.\installer\install.ps1
+# Windows (PowerShell)
+Get-FileHash .\VidGrab_0.1.0_x64-setup.exe -Algorithm SHA256
 ```
-*This installs local dependencies and registers a Windows Task Scheduler task to launch the backend silently on startup.*
+
+Update manifests (`vidgrab-update-manifest-linux-x86_64.json`, `vidgrab-update-manifest-windows-x64.json`) are signed with Ed25519 and verified automatically by VidGrab against its pinned public key (`6ee71cdd58c6f7bd787f9383eb0db61ed3157e0290ed1ed30370ab41b121561e`).
 
 ---
 
-#### 2. Package the Extension Archives (Non-Destructive)
+## Development & Building from Source
 
-To produce clean Chrome and Firefox archives in a fresh output directory without touching tracked `dist/` files:
+### Prerequisites
+
+- **Python 3.11+** and [`uv`](https://docs.astral.sh/uv/)
+- **Rust** stable toolchain (`cargo`, `rustc`)
+- **Node.js 22+** and `npm`
+- **Linux desktop builds:** `build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev patchelf squashfs-tools`
+
+### Quick Start
+
 ```bash
-python3 packaging/package_extension.py --output packaging/out/extension
+# 1. Install locked Python & frontend dependencies
+uv sync --locked
+npm --prefix desktop ci --ignore-scripts
+
+# 2. Verify generated protocol schemas (Python / Rust / TS / JS)
+.venv/bin/python -m packages.protocol.generate --check
+
+# 3. Run unit & contract test suites
+.venv/bin/python -B -m unittest discover -s tests -p "test_*.py"
+cargo test --locked -p vidgrab-supervisor -p vidgrab-native-host
+node --test tests/check_*.mjs
+npm --prefix desktop run build
+
+# 4. Package Chrome & Firefox extensions non-destructively
+.venv/bin/python packaging/package_extension.py --output packaging/out/extension
 ```
-`bash build.sh` delegates to `packaging/package_extension.py --output` using a timestamped `packaging/out/extension-...` directory by default (or pass a fresh non-`dist/` directory as the first argument).
 
-#### Google Chrome / Chromium-based:
-1. Open Chrome and go to `chrome://extensions/`.
-2. Toggle **Developer mode** in the top right.
-3. Click **Load unpacked** and select `extension/` (or install the built `vidgrab-chrome-extension.zip`).
-
-#### Mozilla Firefox:
-1. Open Firefox and enter `about:debugging` in the address bar.
-2. Click **This Firefox** in the sidebar.
-3. Click **Load Temporary Add-on...** and select the built `vidgrab-firefox-extension.zip` / `.xpi`.
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) and [CONTRIBUTING.md](CONTRIBUTING.md) for full developer setup, frozen engine packaging (`packaging/stage_spike.py`), and opt-in VM/Playwright test suites.
 
 ---
 
-## 🔄 Migrating from Legacy Backend
+## Migrating from the Legacy Backend
 
-If you previously ran `installer/install.sh`, `installer/install.ps1`, or `uvicorn backend.main:app`, follow [docs/MIGRATION.md](docs/MIGRATION.md) to stop legacy background services, import compatible settings from `config.json` in **Settings**, and optionally import legacy SQLite history without touching your saved media.
+If you previously installed the older standalone Python service via `installer/install.sh`, `installer/install.ps1`, or `uvicorn backend.main:app`, follow [docs/MIGRATION.md](docs/MIGRATION.md) to:
 
----
-
-## 🛠️ Diagnostics & Commands
-
-If running the legacy backend manually during development, execute uvicorn directly from the virtual environment:
-```bash
-cd VideoDownloadedExtension
-./venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
-```
-
-### Systemd Service Logs (Linux):
-```bash
-# View live logs
-journalctl --user -u vidgrab-backend.service -f
-
-# Manage background service state
-systemctl --user stop vidgrab-backend.service
-systemctl --user start vidgrab-backend.service
-systemctl --user disable --now vidgrab-backend.service
-```
+1. Stop and disable the legacy `systemd` / Task Scheduler service.
+2. Import compatible settings from `config.json` in **VidGrab → Settings → Migrate from legacy VidGrab service**.
+3. Optionally import legacy SQLite download history without touching your existing media files.
 
 ---
 
-## 📝 License
-VidGrab's own code is open-source under the [MIT License](LICENSE). Third-party bundled component notices (FFmpeg GPLv3, Deno, yt-dlp, yt-dlp-ejs, bundled fonts) are documented in [packaging/THIRD_PARTY.md](packaging/THIRD_PARTY.md) and bundled into all desktop releases.
+## Documentation
+
+| Document | Purpose |
+| --- | --- |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, process ownership, IPC, and protocol contract |
+| [docs/BROWSER_CONNECTION.md](docs/BROWSER_CONNECTION.md) | Connecting Chrome, Firefox, Snap, and Flatpak browsers |
+| [docs/LINUX_INSTALLATION.md](docs/LINUX_INSTALLATION.md) | Installing and cleanly removing Linux `.deb` and `AppImage` packages |
+| [docs/MIGRATION.md](docs/MIGRATION.md) | Moving from the legacy backend to the packaged desktop companion |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Locked setup, packaging pipeline, and opt-in integration tests |
+| [docs/VALIDATION.md](docs/VALIDATION.md) | Platform release matrix and recorded verification evidence |
+| [docs/PLAN.md](docs/PLAN.md) & [docs/DECISIONS.md](docs/DECISIONS.md) | Milestone roadmap (`P01`–`P08`) and architecture decision records |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor workflow, coding conventions, and PR checklist |
+| [SECURITY.md](SECURITY.md) | Vulnerability reporting and security architecture |
+
+---
+
+## License & Third-Party Notices
+
+VidGrab's own source code is licensed under the [MIT License](LICENSE).
+
+Packaged desktop releases bundle third-party components (including **FFmpeg** under GPLv3, **yt-dlp**, **yt-dlp-ejs**, **Deno**, and bundled UI fonts). Full attributions and license texts are documented in [packaging/THIRD_PARTY.md](packaging/THIRD_PARTY.md) and shipped inside every release artifact.

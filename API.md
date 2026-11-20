@@ -1,6 +1,8 @@
-# 🔌 VidGrab Backend API Specification
+# VidGrab Legacy Backend API Specification
 
-VidGrab's backend exposes a FastAPI REST API and a WebSocket stream to communicate with the browser extension or other third-party clients.
+> **Note:** This document describes the **legacy ASGI HTTP/WebSocket adapter** (`backend.main:app`) retained for backward compatibility and migration. Current VidGrab desktop and browser extension clients communicate through the versioned native **v1 contract** defined in [`packages/protocol/`](packages/protocol/) and documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+VidGrab's legacy backend exposes a loopback-only FastAPI REST API and WebSocket stream.
 
 ---
 
@@ -147,7 +149,7 @@ Fetch or update configuration variables persisted inside SQLite.
 - **Payload Schema**:
   ```json
   {
-    "download_dir": "/home/azaz/Downloads/VidGrab",
+    "download_dir": "/path/to/Downloads/VidGrab",
     "max_concurrent": 3,
     "default_format": "bestvideo+bestaudio/best",
     "default_quality": "1080",
@@ -214,7 +216,7 @@ Dispatched when video files are fully downloaded, transcoded, and output.
   "data": {
     "id": "7c9ebda2-613d-4c31-ba2c-29b7fb1a2d5e",
     "status": "complete",
-    "file_path": "/home/azaz/Downloads/VidGrab/Never Gonna Give You Up.mp4",
+    "file_path": "/path/to/Downloads/VidGrab/Never Gonna Give You Up.mp4",
     "file_size": 24829381
   }
 }
