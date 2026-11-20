@@ -51,15 +51,15 @@ const fn configured_or_default(value: Option<&'static str>, fallback: &'static s
 
 const DEFAULT_PUBLIC_KEY_HEX: &str = configured_or_default(
     option_env!("VIDGRAB_UPDATE_PUBLIC_KEY"),
-    "9f6c68b865f2cb6dfcb741c24fb72a5d1774657d7d4be79862d13d9209ea9bf1",
+    "6ee71cdd58c6f7bd787f9383eb0db61ed3157e0290ed1ed30370ab41b121561e",
 );
 
 #[cfg(target_os = "linux")]
 const PLATFORM_DEFAULT_MANIFEST_URL: &str =
-    "https://github.com/Azaz6013/VidGrab/releases/latest/download/vidgrab-update-manifest-linux-x86_64.json";
+    "https://github.com/azazarfin/VidGrab/releases/latest/download/vidgrab-update-manifest-linux-x86_64.json";
 #[cfg(windows)]
 const PLATFORM_DEFAULT_MANIFEST_URL: &str =
-    "https://github.com/Azaz6013/VidGrab/releases/latest/download/vidgrab-update-manifest-windows-x64.json";
+    "https://github.com/azazarfin/VidGrab/releases/latest/download/vidgrab-update-manifest-windows-x64.json";
 
 const DEFAULT_MANIFEST_URL: &str = configured_or_default(
     option_env!("VIDGRAB_UPDATE_MANIFEST_URL"),

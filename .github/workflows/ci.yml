@@ -36,7 +36,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: desktop/package-lock.json
 
@@ -92,12 +92,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: uv sync --locked
+      - run: uv sync --locked --group packaging
 
       - name: Set up Node.js & Rust
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: desktop/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
@@ -109,6 +109,7 @@ jobs:
 
       - name: Stage verified Linux components & frozen engine
         run: |
+          cargo fetch --locked
           mkdir -p packaging/out/cache packaging/out/tools
           .venv/bin/python packaging/fetch_components.py \
             --lock packaging/components.lock.json \
@@ -167,12 +168,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: uv sync --locked
+      - run: uv sync --locked --group packaging
 
       - name: Set up Node.js & Rust
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: desktop/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
@@ -188,6 +189,7 @@ jobs:
       - name: Stage verified Windows components, frozen engine & NSIS installer
         shell: pwsh
         run: |
+          cargo fetch --locked
           New-Item -ItemType Directory -Force -Path packaging/out/cache, packaging/out/tools | Out-Null
           .venv/Scripts/python.exe packaging/fetch_components.py `
             --lock packaging/windows.components.lock.json `

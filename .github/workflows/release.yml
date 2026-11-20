@@ -83,10 +83,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: uv sync --locked
+      - run: uv sync --locked --group packaging
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: desktop/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
@@ -104,6 +104,7 @@ jobs:
           elif [ -n "${VIDGRAB_RELEASE_BASE_URL:-}" ]; then
             export VIDGRAB_UPDATE_MANIFEST_URL="${VIDGRAB_RELEASE_BASE_URL%/}/vidgrab-update-manifest-linux-x86_64.json"
           fi
+          cargo fetch --locked
           npm --prefix desktop ci --ignore-scripts
           npm --prefix desktop run build
           mkdir -p packaging/out/cache packaging/out/tools release-linux
@@ -159,7 +160,7 @@ jobs:
           NOTICES_SHA=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["third_party_notices_sha256"])' "$BUNDLE_META")
           echo "Packaged engine update bundle (notices SHA-256: $NOTICES_SHA)"
           if [ -n "${VIDGRAB_UPDATE_SIGNING_PRIVATE_KEY:-}" ]; then
-            BASE_URL="${{ vars.VIDGRAB_RELEASE_BASE_URL || 'https://github.com/Azaz6013/VidGrab/releases/latest/download' }}"
+            BASE_URL="${{ vars.VIDGRAB_RELEASE_BASE_URL || format('{0}/{1}/releases/latest/download', github.server_url, github.repository) }}"
             BASE_URL="${BASE_URL%/}"
             .venv/bin/python packaging/release_manifest.py sign \
               --version "${{ steps.meta.outputs.version }}" \
@@ -187,10 +188,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: uv sync --locked
+      - run: uv sync --locked --group packaging
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: desktop/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
@@ -211,6 +212,7 @@ jobs:
             $base = $env:VIDGRAB_RELEASE_BASE_URL.TrimEnd('/')
             $env:VIDGRAB_UPDATE_MANIFEST_URL = "$base/vidgrab-update-manifest-windows-x64.json"
           }
+          cargo fetch --locked
           npm --prefix desktop ci --ignore-scripts
           npm --prefix desktop run build
           New-Item -ItemType Directory -Force -Path packaging/out/cache, packaging/out/tools, release-windows | Out-Null
@@ -239,7 +241,7 @@ jobs:
             --format zip | ConvertFrom-Json
           if ($env:VIDGRAB_UPDATE_SIGNING_PRIVATE_KEY) {
             $baseUrl = "${{ vars.VIDGRAB_RELEASE_BASE_URL }}"
-            if (-not $baseUrl) { $baseUrl = "https://github.com/Azaz6013/VidGrab/releases/latest/download" }
+            if (-not $baseUrl) { $baseUrl = "${{ github.server_url }}/${{ github.repository }}/releases/latest/download" }
             $baseUrl = $baseUrl.TrimEnd('/')
             .venv/Scripts/python.exe packaging/release_manifest.py sign `
               --version "$ver" `
