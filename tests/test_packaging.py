@@ -185,6 +185,38 @@ class ComponentPackagingTests(OfflineTestCase):
         self.assertEqual(sorted(path.name for path in directory.iterdir()), ["GPLv3.ffmpeg.txt", "ffmpeg.exe", "ffprobe.exe"])
         self.assertFalse((self.root.parent / "escaped").exists())
 
+    def test_rpm_bundle_config_declares_capabilities_and_notices(self):
+        import json
+        import xml.etree.ElementTree as ET
+
+        repo = Path(__file__).resolve().parents[1]
+        tauri = json.loads((repo / "desktop" / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8"))
+        ubuntu = json.loads((repo / "packaging" / "ubuntu24.bundle.json").read_text(encoding="utf-8"))
+        self.assertIn("rpm", tauri["bundle"]["targets"])
+        self.assertEqual(tauri["bundle"]["license"], "MIT")
+        rpm_cfg = tauri["bundle"]["linux"]["rpm"]
+        ubuntu_rpm = ubuntu["bundle"]["linux"]["rpm"]
+        for cap in (
+            "libwebkit2gtk-4.1.so.0()(64bit)",
+            "libgtk-3.so.0()(64bit)",
+            "libayatana-appindicator3.so.1()(64bit)",
+            "libsoup-3.0.so.0()(64bit)",
+            "libcrypto.so.3()(64bit)",
+        ):
+            self.assertIn(cap, rpm_cfg["depends"])
+            self.assertIn(cap, ubuntu_rpm["depends"])
+        self.assertIn("libc.so.6(GLIBC_2.39)(64bit)", ubuntu_rpm["depends"])
+        for notice in ("LICENSE", "THIRD_PARTY.md", "GPLv3.ffmpeg.txt", "FONTS_LICENSE.txt"):
+            self.assertEqual(rpm_cfg["files"][f"/usr/share/doc/vidgrab/{notice}"], f"resources/notices/{notice}")
+        metainfo_rel = rpm_cfg["files"]["/usr/share/metainfo/com.vidgrab.desktop.metainfo.xml"]
+        metainfo_path = (repo / "desktop" / "src-tauri" / metainfo_rel).resolve()
+        self.assertTrue(metainfo_path.is_file())
+        component = ET.parse(metainfo_path).getroot()
+        self.assertEqual(component.tag, "component")
+        self.assertEqual(component.get("type"), "desktop-application")
+        self.assertEqual(component.findtext("id"), "com.vidgrab.desktop")
+        self.assertEqual(component.findtext("project_license"), "MIT")
+
 
 if __name__ == "__main__":
     import unittest

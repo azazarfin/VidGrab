@@ -14,7 +14,8 @@ body:
     attributes:
       label: Operating System & Package
       options:
-        - Linux (.deb)
+        - Linux (.rpm — Fedora / RHEL / openSUSE)
+        - Linux (.deb — Ubuntu / Debian)
         - Linux (AppImage)
         - Windows (NSIS setup.exe)
         - Built from source (Linux)

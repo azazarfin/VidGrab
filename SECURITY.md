@@ -4,7 +4,7 @@
 
 | Version | Platforms | Status |
 | --- | --- | --- |
-| `0.1.x` | Linux (`x86_64` `.deb`, `AppImage`), Windows (`x64` NSIS) | Supported |
+| `0.1.x` | Linux (`x86_64` `.rpm`, `.deb`, `AppImage`), Windows (`x64` NSIS) | Supported |
 | Legacy standalone `uvicorn` backend (`installer/`) | Linux, Windows | Deprecated — migrate via [docs/MIGRATION.md](docs/MIGRATION.md) |
 
 ---

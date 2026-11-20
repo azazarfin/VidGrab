@@ -45,7 +45,8 @@ Grab the latest installers and extension archives from [**GitHub Releases**](htt
 
 | Platform / Target | Package | Notes |
 | --- | --- | --- |
-| **Linux (Ubuntu 24.04+ / Debian x86_64)** | `VidGrab_<ver>_amd64.deb` | System package (`sudo apt install ./VidGrab_*.deb` or App Center). See [docs/LINUX_INSTALLATION.md](docs/LINUX_INSTALLATION.md). |
+| **Linux (Fedora 40–43+ / RHEL / openSUSE x86_64)** | `VidGrab_<ver>-1.x86_64.rpm` | RPM package (`sudo dnf install ./VidGrab_*-1.x86_64.rpm`). Built on glibc 2.39 for broad Fedora/RHEL compatibility. |
+| **Linux (Ubuntu 24.04+ / Debian x86_64)** | `VidGrab_<ver>_amd64.deb` | Debian package (`sudo apt install ./VidGrab_*.deb` or App Center). See [docs/LINUX_INSTALLATION.md](docs/LINUX_INSTALLATION.md). |
 | **Linux (Portable x86_64)** | `VidGrab_<ver>_amd64.AppImage` | `chmod +x` and run directly, or install into your user Applications menu from inside the app. |
 | **Windows (x64)** | `VidGrab_<ver>_x64-setup.exe` | Per-user NSIS installer (no administrator rights required). |
 | **Google Chrome / Chromium** | `vidgrab-chrome-extension.zip` | Unzip and load via `chrome://extensions/` → **Developer mode** → **Load unpacked** (until store listing is live). |

@@ -49,7 +49,7 @@ jobs:
           path: release-extensions/*
 
   build-linux:
-    name: Build Linux x86_64 (.deb, AppImage & Update Bundle)
+    name: Build Linux x86_64 (.deb, .rpm, AppImage & Update Bundle)
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.meta.outputs.version }}
@@ -77,7 +77,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev \
             libayatana-appindicator3-dev librsvg2-dev libssl-dev patchelf \
-            file squashfs-tools desktop-file-utils binutils dpkg-dev libfuse2t64
+            file squashfs-tools desktop-file-utils binutils dpkg-dev libfuse2t64 \
+            rpm cpio
 
       - uses: astral-sh/setup-uv@v4
       - uses: actions/setup-python@v5
@@ -121,7 +122,7 @@ jobs:
             --bundle packaging/out/linux-stage \
             --target x86_64-unknown-linux-gnu
           .venv/bin/python packaging/check_abi.py --tree packaging/out/linux-stage --max-glibc 2.39
-          APPIMAGE_EXTRACT_AND_RUN=1 npx --prefix desktop tauri build --no-sign --config "$PWD/packaging/ubuntu24.bundle.json" --bundles deb,appimage
+          APPIMAGE_EXTRACT_AND_RUN=1 npx --prefix desktop tauri build --no-sign --config "$PWD/packaging/ubuntu24.bundle.json" --bundles deb,rpm,appimage
           APPDIR=$(find target/release/bundle/appimage -maxdepth 1 -name "*.AppDir" | head -n 1)
           RAW_APPIMAGE=$(find target/release/bundle/appimage -maxdepth 1 -name "*.AppImage" | head -n 1)
           .venv/bin/python packaging/prepare_appimage.py \
@@ -147,10 +148,13 @@ jobs:
           VIDGRAB_UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.VIDGRAB_UPDATE_PRIVATE_KEY_HEX }}
         run: |
           DEB_PATH=$(find target/release/bundle/deb -name "*.deb" | head -n 1)
+          RPM_PATH=$(find target/release/bundle/rpm -name "*.rpm" | head -n 1)
           APPIMAGE_PATH="packaging/out/VidGrab-final.AppImage"
           .venv/bin/python tests/check_linux_package.py --deb "$DEB_PATH"
+          .venv/bin/python tests/check_rpm_package.py --rpm "$RPM_PATH" --max-glibc 2.39
           .venv/bin/python tests/check_appimage_package.py --appimage "$APPIMAGE_PATH" --max-glibc 2.39
           cp "$DEB_PATH" "release-linux/VidGrab_${{ steps.meta.outputs.version }}_amd64.deb"
+          cp "$RPM_PATH" "release-linux/VidGrab_${{ steps.meta.outputs.version }}-1.x86_64.rpm"
           cp "$APPIMAGE_PATH" "release-linux/VidGrab_${{ steps.meta.outputs.version }}_amd64.AppImage"
           BUNDLE_TAR="release-linux/vidgrab-engine-${{ steps.meta.outputs.version }}-linux-x86_64.tar.gz"
           BUNDLE_META=$(.venv/bin/python packaging/release_manifest.py bundle \

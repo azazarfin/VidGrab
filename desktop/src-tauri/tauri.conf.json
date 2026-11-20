@@ -15,9 +15,11 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["appimage", "deb"],
+    "targets": ["appimage", "deb", "rpm"],
     "icon": ["icons/icon.png"],
     "category": "Utility",
+    "license": "MIT",
+    "homepage": "https://github.com/azazarfin/VidGrab",
     "publisher": "VidGrab contributors",
     "shortDescription": "VidGrab standalone download manager and browser companion",
     "externalBin": ["binaries/vidgrab-native-host"],
@@ -25,16 +27,35 @@
       "resources/engine/": "engine/",
       "resources/notices/": "notices/"
     },
-    "linux": {"deb": {
-      "depends": ["libc6 (>= 2.42)", "libwebkit2gtk-4.1-0", "libgtk-3-0t64 | libgtk-3-0", "libayatana-appindicator3-1"],
-      "files": {
-        "/var/lib/swcatalog/yaml/vidgrab-p02.yml": "../../packaging/vidgrab-p02.yml",
-        "/usr/share/swcatalog/xml/vidgrab-p02.xml": "../../packaging/vidgrab-p02.xml",
-        "/usr/share/doc/vidgrab/LICENSE": "resources/notices/LICENSE",
-        "/usr/share/doc/vidgrab/THIRD_PARTY.md": "resources/notices/THIRD_PARTY.md",
-        "/usr/share/doc/vidgrab/GPLv3.ffmpeg.txt": "resources/notices/GPLv3.ffmpeg.txt",
-        "/usr/share/doc/vidgrab/FONTS_LICENSE.txt": "resources/notices/FONTS_LICENSE.txt"
+    "linux": {
+      "deb": {
+        "depends": ["libc6 (>= 2.42)", "libwebkit2gtk-4.1-0", "libgtk-3-0t64 | libgtk-3-0", "libayatana-appindicator3-1"],
+        "files": {
+          "/var/lib/swcatalog/yaml/vidgrab-p02.yml": "../../packaging/vidgrab-p02.yml",
+          "/usr/share/swcatalog/xml/vidgrab-p02.xml": "../../packaging/vidgrab-p02.xml",
+          "/usr/share/doc/vidgrab/LICENSE": "resources/notices/LICENSE",
+          "/usr/share/doc/vidgrab/THIRD_PARTY.md": "resources/notices/THIRD_PARTY.md",
+          "/usr/share/doc/vidgrab/GPLv3.ffmpeg.txt": "resources/notices/GPLv3.ffmpeg.txt",
+          "/usr/share/doc/vidgrab/FONTS_LICENSE.txt": "resources/notices/FONTS_LICENSE.txt"
+        }
+      },
+      "rpm": {
+        "depends": [
+          "libc.so.6(GLIBC_2.42)(64bit)",
+          "libwebkit2gtk-4.1.so.0()(64bit)",
+          "libgtk-3.so.0()(64bit)",
+          "libayatana-appindicator3.so.1()(64bit)",
+          "libsoup-3.0.so.0()(64bit)",
+          "libcrypto.so.3()(64bit)"
+        ],
+        "files": {
+          "/usr/share/metainfo/com.vidgrab.desktop.metainfo.xml": "../../packaging/com.vidgrab.desktop.metainfo.xml",
+          "/usr/share/doc/vidgrab/LICENSE": "resources/notices/LICENSE",
+          "/usr/share/doc/vidgrab/THIRD_PARTY.md": "resources/notices/THIRD_PARTY.md",
+          "/usr/share/doc/vidgrab/GPLv3.ffmpeg.txt": "resources/notices/GPLv3.ffmpeg.txt",
+          "/usr/share/doc/vidgrab/FONTS_LICENSE.txt": "resources/notices/FONTS_LICENSE.txt"
+        }
       }
-    }}
+    }
   }
 }
