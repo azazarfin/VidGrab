@@ -206,6 +206,7 @@ jobs:
           VIDGRAB_FIREFOX_ID: ${{ vars.VIDGRAB_FIREFOX_ID }}
           VIDGRAB_UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.VIDGRAB_UPDATE_PRIVATE_KEY_HEX }}
         run: |
+          $PSNativeCommandUseErrorActionPreference = $true
           if ($env:VIDGRAB_UPDATE_MANIFEST_URL_WINDOWS) {
             $env:VIDGRAB_UPDATE_MANIFEST_URL = $env:VIDGRAB_UPDATE_MANIFEST_URL_WINDOWS
           } elseif ($env:VIDGRAB_RELEASE_BASE_URL) {
@@ -235,10 +236,10 @@ jobs:
           $nsis = Get-ChildItem -Path target/release/bundle/nsis -Filter "*.exe" | Select-Object -First 1
           Copy-Item $nsis.FullName "release-windows/VidGrab_${ver}_x64-setup.exe"
           $bundleZip = "release-windows/vidgrab-engine-${ver}-windows-x64.zip"
-          $bundleMeta = .venv/Scripts/python.exe packaging/release_manifest.py bundle `
+          $bundleMeta = (.venv/Scripts/python.exe packaging/release_manifest.py bundle `
             --engine-dir packaging/out/win-stage/engine `
             --out "$bundleZip" `
-            --format zip | ConvertFrom-Json
+            --format zip | Out-String) | ConvertFrom-Json
           if ($env:VIDGRAB_UPDATE_SIGNING_PRIVATE_KEY) {
             $baseUrl = "${{ vars.VIDGRAB_RELEASE_BASE_URL }}"
             if (-not $baseUrl) { $baseUrl = "${{ github.server_url }}/${{ github.repository }}/releases/latest/download" }

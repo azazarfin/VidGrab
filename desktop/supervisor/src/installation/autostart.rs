@@ -326,6 +326,9 @@ mod tests {
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             fs::create_dir(&root).unwrap();
+            #[cfg(windows)]
+            let home = root.join("home বাংলা % $ ` single'");
+            #[cfg(not(windows))]
             let home = root.join("home বাংলা % $ ` quoted\"");
             fs::create_dir(&home).unwrap();
             let dirs = UserDirs {

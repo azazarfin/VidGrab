@@ -189,6 +189,7 @@ jobs:
       - name: Stage verified Windows components, frozen engine & NSIS installer
         shell: pwsh
         run: |
+          $PSNativeCommandUseErrorActionPreference = $true
           cargo fetch --locked
           New-Item -ItemType Directory -Force -Path packaging/out/cache, packaging/out/tools | Out-Null
           .venv/Scripts/python.exe packaging/fetch_components.py `
