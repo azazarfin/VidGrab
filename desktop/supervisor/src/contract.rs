@@ -160,9 +160,33 @@ mod tests {
             ("downloads.action", json!({"job_id":"job","expected_revision":2,"action":"execute"})),
             ("downloads.authenticate", json!({"job_id":"job","expected_revision":"2","auth_ref":"reference"})),
             ("downloads.enqueue", json!({"url":"https://fixture.invalid/media","options":{"extra_args":{"exec":"command"}}})),
+            ("downloads.action", json!({"job_id":"job","expected_revision":2,"action":"set_priority","priority":11})),
+            ("downloads.enqueue", json!({"url":"https://fixture.invalid/media","priority":-11})),
         ];
         for (operation, params) in cases {
             assert_eq!(validate_request(&request(operation, params)), Err("BAD_REQUEST"), "{operation}");
+        }
+    }
+
+    #[test]
+    fn generated_p06_manager_operations_validate_schemas_and_mutations() {
+        let cases = [
+            ("downloads.get", json!({"job_id":"job-1"}), false),
+            ("downloads.clear_history", json!({}), true),
+            ("diagnostics.get", json!({}), false),
+            ("downloads.list", json!({"view":"history","limit":25}), false),
+            ("downloads.action", json!({"job_id":"job","expected_revision":2,"action":"pause"}), true),
+            ("downloads.action", json!({"job_id":"job","expected_revision":2,"action":"resume"}), true),
+            ("downloads.action", json!({"job_id":"job","expected_revision":2,"action":"set_priority","priority":5}), true),
+            ("downloads.action", json!({"job_id":"job","expected_revision":2,"action":"set_schedule","scheduled_at":"2026-12-01T10:00:00Z"}), true),
+            ("downloads.action", json!({"job_id":"job","expected_revision":2,"action":"delete_history"}), true),
+            ("downloads.enqueue", json!({"url":"https://fixture.invalid/media","priority":3,"scheduled_at":"2026-12-01T10:00:00+00:00"}), true),
+            ("settings.patch", json!({"expected_revision":1,"patch":{"transliterate_bangla_filenames":false}}), true),
+        ];
+        for (operation, params, mutation) in cases {
+            let value = request(operation, params);
+            assert_eq!(validate_request(&value), Ok(()), "{operation}");
+            assert_eq!(is_mutation(&value), mutation, "{operation}");
         }
     }
 }

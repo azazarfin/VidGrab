@@ -279,6 +279,29 @@
       return this.session.mutate('downloads.action', { job_id: job.id, expected_revision: job.revision, action: 'cancel' });
     }
 
+    async pauseDownload(job) {
+      return this.session.mutate('downloads.action', { job_id: job.id, expected_revision: job.revision, action: 'pause' });
+    }
+
+    async resumeDownload(job) {
+      return this.session.mutate('downloads.action', { job_id: job.id, expected_revision: job.revision, action: 'resume' });
+    }
+
+    async openApp() {
+      if (browserPage) {
+        const response = await send({ type: 'companion.activate' });
+        if (!response?.ok) {
+          throw failure(response?.error?.code || 'APP_UNAVAILABLE', response?.error?.message || 'Could not open VidGrab');
+        }
+        return response.data;
+      }
+      const permissions = await this.getPermissions();
+      if (!permissions.native_granted) {
+        throw failure('BROWSER_CONNECTION_UNAVAILABLE', 'Allow browser native messaging permission to open VidGrab');
+      }
+      return global.vidGrabNative.send('activate', {});
+    }
+
     async retryDownload(job, { candidate_id = null } = {}) {
       if (this.session.pending) throw failure('REQUEST_OUTCOME_UNKNOWN', 'Check the previous request before retrying this download');
       const context = await this.prepareAuth(job.url, job.id, true, candidate_id);

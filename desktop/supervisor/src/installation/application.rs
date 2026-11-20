@@ -194,6 +194,7 @@ pub fn remove(dirs: &UserDirs) -> io::Result<()> {
     check_removal(dirs, true)?;
     let _lock = idle_lock(dirs)?;
     disconnect(dirs)?;
+    autostart::remove_owned(dirs, Some(&image(dirs)))?;
     for path in [shortcut(dirs), image(dirs), icon(dirs), receipt(dirs)] { fs::remove_file(path)?; }
     match fs::remove_dir(directory(dirs)) {
         Ok(()) => Ok(()),

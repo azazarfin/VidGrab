@@ -407,115 +407,87 @@ def reconnect(native):
 
 def browser_journey(browser, desktop, native, base, fixture, screenshots):
     kind, options, popup, page = browser.kind, browser.options, browser.popup, desktop.page
-    initial=native.settings()
-    changed_format='best' if initial['values']['default_format']!='best' else 'bestaudio/best'
-    assert options.value('#input-download-dir')==initial['values']['download_dir']
-    options.select('#input-max-concurrent','6')
-    options.click('#btn-save-settings')
-    options.has_text('#status-message','saved')
-    assert native.settings()['values']['max_concurrent']==6
-    page.click('.download-defaults > summary') if not page.visible('#default-format') else None
-    wait(lambda:page.value('#concurrent-downloads')=='6','native desktop receives browser defaults event')
-    page.script('''this.__nativeDefaultsInput = [];
-        document.querySelector('#default-format').addEventListener('input', event =>
-            this.__nativeDefaultsInput.push({type:event.type,trusted:event.isTrusted,value:event.target.value}));''')
-    page.fill('#default-format',changed_format)
+    initial = native.settings()
+    changed_format = 'best' if initial['values']['default_format'] != 'best' else 'bestaudio/best'
+    assert options.text('#summary-download-dir') == initial['values']['download_dir']
+    assert options.text('#summary-max-concurrent') == str(initial['values']['max_concurrent'])
+    page.click('[data-desktop-tab="settings"]')
+    page.fill('#default-format', changed_format)
     draft = page.script('''return {value:document.querySelector('#default-format').value,
-        save_disabled:document.querySelector('.defaults-form button.primary').disabled,
-        input:this.__nativeDefaultsInput};''')
-    (screenshots/(kind+'-desktop-draft.json')).write_text(json.dumps(draft,indent=2)+'\n')
+        save_disabled:document.querySelector('.defaults-form button.primary').disabled};''')
+    (screenshots / (kind + '-desktop-draft.json')).write_text(json.dumps(draft, indent=2) + '\n')
     assert draft['value'] == changed_format and not draft['save_disabled'], draft
-    options.select('#input-max-concurrent','7')
-    options.click('#btn-save-settings')
-    options.has_text('#status-message','saved')
-    committed = wait(lambda:(value if (value:=native.settings())['values']['max_concurrent']==7 else None),
-        'the second browser defaults change commits before desktop conflict review')
-    (screenshots/(kind+'-desktop-commit.json')).write_text(json.dumps({'revision':committed['revision'],
-        'default_format':committed['values']['default_format'],'draft':page.value('#default-format')},indent=2)+'\n')
-    page.has_text('body','Your edits are kept')
-    assert page.value('#default-format')==changed_format
     page.button('Save defaults')
-    page.has_text('body','changed')
-    page.button('Reload defaults')
-    wait(lambda:page.value('#concurrent-downloads')=='7','desktop conflict reload')
-    options.select('#input-max-concurrent','8')
-    page.fill('#default-format',changed_format)
-    page.button('Save defaults')
-    page.has_text('body','Defaults saved')
-    options.click('#btn-save-settings')
-    options.has_text('#status-message','changed')
-    assert options.value('#input-max-concurrent')=='8'
+    page.has_text('body', 'Defaults saved')
     options.click('#btn-reload-settings')
-    wait(lambda:options.value('#input-max-concurrent')=='7','browser dirty draft conflict reload')
+    options.has_text('#summary-default-format', changed_format)
 
     def enqueue(url):
-        popup.fill('#video-url-input',url)
+        popup.fill('#video-url-input', url)
         popup.click('#download-btn')
-        wait(lambda:popup.visible('#format-modal') and not popup.script("return document.querySelector('#modal-start-btn').disabled"),'actual native probe dialog')
-        assert popup.value('#modal-download-dir-input')==native.settings()['values']['download_dir']
+        wait(lambda: popup.visible('#format-modal') and not popup.script("return document.querySelector('#modal-start-btn').disabled"), 'actual native probe dialog')
+        assert popup.value('#modal-download-dir-input') == native.settings()['values']['download_dir']
         popup.click('#modal-start-btn')
 
-    ordinary=base+'/'+kind+'-ordinary.wav'
+    ordinary = base + '/' + kind + '-ordinary.wav'
     enqueue(ordinary)
-    complete=wait(lambda:native.job(ordinary,'complete'),'installed popup executes frozen media',40)
-    page.has_text('body','Finished')
+    complete = wait(lambda: native.job(ordinary, 'complete'), 'installed popup executes frozen media', 40)
+    page.click('[data-desktop-tab="history"]')
+    page.has_text('body', 'Finished')
     assert 'বাংলা' in complete['file_path'] and Path(complete['file_path']).is_file()
-    popup.click('[data-tab="history"]')
-    wait(lambda:popup.visible('#task-card-'+complete['id']),'same completed job in installed popup')
+    wait(lambda: popup.visible('#task-card-' + complete['id']), 'same completed job in installed popup recent list')
 
-    protected=base+'/'+kind+'-protected.wav'
+    protected = base + '/' + kind + '-protected.wav'
     fixture['release'].clear()
-    page.fill('#media-url',protected)
+    page.click('[data-desktop-tab="queue"]')
+    page.fill('#media-url', protected)
     page.click('.download-form button.primary')
-    pending=wait(lambda:native.job(protected,'waiting_for_auth'),'actual HTTP 403 enters fresh-auth wait',40)
-    page.has_text('body','Fresh browser context needed')
+    pending = wait(lambda: native.job(protected, 'waiting_for_auth'), 'actual HTTP 403 enters fresh-auth wait', 40)
+    page.has_text('body', 'Fresh browser context needed')
     popup.click('[data-tab="queue"]')
     popup.button('Share fresh cookies')
-    popup.has_text('#client-status','cookie forwarding')
-    assert native.job(protected)['status']=='waiting_for_auth'
-    permission=browser.permissions(protected)
+    popup.has_text('#client-status', 'cookie forwarding')
+    assert native.job(protected)['status'] == 'waiting_for_auth'
+    permission = browser.permissions(protected)
     assert permission['native_granted'] and permission['cookies_granted'] and permission['site_granted']
     assert permission['cookie_forwarding_enabled'] is False
-    options.click('#btn-tab-advanced')
-    options.has_text('#permission-status','Cookies: granted')
-    values=native.settings()['values']
+    options.has_text('#permission-status', 'Cookies: granted')
+    values = native.settings()['values']
     options.click('label[for="chk-cookie-forwarding"]')
-    options.click('#btn-save-settings')
-    options.has_text('#status-message','saved')
-    assert native.settings()['values']==values,'Browser preference entered SQLite settings'
+    options.has_text('#status-message', 'Cookie forwarding enabled')
+    assert native.settings()['values'] == values, 'Browser preference entered SQLite settings'
     assert browser.permissions(protected)['cookie_forwarding_enabled'] is True
-    login=browser.open('popup/popup.html')
-    login.goto(base+'/login')
+    login = browser.open('popup/popup.html')
+    login.goto(base + '/login')
     popup.button('Share fresh cookies')
-    active=wait(lambda:native.job(protected,'downloading'),'fresh browser cookie authenticates the same job',40)
-    assert active['id']==pending['id']
+    active = wait(lambda: native.job(protected, 'downloading'), 'fresh browser cookie authenticates the same job', 40)
+    assert active['id'] == pending['id']
     popup.button('Cancel')
-    wait(lambda:native.job(protected,'cancelled'),'protected native cancellation')
-    popup.click('[data-tab="history"]')
+    wait(lambda: native.job(protected, 'cancelled'), 'protected native cancellation')
     popup.button('Retry')
-    wait(lambda:native.job(protected,'downloading'),'protected retry obtains new job context',40)
+    wait(lambda: native.job(protected, 'downloading'), 'protected retry obtains new job context', 40)
     fixture['release'].set()
-    authenticated=wait(lambda:native.job(protected,'complete'),'protected retry completion',40)
-    assert authenticated['id']==pending['id']
-    assert any(r['path'].endswith(kind+'-protected.wav') and r['authenticated'] for r in fixture['requests'])
-    storage=browser.background('return new Promise(resolve=>this.chrome.storage.local.get(null,resolve))')
+    authenticated = wait(lambda: native.job(protected, 'complete'), 'protected retry completion', 40)
+    assert authenticated['id'] == pending['id']
+    assert any(r['path'].endswith(kind + '-protected.wav') and r['authenticated'] for r in fixture['requests'])
+    storage = browser.background('return new Promise(resolve=>this.chrome.storage.local.get(null,resolve))')
     assert 'vidgrab_validation_session' not in json.dumps(storage)
     popup.click('[data-tab="detected"]')
-    replay=lost_reply(browser,popup,native,base+'/'+kind+'-lost.wav',enqueue,lambda:popup.click('#check-request-btn'))
-    mutations=[e for e in browser.state()['trace'] if e['key']]
-    recovered=reconnect(native)
-    page.has_text('.connection','Connected')
-    popup.has_text('#connection-status','Connected')
+    replay = lost_reply(browser, popup, native, base + '/' + kind + '-lost.wav', enqueue, lambda: popup.click('#check-request-btn'))
+    mutations = [e for e in browser.state()['trace'] if e['key']]
+    recovered = reconnect(native)
+    page.has_text('.connection', 'Connected')
+    popup.has_text('#connection-status', 'Connected')
     options.click('#btn-reload-settings')
-    options.has_text('#status-message','Current app settings loaded.')
-    current_settings=native.settings()['values']
-    assert options.value('#input-download-dir')==current_settings['download_dir']
-    assert options.value('#input-max-concurrent')==str(current_settings['max_concurrent'])
-    popup.click('[data-tab="history"]')
-    wait(lambda:popup.visible('#task-card-'+authenticated['id']),'installed browser reconnect retains same history')
-    assert [e for e in browser.state()['trace'] if e['key']]==mutations,'Reconnect replayed a mutation'
-    popup.screenshot(screenshots/(kind+'-native-popup.png'))
-    options.screenshot(screenshots/(kind+'-native-options.png'))
+    options.has_text('#status-message', 'Current app defaults loaded.')
+    current_settings = native.settings()['values']
+    assert options.text('#summary-download-dir') == current_settings['download_dir']
+    assert options.text('#summary-max-concurrent') == str(current_settings['max_concurrent'])
+    popup.click('[data-tab="queue"]')
+    wait(lambda: popup.visible('#task-card-' + authenticated['id']), 'installed browser reconnect retains same recent history')
+    assert [e for e in browser.state()['trace'] if e['key']] == mutations, 'Reconnect replayed a mutation'
+    popup.screenshot(screenshots / (kind + '-native-popup.png'))
+    options.screenshot(screenshots / (kind + '-native-options.png'))
     browser.background('this.__nativeAcceptance.strip=true')
     popup.goto(browser.base+'popup/popup.html')
     popup.has_text('#connection-status','Update required')
@@ -618,11 +590,12 @@ def main():
                 desktop.__init__(args,environment,native,playwright)
                 receipt['desktop']={'webview':desktop.webview,'window':desktop.window,'ready':desktop.ready}
                 page=desktop.page
-                page.click('.download-defaults > summary')
+                page.click('[data-desktop-tab="settings"]')
                 page.fill('#default-format','bestvideo+bestaudio/best')
                 if not page.script("return document.querySelector('.defaults-form button.primary').disabled"):
                     page.button('Save defaults')
                     page.has_text('body','Defaults saved')
+                page.click('[data-desktop-tab="queue"]')
                 receipt['desktop']['lost_reply']=lost_reply(desktop,page,native,base+'/desktop-lost.wav',
                     lambda url:(page.fill('#media-url',url),page.click('.download-form button.primary')),
                     lambda:page.button('Check request'))

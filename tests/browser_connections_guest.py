@@ -97,9 +97,11 @@ def main():
         return owner
 
     def summary(text):
+        driver.script('document.querySelector(\'[data-desktop-tab="browser"]\')?.click()')
         return driver.script('return document.querySelector(".browser-connection-summary")?.textContent === arguments[0]', text)
 
     def click_connection(action, expected):
+        driver.script('document.querySelector(\'[data-desktop-tab="browser"]\')?.click()')
         selector = f'[data-connection-action="{action}"]'
         driver.script('document.querySelector(arguments[0]).scrollIntoView({block:"center"})', selector)
         virtual.input('Click ' + action + ' browser connection', expected,
@@ -122,8 +124,11 @@ def main():
         checkpoint('registered', status=cli_status(), owner_pid=first['supervisor_pid'])
         gate = threading.Event()
         with fixture_server(gate) as url:
-            driver.fill('#fixture-url', url)
-            driver.click('.primary')
+            driver.script('document.querySelector(\'[data-desktop-tab="queue"]\')?.click()')
+            driver.click('#toggle-media-options')
+            driver.click('#option-audio-only')
+            driver.fill('#media-url', url)
+            driver.click('.download-form button.primary')
             active = wait_for(lambda: status if (status := local_call(config)).get('jobs')
                 and status['jobs'][0]['status'] == 'downloading' else None, label='gated active fixture')
             click_connection('disconnect', lambda: summary('Disconnected'))

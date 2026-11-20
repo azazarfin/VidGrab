@@ -1,28 +1,24 @@
 document.addEventListener("DOMContentLoaded", () => {
   const api = window.vidGrabAPI;
-  
+
   // DOM Elements
   const connectionStatus = document.getElementById("connection-status");
   const backendErrorOverlay = document.getElementById("backend-error-overlay");
   const retryBackendBtn = document.getElementById("retry-backend-btn");
+  const openAppBtn = document.getElementById("open-app-btn");
+  const offlineOpenAppBtn = document.getElementById("offline-open-app-btn");
+  const recentOpenAppBtn = document.getElementById("recent-open-app-btn");
   const settingsBtn = document.getElementById("settings-btn");
-  
+
   const tabBtns = document.querySelectorAll(".tab-btn");
   const tabContents = document.querySelectorAll(".tab-content");
-  
-  const activeList = document.getElementById("active-download-list");
+
   const queueList = document.getElementById("queue-list");
-  const historyList = document.getElementById("history-list");
-  
-  const downloadsEmpty = document.getElementById("downloads-empty");
   const queueEmpty = document.getElementById("queue-empty");
-  const historyEmpty = document.getElementById("history-empty");
-  const historyActions = document.getElementById("history-actions");
-  const clearHistoryBtn = document.getElementById("clear-history-btn");
-  
-  const badgeDownloads = document.getElementById("badge-downloads");
+  const recentSection = document.getElementById("recent-section");
+  const recentList = document.getElementById("recent-list");
+
   const badgeQueue = document.getElementById("badge-queue");
-  const badgeHistory = document.getElementById("badge-history");
   const badgeDetected = document.getElementById("badge-detected");
 
   const detectedList = document.getElementById("detected-list");
@@ -47,11 +43,11 @@ document.addEventListener("DOMContentLoaded", () => {
   let selectedDetectedUrls = new Set();
   let detectedCandidates = [];
   const jobSources = new Map();
-  
+
   const videoUrlInput = document.getElementById("video-url-input");
   const pasteBtn = document.getElementById("paste-btn");
   const downloadBtn = document.getElementById("download-btn");
-  
+
   // Modal Elements
   const formatModal = document.getElementById("format-modal");
   const modalHeaderTitle = document.getElementById("modal-header-title");
@@ -67,14 +63,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const optionSubtitles = document.getElementById("option-subtitles");
   const optionThumbnail = document.getElementById("option-thumbnail");
 
-  // Scheduler Elements
-  const chkScheduleLater = document.getElementById("chk-schedule-later");
-  const scheduleInputs = document.getElementById("schedule-inputs");
-  const inputScheduleTime = document.getElementById("input-schedule-time");
-  const btnPresetTonight = document.getElementById("btn-preset-tonight");
-  const btnPresetTomorrow = document.getElementById("btn-preset-tomorrow");
-
-  // Extended Advanced Modal Elements
+  // Extended Modal Elements
   const modalSingleVideoContent = document.getElementById("modal-single-video-content");
   const videoQualityGroup = document.getElementById("video-quality-group");
   const audioFormatGroup = document.getElementById("audio-format-group");
@@ -124,6 +113,9 @@ document.addEventListener("DOMContentLoaded", () => {
   let expiredProbeRefreshed = false;
   let needsQualityChoice = false;
 
+  const TERMINAL_STATUSES = new Set(["complete", "failed", "cancelled"]);
+  const PAUSABLE_STATUSES = new Set(["queued", "scheduled", "retry_wait", "downloading", "probing"]);
+
   function showClientStatus(message, error = false) {
     clientStatus.textContent = message;
     clientStatus.hidden = !message;
@@ -160,6 +152,22 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   if (detectedRestartSettingsBtn) detectedRestartSettingsBtn.addEventListener("click", () => settingsBtn.click());
 
+  async function triggerOpenApp(triggerButton) {
+    if (triggerButton) triggerButton.disabled = true;
+    try {
+      await api.openApp();
+      showClientStatus("Opening VidGrab desktop app.");
+    } catch (error) {
+      showClientStatus(error?.message || "Could not open VidGrab. Check that the desktop companion is installed and connected.", true);
+    } finally {
+      if (triggerButton) triggerButton.disabled = false;
+    }
+  }
+
+  for (const button of [openAppBtn, offlineOpenAppBtn, recentOpenAppBtn]) {
+    if (button) button.addEventListener("click", () => { void triggerOpenApp(button); });
+  }
+
   let ffmpegAvailable = false;
   function connect() {
     api.connect();
@@ -170,18 +178,24 @@ document.addEventListener("DOMContentLoaded", () => {
     }).catch(error => showClientStatus(error.message, true));
   }
   reviewRequestBtn.addEventListener("click", () => chrome.runtime.openOptionsPage());
+
   async function checkBackendHealth() {
     try { await api.sync(true); } catch (error) { onBackendOffline(error); }
   }
+
   function onBackendOffline(error) {
     connectionStatus.classList.remove("online");
     connectionStatus.querySelector(".status-text").textContent = error?.code === "APP_INCOMPATIBLE" ? "Update required" : "Unavailable";
-    backendErrorOverlay.classList.add("active");
+    connectionStatus.title = error?.message || "Companion unavailable";
     backendErrorOverlay.hidden = false;
     backendErrorOverlay.querySelector("h3").textContent = error?.code === "APP_INCOMPATIBLE" ? "Update required" : "Companion unavailable";
     const description = backendErrorOverlay.querySelector("p");
-    if (description) description.textContent = error?.message || "Open VidGrab and test the native browser connection.";
+    if (description) {
+      description.textContent = error?.message || "Open VidGrab and test the native browser connection. Page detection in Detected remains usable.";
+    }
+    renderAll();
   }
+
   api.addEventListener("snapshot", event => {
     const state = event.detail;
     tasksMap = new Map(state.snapshot.jobs.map(job => [job.id, job]));
@@ -191,7 +205,6 @@ document.addEventListener("DOMContentLoaded", () => {
     connectionStatus.classList.add("online");
     connectionStatus.querySelector(".status-text").textContent = "Connected";
     connectionStatus.title = "Native companion connected";
-    backendErrorOverlay.classList.remove("active");
     backendErrorOverlay.hidden = true;
     const warning = document.getElementById("modal-ffmpeg-warning");
     if (warning) warning.style.display = ffmpegAvailable ? "none" : "block";
@@ -200,17 +213,21 @@ document.addEventListener("DOMContentLoaded", () => {
     updateDefaults();
     renderAll();
   });
+
   api.addEventListener("connection_change", event => {
     if (!event.detail.connected) onBackendOffline(event.detail.error);
   });
+
   async function refreshLists() {
     try { await api.sync(); } catch (error) { showClientStatus(error.message, true); }
   }
+
   loadMoreBtn.addEventListener("click", async () => {
     loadMoreBtn.disabled = true;
     try { await api.loadMore(); } catch (error) { showClientStatus(error.message, true); }
     finally { loadMoreBtn.disabled = false; }
   });
+
   checkRequestBtn.addEventListener("click", async () => {
     checkRequestBtn.disabled = true;
     try {
@@ -221,9 +238,9 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (error) {
       if (error.details?.replay_available === false) reviewRequestBtn.hidden = false;
       showClientStatus(error.message, true);
-    }
-    finally { checkRequestBtn.disabled = false; }
+    } finally { checkRequestBtn.disabled = false; }
   });
+
   window.addEventListener("pagehide", () => api.disconnect());
 
   // --- Helper: Format Utilities ---
@@ -234,11 +251,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
-  }
-
-  function formatSpeed(bytesPerSec) {
-    if (!bytesPerSec) return "0 B/s";
-    return formatBytes(bytesPerSec, 1) + "/s";
   }
 
   function formatDuration(seconds) {
@@ -252,51 +264,34 @@ document.addEventListener("DOMContentLoaded", () => {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   }
 
-  function formatETA(seconds) {
-    if (seconds === null || seconds === undefined) return "--:--";
-    if (seconds === Infinity) return "calc...";
-    return formatDuration(seconds);
-  }
-
   // --- DOM Rendering ---
   function renderAll() {
-    // Debounce: collapse rapid successive calls into one
     if (renderAllTimer) cancelAnimationFrame(renderAllTimer);
     renderAllTimer = requestAnimationFrame(_renderAllNow);
   }
 
   function _renderAllNow() {
     const tasks = Array.from(tasksMap.values());
-    
-    const activeTasks = tasks.filter(t => t.status === "downloading" || t.status === "postprocessing");
-    const queuedTasks = tasks.filter(t => !["downloading", "postprocessing", "complete", "failed", "cancelled"].includes(t.status));
-    const historyTasks = tasks.filter(t => ["complete", "failed", "cancelled"].includes(t.status));
+    const unfinishedTasks = tasks.filter(task => !TERMINAL_STATUSES.has(task.status));
+    const recentTasks = tasks.filter(task => TERMINAL_STATUSES.has(task.status)).slice(0, 6);
 
-    // Update badges
-    badgeDownloads.textContent = activeTasks.length;
-    badgeQueue.textContent = queuedTasks.length;
-    badgeHistory.textContent = counts.total - counts.unfinished;
+    badgeQueue.textContent = counts.unfinished || unfinishedTasks.length;
 
-    // Render lists
-    renderList(activeList, activeTasks, downloadsEmpty);
-    renderList(queueList, queuedTasks, queueEmpty);
-    renderList(historyList, historyTasks, historyEmpty);
-    
-    // Show/hide history clear button
-    historyActions.style.display = "none";
-  }
-
-  function renderList(listElement, tasks, emptyElement) {
-    listElement.innerHTML = "";
-    if (tasks.length === 0) {
-      emptyElement.style.display = "flex";
-      return;
+    queueList.replaceChildren();
+    if (unfinishedTasks.length === 0) {
+      queueEmpty.style.display = backendErrorOverlay.hidden ? "flex" : "none";
+    } else {
+      queueEmpty.style.display = "none";
+      for (const task of unfinishedTasks) {
+        queueList.appendChild(createTaskCard(task));
+      }
     }
-    emptyElement.style.display = "none";
 
-    tasks.forEach(task => {
-      listElement.appendChild(createTaskCard(task));
-    });
+    recentList.replaceChildren();
+    recentSection.hidden = recentTasks.length === 0;
+    for (const task of recentTasks) {
+      recentList.appendChild(createTaskCard(task));
+    }
   }
 
   function createTaskCard(task) {
@@ -315,7 +310,7 @@ document.addEventListener("DOMContentLoaded", () => {
     title.textContent = task.title || task.url || "Download";
     title.title = title.textContent;
     content.appendChild(title);
-    if (!["complete", "failed", "cancelled"].includes(task.status)) {
+    if (!TERMINAL_STATUSES.has(task.status)) {
       const progress = document.createElement("progress");
       progress.max = 100; progress.value = task.progress;
       progress.setAttribute("aria-label", title.textContent + " progress");
@@ -324,10 +319,17 @@ document.addEventListener("DOMContentLoaded", () => {
     const meta = document.createElement("div");
     meta.className = "card-meta";
     const status = document.createElement("span");
-    status.className = "card-status-badge";
+    status.className = "card-status-badge " + task.status;
     status.textContent = {
-      waiting_for_auth: "Fresh cookies needed", retry_wait: "Retry scheduled",
-      waiting_children: "Waiting for playlist items", cancelling: "Cancelling",
+      waiting_for_auth: "Fresh cookies needed",
+      retry_wait: "Retry scheduled",
+      waiting_children: "Waiting for playlist items",
+      waiting_for_children: "Waiting for playlist items",
+      cancelling: "Cancelling",
+      pausing: "Pausing",
+      paused: "Paused",
+      scheduled: "Scheduled",
+      probing: "Checking media",
     }[task.status] || task.status;
     meta.appendChild(status);
     const headerRequired = task.error_code === "BROWSER_CONTEXT_REQUIRED";
@@ -359,10 +361,12 @@ document.addEventListener("DOMContentLoaded", () => {
       group.append(label, select);
       content.appendChild(group);
     }
-    if (task.error_code || task.retry_at || task.file_path) {
+    if (task.error_code || task.retry_at || task.scheduled_at || task.file_path) {
       const detail = document.createElement("span");
       detail.className = "card-detail";
-      detail.textContent = task.file_path || (task.retry_at ? "Retry after " + new Date(task.retry_at * 1000).toLocaleString() : task.error_code);
+      detail.textContent = task.file_path
+        || (task.scheduled_at && task.status === "scheduled" ? "Scheduled for " + new Date(task.scheduled_at).toLocaleString()
+          : task.retry_at ? "Retry after " + new Date(task.retry_at * 1000).toLocaleString() : task.error_code);
       meta.appendChild(detail);
     }
     const actions = document.createElement("div");
@@ -392,6 +396,8 @@ document.addEventListener("DOMContentLoaded", () => {
       else addAction(headerRequired ? "Share fresh context" : "Share fresh cookies", () => api.authenticate(task, selectedSource()),
         headerRequired || sources.length > 1);
     }
+    if (PAUSABLE_STATUSES.has(task.status)) addAction("Pause", () => api.pauseDownload(task));
+    if (task.status === "paused") addAction("Resume", () => api.resumeDownload(task));
     if (["failed", "cancelled"].includes(task.status)) addAction("Retry", () => api.retryDownload(task, selectedSource()),
       headerRequired || sources.length > 1);
     else if (task.status !== "complete" && task.status !== "cancelling") addAction("Cancel", () => api.cancelDownload(task));
@@ -400,43 +406,32 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // --- Tab Navigation ---
+  function switchTab(targetTab) {
+    tabBtns.forEach(b => b.classList.toggle("active", b.getAttribute("data-tab") === targetTab));
+    tabContents.forEach(c => c.classList.toggle("active", c.id === `panel-${targetTab}`));
+    if (targetTab === "detected") void refreshPermissions();
+  }
+
   tabBtns.forEach(btn => {
     btn.addEventListener("click", () => {
-      tabBtns.forEach(b => b.classList.remove("active"));
-      tabContents.forEach(c => c.classList.remove("active"));
-      
-      btn.classList.add("active");
-      const targetTab = btn.getAttribute("data-tab");
-      document.getElementById(`panel-${targetTab}`).classList.add("active");
-      if (targetTab === "detected") void refreshPermissions();
+      switchTab(btn.getAttribute("data-tab"));
     });
   });
 
-  clearHistoryBtn.hidden = true;
-
   // --- Quick Download Trigger & Probe ---
-  downloadBtn.addEventListener("click", () => {
+  function submitInputUrl() {
     const url = videoUrlInput.value.trim();
-    if (url) {
-      if (!isValidUrl(url)) {
-        alert("Please enter a valid URL (e.g. https://www.youtube.com/watch?v=...).");
-        return;
-      }
-      triggerProbe(url);
+    if (!url) return;
+    if (!isValidUrl(url)) {
+      showClientStatus("Enter an HTTP or HTTPS media URL without embedded credentials.", true);
+      return;
     }
-  });
+    triggerProbe(url);
+  }
 
+  downloadBtn.addEventListener("click", submitInputUrl);
   videoUrlInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      const url = videoUrlInput.value.trim();
-      if (url) {
-        if (!isValidUrl(url)) {
-          alert("Please enter a valid URL (e.g. https://www.youtube.com/watch?v=...).");
-          return;
-        }
-        triggerProbe(url);
-      }
-    }
+    if (e.key === "Enter") submitInputUrl();
   });
 
   pasteBtn.addEventListener("click", async () => {
@@ -461,7 +456,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function chooseAnotherSource() {
     closeModal();
-    document.querySelector('[data-tab="detected"]').click();
+    switchTab("detected");
   }
 
   function showProbeFailure(error) {
@@ -493,6 +488,9 @@ document.addEventListener("DOMContentLoaded", () => {
     } else if (error.code === "APP_INCOMPATIBLE") {
       probeActionBtn.textContent = "Review VidGrab update";
       probeRecoveryAction = () => chrome.runtime.openOptionsPage();
+    } else if (error.code === "APP_UNAVAILABLE") {
+      probeActionBtn.textContent = "Open in VidGrab";
+      probeRecoveryAction = () => { void triggerOpenApp(probeActionBtn); };
     } else if (["UNSUPPORTED_MEDIA", "BROWSER_CONTEXT_EXPIRED", "FORMAT_UNAVAILABLE"].includes(error.code)) {
       probeActionBtn.textContent = "Choose another source";
       probeRecoveryAction = chooseAnotherSource;
@@ -545,6 +543,7 @@ document.addEventListener("DOMContentLoaded", () => {
       : "Formats refreshed once. The previous quality is unavailable. Choose another quality before starting.";
     formatSelect.focus();
   }
+
   formatSelect.addEventListener("change", () => {
     needsQualityChoice = false;
     if (currentProbedData && !actionBusy) modalStartBtn.disabled = false;
@@ -590,11 +589,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   optionSubtitles.addEventListener("change", () => {
-    if (optionSubtitles.checked) {
-      subtitleOptionsGroup.style.display = "block";
-    } else {
-      subtitleOptionsGroup.style.display = "none";
-    }
+    subtitleOptionsGroup.style.display = optionSubtitles.checked ? "block" : "none";
   });
 
   playlistSelectAll.addEventListener("click", () => {
@@ -622,8 +617,7 @@ document.addEventListener("DOMContentLoaded", () => {
     formatSelect.replaceChildren(new Option("App default", ""));
     formatSelect.disabled = true;
     modalStartBtn.disabled = true;
-    
-    // Reset options
+
     optionAudioOnly.checked = false;
     optionSubtitles.checked = false;
     optionThumbnail.checked = false;
@@ -632,64 +626,32 @@ document.addEventListener("DOMContentLoaded", () => {
     audioFormatGroup.style.display = "none";
     subtitleOptionsGroup.style.display = "none";
     subtitleLangSelect.innerHTML = "";
-    
+
     modalSingleVideoContent.style.display = "block";
     modalPlaylistContent.style.display = "none";
   }
 
   function showModalDetails(info) {
-    // Disable/Enable ffmpeg dependent fields
+    for (const checkbox of [optionAudioOnly, optionSubtitles, optionEmbedSubtitles, optionThumbnail]) {
+      checkbox.disabled = !ffmpegAvailable;
+      if (!ffmpegAvailable) checkbox.checked = false;
+      checkbox.parentElement.style.opacity = ffmpegAvailable ? "1" : "0.5";
+      checkbox.parentElement.style.pointerEvents = ffmpegAvailable ? "auto" : "none";
+    }
     if (!ffmpegAvailable) {
-      optionAudioOnly.checked = false;
-      optionAudioOnly.disabled = true;
-      optionAudioOnly.parentElement.style.opacity = "0.5";
-      optionAudioOnly.parentElement.style.pointerEvents = "none";
-      
-      optionSubtitles.checked = false;
-      optionSubtitles.disabled = true;
-      optionSubtitles.parentElement.style.opacity = "0.5";
-      optionSubtitles.parentElement.style.pointerEvents = "none";
-
-      optionEmbedSubtitles.checked = false;
-      optionEmbedSubtitles.disabled = true;
-      optionEmbedSubtitles.parentElement.style.opacity = "0.5";
-      optionEmbedSubtitles.parentElement.style.pointerEvents = "none";
-
-      optionThumbnail.checked = false;
-      optionThumbnail.disabled = true;
-      optionThumbnail.parentElement.style.opacity = "0.5";
-      optionThumbnail.parentElement.style.pointerEvents = "none";
-      
-      // Ensure audio format group is hidden since audio only is disabled
       videoQualityGroup.style.display = "block";
       audioFormatGroup.style.display = "none";
       subtitleOptionsGroup.style.display = "none";
-    } else {
-      optionAudioOnly.disabled = false;
-      optionAudioOnly.parentElement.style.opacity = "1";
-      optionAudioOnly.parentElement.style.pointerEvents = "auto";
-      
-      optionSubtitles.disabled = false;
-      optionSubtitles.parentElement.style.opacity = "1";
-      optionSubtitles.parentElement.style.pointerEvents = "auto";
-
-      optionEmbedSubtitles.disabled = false;
-      optionEmbedSubtitles.parentElement.style.opacity = "1";
-      optionEmbedSubtitles.parentElement.style.pointerEvents = "auto";
-
-      optionThumbnail.disabled = false;
-      optionThumbnail.parentElement.style.opacity = "1";
-      optionThumbnail.parentElement.style.pointerEvents = "auto";
     }
 
     if (info.is_playlist) {
       modalHeaderTitle.textContent = "Download Playlist";
       modalSingleVideoContent.style.display = "none";
       modalPlaylistContent.style.display = "block";
-      
+
       playlistTitle.textContent = info.title;
-      playlistMeta.textContent = `${info.entries ? info.entries.length : 0} videos • ${info.uploader || 'Unknown Channel'}`;
-      
+      playlistMeta.textContent = `${info.entries ? info.entries.length : 0} videos • ${info.uploader || "Unknown Channel"}`;
+
       playlistEntriesList.innerHTML = "";
       if (info.entries && info.entries.length > 0) {
         info.entries.forEach((entry, idx) => {
@@ -700,7 +662,7 @@ document.addEventListener("DOMContentLoaded", () => {
           row.style.gap = "10px";
           row.style.padding = "6px 8px";
           row.style.borderBottom = "1px solid rgba(255,255,255,0.03)";
-          
+
           const checkbox = document.createElement("input");
           checkbox.type = "checkbox";
           checkbox.checked = true;
@@ -711,52 +673,46 @@ document.addEventListener("DOMContentLoaded", () => {
           checkbox.dataset.thumbnail = entry.thumbnail || "";
           checkbox.dataset.duration = entry.duration || "";
           checkbox.addEventListener("change", updatePlaylistSelectedCount);
-          
+
           const thumbnail = document.createElement("img");
           thumbnail.src = entry.thumbnail || "../icons/icon128.png";
           thumbnail.style.width = "40px";
           thumbnail.style.height = "24px";
           thumbnail.style.objectFit = "cover";
           thumbnail.style.borderRadius = "4px";
-          
+
           const titleText = document.createElement("span");
           titleText.textContent = `${idx + 1}. ${entry.title}`;
           titleText.style.flex = "1";
-          titleText.style.fontSize = "11px";
+          titleText.style.fontSize = "12px";
           titleText.style.whiteSpace = "nowrap";
           titleText.style.overflow = "hidden";
           titleText.style.textOverflow = "ellipsis";
-          
+
           const durationText = document.createElement("span");
           durationText.textContent = entry.duration ? formatDuration(entry.duration) : "";
-          durationText.style.fontSize = "10px";
+          durationText.style.fontSize = "12px";
           durationText.style.color = "var(--text-secondary)";
-          
-          row.appendChild(checkbox);
-          row.appendChild(thumbnail);
-          row.appendChild(titleText);
-          row.appendChild(durationText);
+
+          row.append(checkbox, thumbnail, titleText, durationText);
           playlistEntriesList.appendChild(row);
         });
       }
-      
+
       updatePlaylistSelectedCount();
       modalStartBtn.disabled = false;
     } else {
       modalHeaderTitle.textContent = "Download Options";
       modalSingleVideoContent.style.display = "block";
       modalPlaylistContent.style.display = "none";
-      
+
       modalThumbnail.src = info.thumbnail || "../icons/icon128.png";
       modalTitle.textContent = info.title || "Unknown Title";
       customTitleInput.value = info.title || "";
       modalAuthor.textContent = info.uploader || "Unknown Uploader";
       modalDuration.textContent = info.duration ? formatDuration(info.duration) : "";
-      
-      // Populate formats
+
       formatSelect.innerHTML = "";
-      
-      // Default option
       const bestOpt = document.createElement("option");
       bestOpt.value = "";
       bestOpt.textContent = "App default (" + (appDefaults?.default_format || "loading") + ")";
@@ -765,7 +721,6 @@ document.addEventListener("DOMContentLoaded", () => {
       if (info.formats) {
         const uniqueFormats = new Set();
         const cleanFormats = [];
-        
         info.formats.forEach(f => {
           const identity = JSON.stringify([f.resolution, f.ext, f.fps, f.container, f.acodec === "none" || !f.acodec]);
           if (f.resolution && !uniqueFormats.has(identity)) {
@@ -773,8 +728,6 @@ document.addEventListener("DOMContentLoaded", () => {
             cleanFormats.push(f);
           }
         });
-
-        // Add cleaner parsed resolutions
         cleanFormats.forEach(f => {
           const opt = document.createElement("option");
           opt.value = f.format_id;
@@ -783,8 +736,7 @@ document.addEventListener("DOMContentLoaded", () => {
           formatSelect.appendChild(opt);
         });
       }
-      
-      // Populate subtitles
+
       subtitleLangSelect.innerHTML = "";
       if (info.subtitles && Object.keys(info.subtitles).length > 0) {
         Object.keys(info.subtitles).forEach(lang => {
@@ -801,13 +753,12 @@ document.addEventListener("DOMContentLoaded", () => {
         opt.disabled = true;
         subtitleLangSelect.appendChild(opt);
       }
-      
+
       formatSelect.disabled = false;
       modalStartBtn.disabled = false;
     }
   }
 
-  // --- Modal Button Clicks ---
   function closeModal() {
     ++probeNumber;
     clearProbeRecovery();
@@ -820,53 +771,12 @@ document.addEventListener("DOMContentLoaded", () => {
     if (modalDownloadDirInput) modalDownloadDirInput.value = "";
     if (modalOutputTemplateInput) modalOutputTemplateInput.value = "";
     if (playlistDownloadDirInput) playlistDownloadDirInput.value = "";
-    
-    // Reset Scheduler
-    if (chkScheduleLater) {
-      chkScheduleLater.checked = false;
-      scheduleInputs.style.display = "none";
-      inputScheduleTime.value = "";
-    }
-  }
-
-  // Helper to format local date for datetime-local input
-  function formatLocalDateForInput(date) {
-    const tzoffset = date.getTimezoneOffset() * 60000;
-    return (new Date(date.getTime() - tzoffset)).toISOString().slice(0, 16);
-  }
-
-  if (chkScheduleLater) {
-    chkScheduleLater.addEventListener("change", () => {
-      if (chkScheduleLater.checked) {
-        scheduleInputs.style.display = "flex";
-        const defaultTime = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
-        inputScheduleTime.value = formatLocalDateForInput(defaultTime);
-      } else {
-        scheduleInputs.style.display = "none";
-      }
-    });
-
-    btnPresetTonight.addEventListener("click", () => {
-      const tonight = new Date();
-      tonight.setHours(23, 0, 0, 0);
-      if (tonight.getTime() < Date.now()) {
-        tonight.setDate(tonight.getDate() + 1);
-      }
-      inputScheduleTime.value = formatLocalDateForInput(tonight);
-    });
-
-    btnPresetTomorrow.addEventListener("click", () => {
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      tomorrow.setHours(6, 0, 0, 0);
-      inputScheduleTime.value = formatLocalDateForInput(tomorrow);
-    });
   }
 
   modalCloseBtn.addEventListener("click", closeModal);
   modalCancelBtn.addEventListener("click", closeModal);
   formatModal.addEventListener("cancel", event => { event.preventDefault(); closeModal(); });
-  
+
   modalStartBtn.addEventListener("click", async () => {
     if (!currentProbedUrl || !currentProbedData || actionBusy || needsQualityChoice) return;
     const submissionSequence = probeNumber;
@@ -902,7 +812,7 @@ document.addEventListener("DOMContentLoaded", () => {
       videoUrlInput.value = "";
       closeModal();
       await api.sync();
-      document.querySelector('[data-tab="queue"]').click();
+      switchTab("queue");
       showClientStatus("Download queued.");
     } catch (error) {
       if (submissionSequence !== probeNumber && !api.session.pending) return;
@@ -914,38 +824,23 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       if (api.session.pending) closeModal();
-      else if (["AUTH_REQUIRED", "AUTH_CONTEXT_EXPIRED", "BROWSER_CONTEXT_REQUIRED", "BROWSER_CONTEXT_EXPIRED", "PROBE_CONTEXT_SCOPE", "APP_INCOMPATIBLE"].includes(error.code)) showProbeFailure(error);
+      else if (["AUTH_REQUIRED", "AUTH_CONTEXT_EXPIRED", "BROWSER_CONTEXT_REQUIRED", "BROWSER_CONTEXT_EXPIRED", "PROBE_CONTEXT_SCOPE", "APP_INCOMPATIBLE", "APP_UNAVAILABLE"].includes(error.code)) showProbeFailure(error);
       else modalAuthor.textContent = error.message;
       showClientStatus(api.session.pending ? "The request may have succeeded. Check it before starting another download." : error.message, true);
       if (api.session.pending) checkRequestBtn.focus();
     } finally { actionBusy = false; modalStartBtn.disabled = !currentProbedData || needsQualityChoice; renderAll(); }
   });
 
-  retryBackendBtn.addEventListener("click", () => {
-    checkBackendHealth();
-  });
+  retryBackendBtn.addEventListener("click", () => { void checkBackendHealth(); });
 
   settingsBtn.addEventListener("click", () => {
-    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.openOptionsPage) {
+    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.openOptionsPage) {
       chrome.runtime.openOptionsPage();
     } else {
-      const url = typeof chrome !== 'undefined' && chrome.runtime ? chrome.runtime.getURL("options/options.html") : "../options/options.html";
+      const url = typeof chrome !== "undefined" && chrome.runtime ? chrome.runtime.getURL("options/options.html") : "../options/options.html";
       window.open(url);
     }
   });
-
-  // --- Notifications Helper ---
-  function showDesktopNotification(title, message) {
-    if (typeof chrome !== 'undefined' && chrome.notifications) {
-      chrome.notifications.create(null, {
-        type: "basic",
-        iconUrl: "../icons/icon128.png",
-        title,
-        message,
-        priority: 1
-      });
-    }
-  }
 
   // --- Detected Videos Handling ---
   const selectionKey = video => video.id || video.url;
@@ -966,12 +861,9 @@ document.addEventListener("DOMContentLoaded", () => {
     badgeDetected.textContent = videos.length;
     detectedList.innerHTML = "";
 
-    // Sync selection Set to only contain URLs that are actually in the current list
     const currentUrls = new Set(videos.map(selectionKey));
     for (const url of selectedDetectedUrls) {
-      if (!currentUrls.has(url)) {
-        selectedDetectedUrls.delete(url);
-      }
+      if (!currentUrls.has(url)) selectedDetectedUrls.delete(url);
     }
 
     if (videos.length === 0) {
@@ -983,18 +875,13 @@ document.addEventListener("DOMContentLoaded", () => {
       detectedList.style.display = "block";
       if (detectedActions) detectedActions.style.display = "flex";
 
-      videos.forEach((video, index) => {
+      videos.forEach((video) => {
         const card = document.createElement("div");
         card.className = "download-card";
         card.style.paddingLeft = "8px";
-        
-        let hostname = "";
-        try {
-          hostname = new URL(video.url).hostname;
-        } catch(e) {
-          hostname = video.url;
-        }
 
+        let hostname = "";
+        try { hostname = new URL(video.url).hostname; } catch { hostname = video.url; }
         const isChecked = selectedDetectedUrls.has(selectionKey(video));
 
         card.innerHTML = `
@@ -1006,12 +893,12 @@ document.addEventListener("DOMContentLoaded", () => {
           <div class="card-content">
             <div class="card-title"></div>
             <div class="card-meta">
-              <span class="card-status-badge complete" style="background: rgba(124, 107, 240, 0.15); color: #9b8fff; border-color: rgba(124, 107, 240, 0.3);">
+              <span class="card-status-badge complete" style="background: rgba(124, 107, 240, 0.15); color: #b5acff; border-color: rgba(124, 107, 240, 0.3);">
                 Detected
               </span>
               <span class="meta-details" style="text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 160px;"></span>
               <div class="card-actions">
-                <button class="icon-button download-detected-btn" title="Download Video">
+                <button class="icon-button download-detected-btn" type="button" title="Download Video">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                 </button>
               </div>
@@ -1038,20 +925,15 @@ document.addEventListener("DOMContentLoaded", () => {
           details.title = (video.observed_content_type || video.source || "Media") + " · " + frameHost;
         }
         checkbox.addEventListener("change", () => {
-          if (checkbox.checked) {
-            selectedDetectedUrls.add(selectionKey(video));
-          } else {
-            selectedDetectedUrls.delete(selectionKey(video));
-          }
+          if (checkbox.checked) selectedDetectedUrls.add(selectionKey(video));
+          else selectedDetectedUrls.delete(selectionKey(video));
           updateDetectedSelectionUI(videos);
         });
 
-        const downloadBtn = card.querySelector(".download-detected-btn");
-        downloadBtn.title = video.browser_local ? "Check page for downloadable media" : "Choose media download options";
-        downloadBtn.setAttribute("aria-label", downloadBtn.title);
-        downloadBtn.addEventListener("click", () => {
-          triggerProbe(video.url, false, video);
-        });
+        const dlBtn = card.querySelector(".download-detected-btn");
+        dlBtn.title = video.browser_local ? "Check page for downloadable media" : "Choose media download options";
+        dlBtn.setAttribute("aria-label", dlBtn.title);
+        dlBtn.addEventListener("click", () => { triggerProbe(video.url, false, video); });
 
         detectedList.appendChild(card);
       });
@@ -1063,16 +945,10 @@ document.addEventListener("DOMContentLoaded", () => {
   function updateDetectedSelectionUI(videos) {
     if (!detectedSelectedCountText) return;
     detectedSelectedCountText.textContent = `${selectedDetectedUrls.size} selected`;
-    
     const hasSelection = selectedDetectedUrls.size > 0;
     detectedDownloadBtn.disabled = !hasSelection;
     detectedRemoveBtn.disabled = !hasSelection;
-
-    if (videos.length > 0 && videos.every(v => selectedDetectedUrls.has(selectionKey(v)))) {
-      detectedSelectAll.checked = true;
-    } else {
-      detectedSelectAll.checked = false;
-    }
+    detectedSelectAll.checked = videos.length > 0 && videos.every(v => selectedDetectedUrls.has(selectionKey(v)));
   }
 
   function closeBatchModal() {
@@ -1088,16 +964,9 @@ document.addEventListener("DOMContentLoaded", () => {
       const storageKey = `detected_videos_${activeTabId}`;
       chrome.storage.local.get([storageKey], (result) => {
         const videos = result[storageKey] || [];
-        if (detectedSelectAll.checked) {
-          videos.forEach(v => selectedDetectedUrls.add(selectionKey(v)));
-        } else {
-          videos.forEach(v => selectedDetectedUrls.delete(selectionKey(v)));
-        }
-        
-        detectedList.querySelectorAll(".detected-item-checkbox").forEach(cb => {
-          cb.checked = detectedSelectAll.checked;
-        });
-        
+        if (detectedSelectAll.checked) videos.forEach(v => selectedDetectedUrls.add(selectionKey(v)));
+        else videos.forEach(v => selectedDetectedUrls.delete(selectionKey(v)));
+        detectedList.querySelectorAll(".detected-item-checkbox").forEach(cb => { cb.checked = detectedSelectAll.checked; });
         updateDetectedSelectionUI(videos);
       });
     });
@@ -1142,7 +1011,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       closeBatchModal();
       await api.sync();
-      document.querySelector('[data-tab="queue"]').click();
+      switchTab("queue");
       showClientStatus(added + " downloads queued.");
     } catch (error) {
       closeBatchModal();
@@ -1152,11 +1021,9 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // --- Startup ---
-  chkScheduleLater.disabled = true;
   connect();
 
-  // Retrieve active tab details for Detected tab tracking
-  if (typeof chrome !== 'undefined' && chrome.tabs) {
+  if (typeof chrome !== "undefined" && chrome.tabs) {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs && tabs[0]) {
         activeTabId = tabs[0].id;
@@ -1191,5 +1058,4 @@ document.addEventListener("DOMContentLoaded", () => {
 
   chrome.permissions?.onAdded?.addListener?.(() => void refreshPermissions());
   chrome.permissions?.onRemoved?.addListener?.(() => void refreshPermissions());
-
 });

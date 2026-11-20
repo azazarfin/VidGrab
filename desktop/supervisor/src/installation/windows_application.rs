@@ -360,6 +360,7 @@ pub fn prepare_uninstall(layout: &Layout, dirs: &UserDirs) -> io::Result<()> {
     }
     let _lock = idle_lock(dirs)?;
     disconnect(dirs)?;
+    autostart::remove_owned(dirs, Some(&layout.app))?;
     Ok(())
 }
 

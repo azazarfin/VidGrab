@@ -62,7 +62,7 @@ def outputs():
         "export interface RequestOptions { request_id: string; idempotency_key?: string }",
         "export type Transport = (request: Request) => Promise<unknown>;",
         "export interface Client { request<K extends keyof Operations>(operation: K, params: Operations[K]['params'], options: RequestOptions): Promise<Operations[K]['result']> }",
-        "export type MutationOperation = 'settings.patch' | 'downloads.enqueue' | 'downloads.action' | 'downloads.authenticate';",
+        "export type MutationOperation = 'settings.patch' | 'downloads.enqueue' | 'downloads.action' | 'downloads.authenticate' | 'downloads.clear_history';",
         "export interface PendingMutation { readonly operation: MutationOperation; readonly params: unknown; readonly key: string }",
         "export interface ControlState { connected: boolean; capabilities: Capabilities | null; snapshot: Snapshot | null; has_more: boolean }",
         "export interface ControlSession { readonly state: ControlState; readonly pending: PendingMutation | null; sync(force?: boolean): Promise<ControlState>; loadMore(): Promise<ControlState>; read<K extends keyof Operations>(operation: K, params?: Operations[K]['params']): Promise<Operations[K]['result']>; mutate<K extends MutationOperation>(operation: K, params: Operations[K]['params']): Promise<Operations[K]['result']>; replay(): Promise<Operations[MutationOperation]['result']>; dismiss(key: string): void }",

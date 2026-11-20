@@ -16,16 +16,16 @@ from tests.client_ui_support import ClientFixture
 MEASURE = """() => {
   const channels = color => color.match(/[\\d.]+/g).map(Number);
   const composite = (top, base) => top.slice(0, 3).map((v, i) => v * (top[3] ?? 1) + base[i] * (1 - (top[3] ?? 1)));
-  const luminance = rgb => rgb.map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)
+  const srgb = rgb => rgb.map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)
     .reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
-  const ratio = (a, b) => (Math.max(luminance(a), luminance(b)) + .05) / (Math.min(luminance(a), luminance(b)) + .05);
+  const ratio = (a, b) => (Math.max(srgb(a), srgb(b)) + .05) / (Math.min(srgb(a), srgb(b)) + .05);
   const background = el => {
     const layers = [];
     for (let node = el; node; node = node.parentElement) layers.push(channels(getComputedStyle(node).backgroundColor));
-    return layers.reverse().reduce((base, top) => composite(top, base), [7, 7, 12]);
+    return layers.reverse().reduce((base, top) => composite(top, base), [10, 10, 18]);
   };
   const samples = [];
-  for (const el of document.querySelectorAll('.input-hint, .switch-desc, .section-desc, .tab-subtitle, .nav-item.active, .btn-primary, .alert-warning')) {
+  for (const el of document.querySelectorAll('.input-hint, .switch-desc, .section-desc, .subtitle, .btn-primary, .btn-secondary, .alert-warning, .summary-item dt, .summary-item dd, .status-indicator')) {
     if (!el.getClientRects().length) continue;
     const style = getComputedStyle(el);
     const gradientColors = style.backgroundImage.match(/rgba?\\([^)]+\\)/g) || [];
@@ -33,14 +33,10 @@ MEASURE = """() => {
       contrast: Math.min(ratio(channels(style.color), background(el)),
         ...gradientColors.map(color => ratio(channels(style.color), channels(color))))});
   }
-  for (const el of document.querySelectorAll('.form-input')) {
-    if (!el.getClientRects().length || !el.placeholder) continue;
-    samples.push({selector: el.id + '::placeholder', fontSize: parseFloat(getComputedStyle(el).fontSize),
-      contrast: ratio(channels(getComputedStyle(el, '::placeholder').color), background(el))});
-  }
-  const containers = [...document.querySelectorAll('.sidebar, .content-area, .settings-content, .card, .form-row, .footer')];
+  const containers = [...document.querySelectorAll('.options-page, .page-header, .settings-content, .card, .defaults-grid, .switch-row')];
   const overflow = containers.some(el => el.getClientRects().length && (
-    el.scrollWidth > el.clientWidth + 1 || el.getBoundingClientRect().right > innerWidth + 1));
+    el.scrollWidth > el.clientWidth + 1 || el.getBoundingClientRect().right > innerWidth + 1))
+    || document.documentElement.scrollWidth > innerWidth + 1;
   return {samples, overflow,
     headings: [...document.querySelectorAll('h1,h2,h3,h4,h5,h6')].map(el => Number(el.tagName[1]))};
 }"""
@@ -84,33 +80,37 @@ def main():
                     page.goto((Path(__file__).resolve().parents[1] / "extension/options/options.html").as_uri())
                     page.wait_for_load_state("networkidle")
                     page.locator("#status-message").filter(has_text="Settings loaded successfully.").wait_for()
-                    for tab in ("general", "sponsorblock", "postprocess", "advanced"):
-                        page.locator("#btn-tab-" + tab).click()
-                        page.locator("#tab-" + tab).wait_for(state="visible")
-                        if page.locator("#btn-tab-" + tab).get_attribute("aria-pressed") != "true":
-                            findings.append(f"{width}px/{tab}: selected section is not announced")
-                        if tab == "sponsorblock" and not page.locator("#chk-sponsorblock-enabled").is_checked():
-                            page.locator("label.switch:has(#chk-sponsorblock-enabled)").click()
-                        if tab == "sponsorblock" and not page.get_by_role("checkbox", name="SponsorBlock Integration").count():
-                            findings.append(f"{width}px/{tab}: unlabeled integration switch")
-                        result = page.evaluate(MEASURE)
-                        measurements.append({"width": width, "tab": tab, **result})
-                        scope = f"{width}px/{tab}"
-                        if result["overflow"]:
-                            findings.append(scope + ": horizontal overflow")
-                        if any(b > a + 1 for a, b in zip(result["headings"], result["headings"][1:])):
-                            findings.append(scope + ": skipped heading level")
-                        for sample in result["samples"]:
-                            if sample["contrast"] < 4.5 or sample["fontSize"] < 12:
-                                findings.append(f"{scope}: {sample['selector']} ({sample['contrast']:.2f}:1, {sample['fontSize']}px)")
-                        if width == 1280 or tab in ("general", "advanced"):
-                            page.screenshot(path=str(args.screenshots / f"{width}-{tab}.png"))
-                    assert page.locator("#chk-auto-update-ytdlp").is_disabled()
-                    assert not page.locator("#chk-auto-update-ytdlp").is_checked()
-                    assert page.locator("#btn-update-ytdlp").is_disabled()
-                    page.locator("#btn-save-settings").click()
-                    page.locator("#status-message").filter(has_text="Settings saved and synced successfully.").wait_for()
-                    assert fixture.settings()["values"]["auto_update_ytdlp"] is False
+                    assert page.locator("#summary-default-format").is_visible()
+                    assert page.locator("#ytdlp-version-status").text_content() == "2026.6.9"
+                    assert page.locator("#ffmpeg-warning-banner").is_visible()
+                    assert page.locator("#btn-save-settings").count() == 0
+                    if not page.get_by_role("checkbox", name="Enable Cookie Forwarding").count():
+                        findings.append(f"{width}px: unlabeled cookie forwarding switch")
+                    if width == 1280:
+                        assert page.locator("#summary-default-quality").text_content() == "1080p"
+                        fixture.patch({"default_quality": "best"})
+                        page.locator("#btn-reload-settings").click()
+                        page.locator("#status-message").filter(has_text="Current app defaults loaded.").wait_for()
+                        assert page.locator("#summary-default-quality").text_content() == "Best"
+                        fixture.patch({"default_quality": "1080"})
+                        page.locator("#btn-reload-settings").click()
+                        page.locator("#status-message").filter(has_text="Current app defaults loaded.").wait_for()
+                        assert page.locator("#summary-default-quality").text_content() == "1080p"
+                        page.locator("label.switch:has(#chk-cookie-forwarding)").click()
+                        page.locator("#status-message").filter(has_text="Cookie forwarding enabled.").wait_for()
+                        assert fixture.preferences["cookieForwardingEnabled"] is True
+                        assert not any(r["operation"] == "settings.patch" for r in fixture.requests)
+                    result = page.evaluate(MEASURE)
+                    measurements.append({"width": width, **result})
+                    scope = f"{width}px"
+                    if result["overflow"]:
+                        findings.append(scope + ": horizontal overflow")
+                    if any(b > a + 1 for a, b in zip(result["headings"], result["headings"][1:])):
+                        findings.append(scope + ": skipped heading level")
+                    for sample in result["samples"]:
+                        if sample["contrast"] < 4.5 or sample["fontSize"] < 12:
+                            findings.append(f"{scope}: {sample['selector']} ({sample['contrast']:.2f}:1, {sample['fontSize']}px)")
+                    page.screenshot(path=str(args.screenshots / f"{width}-options.png"), full_page=True)
                 finally:
                     context.close()
         finally:

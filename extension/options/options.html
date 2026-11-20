@@ -3,374 +3,155 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>VidGrab Settings</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <title>VidGrab Browser Settings</title>
   <link rel="stylesheet" href="options.css">
 </head>
 <body>
-  <div class="options-layout">
-    <!-- Sidebar Navigation -->
-    <aside class="sidebar">
-      <div class="brand">
-        <svg class="logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="url(#logo-grad)" />
-          <path d="M2 17L12 22L22 17" stroke="url(#logo-grad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-          <path d="M2 12L12 17L22 12" stroke="url(#logo-grad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-          <defs>
-            <linearGradient id="logo-grad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
-              <stop stop-color="#a29bfe" />
-              <stop offset="1" stop-color="#6c5ce7" />
-            </linearGradient>
-          </defs>
-        </svg>
-        <span class="brand-text">VidGrab</span>
+  <div class="options-page">
+    <header class="page-header">
+      <div class="brand-block">
+        <div class="brand">
+          <svg class="logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="url(#logo-grad)" />
+            <path d="M2 17L12 22L22 17" stroke="url(#logo-grad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M2 12L12 17L22 12" stroke="url(#logo-grad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            <defs>
+              <linearGradient id="logo-grad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#a29bfe" />
+                <stop offset="1" stop-color="#6c5ce7" />
+              </linearGradient>
+            </defs>
+          </svg>
+          <div>
+            <h1>VidGrab Browser Settings</h1>
+            <p class="subtitle">Browser permissions, companion connection status, and current app defaults.</p>
+          </div>
+        </div>
       </div>
-      
-      <nav class="nav-menu">
-        <button class="nav-item active" data-tab="tab-general" id="btn-tab-general" aria-pressed="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="nav-icon"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-          General
-        </button>
-        <button class="nav-item" data-tab="tab-sponsorblock" id="btn-tab-sponsorblock" aria-pressed="false">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="nav-icon"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="9" x2="15" y2="15"></line><line x1="15" y1="9" x2="9" y2="15"></line></svg>
-          SponsorBlock
-        </button>
-        <button class="nav-item" data-tab="tab-postprocess" id="btn-tab-postprocess" aria-pressed="false">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="nav-icon"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-          Post-Processing
-        </button>
-        <button class="nav-item" data-tab="tab-advanced" id="btn-tab-advanced" aria-pressed="false">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="nav-icon"><polygon points="12 2 2 7 12 12 22 7 12 2Z"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
-          Advanced
-        </button>
-      </nav>
 
-      <div class="backend-info">
+      <div class="header-controls">
         <div class="status-indicator offline" id="backend-status">
           <span class="status-dot"></span>
-          <span class="status-text">Backend Offline</span>
+          <span class="status-text">Connecting...</span>
         </div>
+        <button class="btn btn-primary" id="btn-open-app" type="button">Open in VidGrab</button>
+        <button class="btn btn-secondary" id="btn-test-backend" type="button">Test connection</button>
       </div>
-    </aside>
+    </header>
 
-    <!-- Main Content Area -->
-    <main class="content-area">
-      <header class="header">
-        <h1 id="tab-title">General Settings</h1>
-        <p class="tab-subtitle" id="tab-subtitle">Configure paths, defaults and concurrent operations.</p>
-      </header>
+    <div class="status-banner" id="status-message" role="status" aria-live="polite" aria-atomic="true"></div>
 
-      <div class="settings-content">
-        <!-- General Tab -->
-        <section class="tab-panel active" id="tab-general">
-          <div class="alert-banner alert-warning" id="ffmpeg-warning-banner" role="status" style="display: none;">
-            <strong style="color: var(--warning);">FFmpeg Missing:</strong> FFmpeg was not detected on the backend host. Advanced features such as video container recoding, audio extraction, and subtitle embedding are disabled.
-          </div>
-          
-          <div class="card">
-            <h2>Paths & Queue</h2>
-            <div class="form-group">
-              <label for="input-download-dir">Download Directory</label>
-              <input type="text" id="input-download-dir" class="form-input" placeholder="/home/user/Downloads/VidGrab">
-              <span class="input-hint">Target directory on the backend host system.</span>
-            </div>
-            
-            <div class="form-row">
-              <div class="form-group flex-1">
-                <label for="input-max-concurrent">Max Concurrent Downloads</label>
-                <select id="input-max-concurrent" class="form-select">
-                  <option value="1">1</option>
-                  <option value="2">2</option>
-                  <option value="3" selected>3</option>
-                  <option value="4">4</option>
-                  <option value="5">5</option>
-                  <option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option><option value="10">10</option>
-                </select>
-              </div>
-              <div class="form-group flex-1">
-                <label for="input-filename-template">Filename Template</label>
-                <input type="text" id="input-filename-template" class="form-input" placeholder="%(title)s.%(ext)s">
-              </div>
-            </div>
-            
-            <div class="form-group" style="margin-top: 15px;">
-              <label for="input-download-threads">Concurrent Connections Per Download</label>
-              <div style="display: flex; align-items: center; gap: 10px;">
-                <input type="range" id="input-download-threads" min="1" max="32" value="4" style="flex: 1;">
-                <span id="download-threads-value" style="font-family: monospace; font-weight: 600; min-width: 25px; text-align: center;">4</span>
-              </div>
-              <span class="input-hint">Number of simultaneous connections per file to boost download speed.</span>
-            </div>
-          </div>
-
-          <div class="card">
-            <h2>Defaults Quality</h2>
-            <div class="form-row">
-              <div class="form-group flex-1">
-                <label for="select-default-quality">Default Quality Preset</label>
-                <select id="select-default-quality" class="form-select">
-                  <option value="2160">2160p (4K)</option>
-                  <option value="1440">1440p (2K)</option>
-                  <option value="1080" selected>1080p (Full HD)</option>
-                  <option value="720">720p (HD)</option>
-                  <option value="480">480p</option>
-                </select>
-              </div>
-              <div class="form-group flex-1">
-                <label for="select-default-format">Default Format Filter</label>
-                <input type="text" id="select-default-format" class="form-input" placeholder="bestvideo+bestaudio/best">
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- SponsorBlock Tab -->
-        <section class="tab-panel" id="tab-sponsorblock">
-          <div class="card">
-            <div class="switch-header">
-              <div>
-                <h2 id="heading-sponsorblock">SponsorBlock Integration</h2>
-                <p class="section-desc">Automatically skip or mark annoying video segments (sponsors, intros, etc.) using YouTube crowd-sourced database.</p>
-              </div>
-              <label class="switch">
-                <input type="checkbox" id="chk-sponsorblock-enabled" aria-labelledby="heading-sponsorblock">
-                <span class="slider round"></span>
-              </label>
-            </div>
-
-            <div class="sponsorblock-details" id="sponsorblock-details-section">
-              <hr class="divider">
-              
-              <div class="form-group">
-                <label for="select-sponsorblock-mode">Operation Mode</label>
-                <select id="select-sponsorblock-mode" class="form-select">
-                  <option value="remove">Remove Segments (Hard Cut)</option>
-                  <option value="mark">Mark Segments (Add Chapters)</option>
-                </select>
-              </div>
-
-              <div class="form-group">
-                <label>Categories to Target</label>
-                <div class="checkbox-grid">
-                  <label class="checkbox-container">
-                    <input type="checkbox" value="sponsor" checked class="chk-sb-category">
-                    <span class="checkbox-checkmark"></span>
-                    Sponsor (Paid Ads)
-                  </label>
-                  <label class="checkbox-container">
-                    <input type="checkbox" value="intro" checked class="chk-sb-category">
-                    <span class="checkbox-checkmark"></span>
-                    Intro (Opening/Animation)
-                  </label>
-                  <label class="checkbox-container">
-                    <input type="checkbox" value="outro" checked class="chk-sb-category">
-                    <span class="checkbox-checkmark"></span>
-                    Outro (End Cards/Credits)
-                  </label>
-                  <label class="checkbox-container">
-                    <input type="checkbox" value="selfpromo" checked class="chk-sb-category">
-                    <span class="checkbox-checkmark"></span>
-                    Self-Promotion
-                  </label>
-                  <label class="checkbox-container">
-                    <input type="checkbox" value="interaction" checked class="chk-sb-category">
-                    <span class="checkbox-checkmark"></span>
-                    Interaction Reminder (Like/Sub)
-                  </label>
-                  <label class="checkbox-container">
-                    <input type="checkbox" value="music_offtopic" checked class="chk-sb-category">
-                    <span class="checkbox-checkmark"></span>
-                    Non-Music Section (Music Videos)
-                  </label>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- Post-Processing Tab -->
-        <section class="tab-panel" id="tab-postprocess">
-          <div class="card">
-            <h2>Video Re-encoding</h2>
-            <p class="section-desc">Convert downloaded videos to a specific format. Note: requires FFmpeg on backend.</p>
-            
-            <div class="form-group">
-              <label for="select-postprocess-codec">Target Container Format</label>
-              <select id="select-postprocess-codec" class="form-select">
-                <option value="none">Original (No conversion, fastest)</option>
-                <option value="mp4">Convert to MP4 (H.264 / AAC compatibility)</option>
-                <option value="mkv">Convert to MKV (Matroska container)</option>
-                <option value="webm">Convert to WebM (VP9 / Opus web format)</option>
-              </select>
-            </div>
-            
-            <div class="switch-row" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255, 255, 255, 0.05);" id="gpu-conversion-section">
-              <div class="switch-text">
-                <label for="chk-gpu-accelerated" class="switch-title">Hardware Accelerated Encoding</label>
-                <span class="switch-desc">Use dedicated GPU (NVENC) to forcefully encode web-playable MP4s quickly. Only applies when converting to MP4.</span>
-              </div>
-              <label class="switch">
-                <input type="checkbox" id="chk-gpu-accelerated">
-                <span class="slider round"></span>
-              </label>
-            </div>
-          </div>
-
-          <div class="card">
-            <h2>Audio Enhancements</h2>
-            <div class="switch-row">
-              <div class="switch-text">
-                <label for="chk-postprocess-normalize" class="switch-title">Normalize Audio Volume</label>
-                <span class="switch-desc">Adjust audio levels automatically (via FFmpeg loudnorm filter) to fix silent videos.</span>
-              </div>
-              <label class="switch">
-                <input type="checkbox" id="chk-postprocess-normalize">
-                <span class="slider round"></span>
-              </label>
-            </div>
-          </div>
-        </section>
-
-        <!-- Advanced Tab -->
-        <section class="tab-panel" id="tab-advanced">
-          <div class="card">
-            <h2>Extension Host Configuration</h2>
-            <div class="form-group">
-              <label for="input-backend-url">Backend Server URL</label>
-              <div class="input-with-action">
-                <input type="text" id="input-backend-url" disabled class="form-input" placeholder="http://127.0.0.1:8000">
-                <button class="btn btn-secondary" id="btn-test-backend">Test connection</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="card">
-            <h2>Cookie Forwarding</h2>
-            <p class="section-desc" id="permission-status" role="status">Checking granted browser permissions...</p>
-            <div class="alert-warning observation-restart-notice" id="request-observation-restart-notice" role="status" hidden>
-              <strong>Restart Chrome to activate request observation:</strong> Media request observation was granted in this Chrome session. Close all Chrome windows and reopen Chrome once to start capturing request metadata. Page detection and all other VidGrab features work now.
-            </div>
-            <div class="switch-row">
-              <div class="switch-text">
-                <label for="chk-cookie-forwarding" class="switch-title">Enable Cookie Forwarding</label>
-                <span class="switch-desc">Share cookies for the media site when probing or downloading. Cookie values stay outside saved settings and history; downloads use private temporary cookie files.</span>
-              </div>
-              <label class="switch">
-                <input type="checkbox" id="chk-cookie-forwarding">
-                <span class="slider round"></span>
-              </label>
-            </div>
-            <div class="switch-row">
-              <div class="switch-text">
-                <label for="chk-request-observation" class="switch-title">Observe media requests</label>
-                <span class="switch-desc">Find media and HLS/DASH manifest URLs from browser request metadata. This optional permission reads content types; it does not read response bodies or share cookies.</span>
-              </div>
-              <label class="switch">
-                <input type="checkbox" id="chk-request-observation">
-                <span class="slider round"></span>
-              </label>
-            </div>
-          </div>
-
-          <div class="card">
-            <h2>Desktop Notifications</h2>
-            <div class="form-group">
-              <label for="select-notifications">Notification Preferences</label>
-              <select id="select-notifications" class="form-select">
-                <option value="both">Show on both success and failure</option>
-                <option value="completion">Show on download completion only</option>
-                <option value="failure">Show on download failure only</option>
-                <option value="none">Disable all notifications</option>
-              </select>
-              <span class="switch-desc" style="display: block; margin-top: 5px;">
-                Choose when the extension should trigger browser desktop notifications.
-              </span>
-            </div>
-          </div>
-
-          <div class="card">
-            <h2>Bandwidth Limit</h2>
-            <div class="form-row">
-              <div class="form-group flex-1">
-                <label for="select-speed-limit">Download Speed Limit</label>
-                <select id="select-speed-limit" class="form-select">
-                  <option value="0">Unlimited (No cap)</option>
-                  <option value="1048576">1 MB/s</option>
-                  <option value="2097152">2 MB/s</option>
-                  <option value="5242880">5 MB/s</option>
-                  <option value="10485760">10 MB/s</option>
-                  <option value="custom">Custom...</option>
-                </select>
-              </div>
-              
-              <div class="form-group flex-1" id="custom-speed-group" style="display: none;">
-                <label for="input-custom-speed">Custom Speed Limit (KB/s)</label>
-                <input type="number" id="input-custom-speed" class="form-input" min="0" step="any" placeholder="e.g. 500">
-              </div>
-            </div>
-          </div>
-
-          <div class="card">
-            <h2>yt-dlp Engine Management</h2>
-            <div class="switch-row">
-              <div class="switch-text">
-                <label for="chk-auto-update-ytdlp" class="switch-title">Engine Updates</label>
-                <span class="switch-desc">Install a newer VidGrab release to update the media engine. Launch and status checks stay offline.</span>
-              </div>
-              <label class="switch">
-                <input type="checkbox" id="chk-auto-update-ytdlp" disabled>
-                <span class="slider round"></span>
-              </label>
-            </div>
-            
-            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: space-between; gap: 15px;">
-              <div>
-                <div style="font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase;">Installed Version</div>
-                <div id="ytdlp-version-status" style="font-size: 13px; margin-top: 4px; color: var(--text-primary); font-family: monospace;">Checking status...</div>
-              </div>
-              <button class="btn btn-secondary" id="btn-update-ytdlp" type="button" disabled title="Install a newer VidGrab release">Update with VidGrab</button>
-            </div>
-          </div>
-
-          <div class="card" id="request-notices" hidden>
-            <h2>Request notices</h2>
-            <p class="section-desc">A reply was interrupted or its browser notice could not be cleared. Review Downloads and the current app settings before dismissing a notice. Dismissing it sends no download or settings request.</p>
-            <ul id="request-notice-list" class="request-notice-list"></ul>
-            <p id="request-notice-status" class="section-desc" role="status"></p>
-          </div>
-
-          <div class="card">
-            <h2>Custom yt-dlp Arguments</h2>
-            <div class="form-group">
-              <label for="input-custom-ytdlp-args">Raw command-line arguments</label>
-              <textarea id="input-custom-ytdlp-args" class="form-input" rows="3" placeholder="e.g. --ignore-errors --no-mtime" style="font-family: monospace; resize: vertical;"></textarea>
-              <span class="switch-desc" style="display: block; margin-top: 5px;">
-                Executable arguments are unavailable in the companion. Existing legacy arguments can be cleared with the Clear button and Save Changes.
-              </span>
-            </div>
-            <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;">
-              <button type="button" class="btn btn-secondary btn-preset" id="btn-preset-robust">Preset: Robust DL</button>
-              <button type="button" class="btn btn-secondary btn-preset" id="btn-preset-ipv4">Preset: Force IPv4</button>
-              <button type="button" class="btn btn-secondary btn-preset" id="btn-preset-bypass">Preset: Geo Bypass</button>
-              <button type="button" class="btn btn-secondary btn-preset" id="btn-preset-clear">Clear</button>
-            </div>
-            <div class="alert-warning argument-warning">
-              <svg class="notice-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3L2 21h20L12 3Z"></path><path d="M12 9v5m0 3v.01"></path></svg>
-              <span>For advanced users only. Specifying incorrect or conflicting flags might cause downloads to fail.</span>
-            </div>
-          </div>
-        </section>
+    <main class="settings-content">
+      <div class="alert-warning alert-banner" id="ffmpeg-warning-banner" role="status" hidden>
+        <strong>Media tools missing:</strong> FFmpeg was not detected by the VidGrab engine. Audio extraction, conversion, and subtitle embedding are unavailable until configured in the desktop app.
       </div>
 
-      <!-- Action Footer -->
-      <footer class="footer">
-        <div class="status-msg" id="status-message" role="status" aria-live="polite" aria-atomic="true"></div>
-        <div class="footer-actions">
-          <button class="btn btn-secondary" id="btn-reload-settings" type="button">Reload app settings</button>
+      <!-- Read-only App Defaults Summary -->
+      <section class="card" aria-labelledby="heading-defaults-summary">
+        <div class="card-header-row">
+          <div>
+            <h2 id="heading-defaults-summary">App Defaults Summary</h2>
+            <p class="section-desc" id="defaults-summary-desc">
+              Download folders, concurrency, SponsorBlock, post-processing, and scheduling are managed in the standalone VidGrab app.
+            </p>
+          </div>
+          <div class="card-actions">
+            <button class="btn btn-secondary" id="btn-reload-settings" type="button">Refresh summary</button>
+            <button class="btn btn-primary" id="btn-edit-defaults-app" type="button">Edit defaults in VidGrab</button>
+          </div>
+        </div>
+
+        <dl class="defaults-grid" id="defaults-summary-grid">
+          <div class="summary-item">
+            <dt>Save folder</dt>
+            <dd id="summary-download-dir">Connecting to VidGrab…</dd>
+          </div>
+          <div class="summary-item">
+            <dt>Default format</dt>
+            <dd id="summary-default-format">—</dd>
+          </div>
+          <div class="summary-item">
+            <dt>Default quality</dt>
+            <dd id="summary-default-quality">—</dd>
+          </div>
+          <div class="summary-item">
+            <dt>Max concurrent downloads</dt>
+            <dd id="summary-max-concurrent">—</dd>
+          </div>
+          <div class="summary-item">
+            <dt>Filename template</dt>
+            <dd id="summary-filename-template">—</dd>
+          </div>
+          <div class="summary-item">
+            <dt>Bangla filenames</dt>
+            <dd id="summary-transliterate-bangla">—</dd>
+          </div>
+          <div class="summary-item">
+            <dt>yt-dlp engine version</dt>
+            <dd id="ytdlp-version-status">Checking…</dd>
+          </div>
+        </dl>
+      </section>
+
+      <!-- Browser Permissions & Privacy -->
+      <section class="card" aria-labelledby="heading-permissions">
+        <h2 id="heading-permissions">Browser Permissions &amp; Privacy</h2>
+        <p class="section-desc" id="permission-status" role="status">Checking granted browser permissions...</p>
+
+        <div class="alert-warning observation-restart-notice" id="request-observation-restart-notice" role="status" hidden>
+          <strong>Restart Chrome to activate request observation:</strong> Media request observation was granted in this Chrome session. Close all Chrome windows and reopen Chrome once to start capturing request metadata. Page detection and all other VidGrab features work now.
+        </div>
+
+        <div class="switch-row">
+          <div class="switch-text">
+            <label for="chk-cookie-forwarding" class="switch-title">Enable Cookie Forwarding</label>
+            <span class="switch-desc">Share cookies for the media site when probing or downloading. Cookie values stay outside saved settings and history; downloads use private temporary cookie files.</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="chk-cookie-forwarding">
+            <span class="slider round"></span>
+          </label>
+        </div>
+
+        <div class="switch-row">
+          <div class="switch-text">
+            <label for="chk-request-observation" class="switch-title">Observe media requests</label>
+            <span class="switch-desc">Find media and HLS/DASH manifest URLs from browser request metadata. This optional permission reads content types; it does not read response bodies or share cookies.</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="chk-request-observation">
+            <span class="slider round"></span>
+          </label>
+        </div>
+
+        <hr class="divider">
+
+        <div class="form-group">
+          <label for="select-notifications">Browser Notifications</label>
+          <select id="select-notifications" class="form-select">
+            <option value="both">Show on both success and failure</option>
+            <option value="completion">Show on download completion only</option>
+            <option value="failure">Show on download failure only</option>
+            <option value="none">Disable all notifications</option>
+          </select>
+          <span class="input-hint">Choose when the browser extension should show desktop notifications.</span>
+        </div>
+      </section>
+
+      <!-- Unresolved Request Notices -->
+      <section class="card" id="request-notices" aria-labelledby="heading-request-notices" hidden>
+        <div class="card-header-row">
+          <div>
+            <h2 id="heading-request-notices">Request Notices</h2>
+            <p class="section-desc">
+              A reply was interrupted or its browser notice could not be cleared. Review the queue in VidGrab before dismissing a notice. Dismissing it sends no download or settings request.
+            </p>
+          </div>
           <button class="btn btn-secondary" id="btn-check-request" type="button" hidden>Check request</button>
-          <button class="btn btn-primary" id="btn-save-settings">Save Changes</button>
         </div>
-      </footer>
+        <ul id="request-notice-list" class="request-notice-list"></ul>
+        <p id="request-notice-status" class="section-desc" role="status"></p>
+      </section>
     </main>
   </div>
 

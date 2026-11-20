@@ -251,6 +251,192 @@
         "type": "object"
       }
     },
+    "diagnostics.get": {
+      "mutation": false,
+      "params": {
+        "additionalProperties": false,
+        "properties": {},
+        "title": "Empty",
+        "type": "object"
+      },
+      "result": {
+        "$defs": {
+          "ComponentCheck": {
+            "additionalProperties": false,
+            "properties": {
+              "available": {
+                "title": "Available",
+                "type": "boolean"
+              },
+              "error": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Error"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "version": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Version"
+              }
+            },
+            "required": [
+              "name",
+              "available",
+              "version",
+              "error"
+            ],
+            "title": "ComponentCheck",
+            "type": "object"
+          },
+          "Counts": {
+            "additionalProperties": false,
+            "properties": {
+              "history": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "History",
+                "type": "integer"
+              },
+              "paused": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Paused",
+                "type": "integer"
+              },
+              "scheduled": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Scheduled",
+                "type": "integer"
+              },
+              "total": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Total",
+                "type": "integer"
+              },
+              "unfinished": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Unfinished",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "unfinished",
+              "paused",
+              "scheduled",
+              "history"
+            ],
+            "title": "Counts",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "component_checks": {
+            "items": {
+              "$ref": "#/$defs/ComponentCheck"
+            },
+            "title": "Component Checks",
+            "type": "array"
+          },
+          "component_versions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Component Versions",
+            "type": "object"
+          },
+          "counts": {
+            "$ref": "#/$defs/Counts"
+          },
+          "disk_free_bytes": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Disk Free Bytes"
+          },
+          "download_dir": {
+            "title": "Download Dir",
+            "type": "string"
+          },
+          "download_dir_writable": {
+            "title": "Download Dir Writable",
+            "type": "boolean"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "media_mode": {
+            "enum": [
+              "fixture",
+              "ordinary"
+            ],
+            "title": "Media Mode",
+            "type": "string"
+          },
+          "recent_errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Recent Errors",
+            "type": "array"
+          },
+          "schema_version": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "instance_id",
+          "schema_version",
+          "media_mode",
+          "download_dir",
+          "download_dir_writable",
+          "disk_free_bytes",
+          "component_versions",
+          "component_checks",
+          "counts",
+          "recent_errors"
+        ],
+        "title": "DiagnosticsSnapshot",
+        "type": "object"
+      }
+    },
     "downloads.action": {
       "mutation": true,
       "params": {
@@ -259,7 +445,12 @@
           "action": {
             "enum": [
               "cancel",
-              "retry"
+              "retry",
+              "pause",
+              "resume",
+              "set_priority",
+              "set_schedule",
+              "delete_history"
             ],
             "title": "Action",
             "type": "string"
@@ -288,6 +479,34 @@
             "minLength": 1,
             "title": "Job Id",
             "type": "string"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "maximum": 10,
+                "minimum": -10,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Priority"
+          },
+          "scheduled_at": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scheduled At"
           }
         },
         "required": [
@@ -315,7 +534,12 @@
             "enum": [
               "cancel",
               "retry",
-              "authenticate"
+              "authenticate",
+              "pause",
+              "resume",
+              "set_priority",
+              "set_schedule",
+              "delete_history"
             ],
             "title": "Action",
             "type": "string"
@@ -383,7 +607,12 @@
             "enum": [
               "cancel",
               "retry",
-              "authenticate"
+              "authenticate",
+              "pause",
+              "resume",
+              "set_priority",
+              "set_schedule",
+              "delete_history"
             ],
             "title": "Action",
             "type": "string"
@@ -400,6 +629,38 @@
           "accepted_revision"
         ],
         "title": "ActionResult",
+        "type": "object"
+      }
+    },
+    "downloads.clear_history": {
+      "mutation": true,
+      "params": {
+        "additionalProperties": false,
+        "properties": {},
+        "title": "Empty",
+        "type": "object"
+      },
+      "result": {
+        "additionalProperties": false,
+        "properties": {
+          "deleted_count": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Deleted Count",
+            "type": "integer"
+          },
+          "retained_count": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Retained Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted_count",
+          "retained_count"
+        ],
+        "title": "ClearHistoryResult",
         "type": "object"
       }
     },
@@ -526,6 +787,13 @@
           "options": {
             "$ref": "#/$defs/DownloadOptions"
           },
+          "priority": {
+            "default": 0,
+            "maximum": 10,
+            "minimum": -10,
+            "title": "Priority",
+            "type": "integer"
+          },
           "probe_id": {
             "anyOf": [
               {
@@ -538,6 +806,20 @@
             ],
             "default": null,
             "title": "Probe Id"
+          },
+          "scheduled_at": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scheduled At"
           },
           "thumbnail_url": {
             "anyOf": [
@@ -593,6 +875,239 @@
         "type": "object"
       }
     },
+    "downloads.get": {
+      "mutation": false,
+      "params": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "title": "JobLookupParams",
+        "type": "object"
+      },
+      "result": {
+        "additionalProperties": false,
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Completed At"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Created At"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error Message"
+          },
+          "eta": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Eta"
+          },
+          "file_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Path"
+          },
+          "file_size": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "File Size"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "job_kind": {
+            "default": "media",
+            "enum": [
+              "media",
+              "playlist"
+            ],
+            "title": "Job Kind",
+            "type": "string"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "priority": {
+            "default": 0,
+            "title": "Priority",
+            "type": "integer"
+          },
+          "progress": {
+            "maximum": 100,
+            "minimum": 0,
+            "title": "Progress",
+            "type": "number"
+          },
+          "resume_mode": {
+            "default": "not_pausable",
+            "enum": [
+              "verified_partial",
+              "restart_or_unverified",
+              "not_pausable"
+            ],
+            "title": "Resume Mode",
+            "type": "string"
+          },
+          "retry_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retry At"
+          },
+          "revision": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "scheduled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scheduled At"
+          },
+          "speed": {
+            "default": 0.0,
+            "minimum": 0,
+            "title": "Speed",
+            "type": "number"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "url",
+          "revision",
+          "title",
+          "status",
+          "progress",
+          "file_path",
+          "error_code",
+          "retry_at",
+          "parent_id",
+          "priority",
+          "scheduled_at",
+          "created_at",
+          "completed_at",
+          "speed",
+          "eta",
+          "file_size",
+          "error_message",
+          "job_kind",
+          "resume_mode"
+        ],
+        "title": "Job",
+        "type": "object"
+      }
+    },
     "downloads.list": {
       "mutation": false,
       "params": {
@@ -617,6 +1132,16 @@
             "minimum": 1,
             "title": "Limit",
             "type": "integer"
+          },
+          "view": {
+            "default": "all",
+            "enum": [
+              "all",
+              "active",
+              "history"
+            ],
+            "title": "View",
+            "type": "string"
           }
         },
         "title": "DownloadPageParams",
@@ -627,6 +1152,27 @@
           "Counts": {
             "additionalProperties": false,
             "properties": {
+              "history": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "History",
+                "type": "integer"
+              },
+              "paused": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Paused",
+                "type": "integer"
+              },
+              "scheduled": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Scheduled",
+                "type": "integer"
+              },
               "total": {
                 "maximum": 9007199254740991,
                 "minimum": 0,
@@ -642,7 +1188,10 @@
             },
             "required": [
               "total",
-              "unfinished"
+              "unfinished",
+              "paused",
+              "scheduled",
+              "history"
             ],
             "title": "Counts",
             "type": "object"
@@ -650,6 +1199,30 @@
           "Job": {
             "additionalProperties": false,
             "properties": {
+              "completed_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Completed At"
+              },
+              "created_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Created At"
+              },
               "error_code": {
                 "anyOf": [
                   {
@@ -660,6 +1233,31 @@
                   }
                 ],
                 "title": "Error Code"
+              },
+              "error_message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Error Message"
+              },
+              "eta": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Eta"
               },
               "file_path": {
                 "anyOf": [
@@ -672,8 +1270,31 @@
                 ],
                 "title": "File Path"
               },
+              "file_size": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "File Size"
+              },
               "id": {
                 "title": "Id",
+                "type": "string"
+              },
+              "job_kind": {
+                "default": "media",
+                "enum": [
+                  "media",
+                  "playlist"
+                ],
+                "title": "Job Kind",
                 "type": "string"
               },
               "parent_id": {
@@ -687,11 +1308,26 @@
                 ],
                 "title": "Parent Id"
               },
+              "priority": {
+                "default": 0,
+                "title": "Priority",
+                "type": "integer"
+              },
               "progress": {
                 "maximum": 100,
                 "minimum": 0,
                 "title": "Progress",
                 "type": "number"
+              },
+              "resume_mode": {
+                "default": "not_pausable",
+                "enum": [
+                  "verified_partial",
+                  "restart_or_unverified",
+                  "not_pausable"
+                ],
+                "title": "Resume Mode",
+                "type": "string"
               },
               "retry_at": {
                 "anyOf": [
@@ -710,6 +1346,24 @@
                 "minimum": 0,
                 "title": "Revision",
                 "type": "integer"
+              },
+              "scheduled_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Scheduled At"
+              },
+              "speed": {
+                "default": 0.0,
+                "minimum": 0,
+                "title": "Speed",
+                "type": "number"
               },
               "status": {
                 "title": "Status",
@@ -741,7 +1395,17 @@
               "file_path",
               "error_code",
               "retry_at",
-              "parent_id"
+              "parent_id",
+              "priority",
+              "scheduled_at",
+              "created_at",
+              "completed_at",
+              "speed",
+              "eta",
+              "file_size",
+              "error_message",
+              "job_kind",
+              "resume_mode"
             ],
             "title": "Job",
             "type": "object"
@@ -821,6 +1485,27 @@
           "Counts": {
             "additionalProperties": false,
             "properties": {
+              "history": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "History",
+                "type": "integer"
+              },
+              "paused": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Paused",
+                "type": "integer"
+              },
+              "scheduled": {
+                "default": 0,
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "title": "Scheduled",
+                "type": "integer"
+              },
               "total": {
                 "maximum": 9007199254740991,
                 "minimum": 0,
@@ -836,7 +1521,10 @@
             },
             "required": [
               "total",
-              "unfinished"
+              "unfinished",
+              "paused",
+              "scheduled",
+              "history"
             ],
             "title": "Counts",
             "type": "object"
@@ -897,6 +1585,30 @@
           "Job": {
             "additionalProperties": false,
             "properties": {
+              "completed_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Completed At"
+              },
+              "created_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Created At"
+              },
               "error_code": {
                 "anyOf": [
                   {
@@ -907,6 +1619,31 @@
                   }
                 ],
                 "title": "Error Code"
+              },
+              "error_message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Error Message"
+              },
+              "eta": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Eta"
               },
               "file_path": {
                 "anyOf": [
@@ -919,8 +1656,31 @@
                 ],
                 "title": "File Path"
               },
+              "file_size": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "File Size"
+              },
               "id": {
                 "title": "Id",
+                "type": "string"
+              },
+              "job_kind": {
+                "default": "media",
+                "enum": [
+                  "media",
+                  "playlist"
+                ],
+                "title": "Job Kind",
                 "type": "string"
               },
               "parent_id": {
@@ -934,11 +1694,26 @@
                 ],
                 "title": "Parent Id"
               },
+              "priority": {
+                "default": 0,
+                "title": "Priority",
+                "type": "integer"
+              },
               "progress": {
                 "maximum": 100,
                 "minimum": 0,
                 "title": "Progress",
                 "type": "number"
+              },
+              "resume_mode": {
+                "default": "not_pausable",
+                "enum": [
+                  "verified_partial",
+                  "restart_or_unverified",
+                  "not_pausable"
+                ],
+                "title": "Resume Mode",
+                "type": "string"
               },
               "retry_at": {
                 "anyOf": [
@@ -957,6 +1732,24 @@
                 "minimum": 0,
                 "title": "Revision",
                 "type": "integer"
+              },
+              "scheduled_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Scheduled At"
+              },
+              "speed": {
+                "default": 0.0,
+                "minimum": 0,
+                "title": "Speed",
+                "type": "number"
               },
               "status": {
                 "title": "Status",
@@ -988,7 +1781,17 @@
               "file_path",
               "error_code",
               "retry_at",
-              "parent_id"
+              "parent_id",
+              "priority",
+              "scheduled_at",
+              "created_at",
+              "completed_at",
+              "speed",
+              "eta",
+              "file_size",
+              "error_message",
+              "job_kind",
+              "resume_mode"
             ],
             "title": "Job",
             "type": "object"
@@ -1113,6 +1916,11 @@
                 "default": "remove",
                 "title": "Sponsorblock Mode",
                 "type": "string"
+              },
+              "transliterate_bangla_filenames": {
+                "default": true,
+                "title": "Transliterate Bangla Filenames",
+                "type": "boolean"
               }
             },
             "required": [
@@ -1131,7 +1939,8 @@
               "custom_ytdlp_args",
               "download_threads",
               "gpu_accelerated_conversion",
-              "max_retries"
+              "max_retries",
+              "transliterate_bangla_filenames"
             ],
             "title": "SettingsValues",
             "type": "object"
@@ -1776,6 +2585,11 @@
                 "default": "remove",
                 "title": "Sponsorblock Mode",
                 "type": "string"
+              },
+              "transliterate_bangla_filenames": {
+                "default": true,
+                "title": "Transliterate Bangla Filenames",
+                "type": "boolean"
               }
             },
             "required": [
@@ -1794,7 +2608,8 @@
               "custom_ytdlp_args",
               "download_threads",
               "gpu_accelerated_conversion",
-              "max_retries"
+              "max_retries",
+              "transliterate_bangla_filenames"
             ],
             "title": "SettingsValues",
             "type": "object"
@@ -1924,6 +2739,11 @@
                 "default": "remove",
                 "title": "Sponsorblock Mode",
                 "type": "string"
+              },
+              "transliterate_bangla_filenames": {
+                "default": true,
+                "title": "Transliterate Bangla Filenames",
+                "type": "boolean"
               }
             },
             "title": "SettingsPatch",
@@ -2051,6 +2871,11 @@
                 "default": "remove",
                 "title": "Sponsorblock Mode",
                 "type": "string"
+              },
+              "transliterate_bangla_filenames": {
+                "default": true,
+                "title": "Transliterate Bangla Filenames",
+                "type": "boolean"
               }
             },
             "required": [
@@ -2069,7 +2894,8 @@
               "custom_ytdlp_args",
               "download_threads",
               "gpu_accelerated_conversion",
-              "max_retries"
+              "max_retries",
+              "transliterate_bangla_filenames"
             ],
             "title": "SettingsValues",
             "type": "object"
@@ -2169,7 +2995,12 @@
             "enum": [
               "cancel",
               "retry",
-              "authenticate"
+              "authenticate",
+              "pause",
+              "resume",
+              "set_priority",
+              "set_schedule",
+              "delete_history"
             ],
             "title": "Action",
             "type": "string"
@@ -2289,9 +3120,98 @@
         "title": "Capabilities",
         "type": "object"
       },
+      "ClearHistoryResult": {
+        "additionalProperties": false,
+        "properties": {
+          "deleted_count": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Deleted Count",
+            "type": "integer"
+          },
+          "retained_count": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Retained Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted_count",
+          "retained_count"
+        ],
+        "title": "ClearHistoryResult",
+        "type": "object"
+      },
+      "ComponentCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Version"
+          }
+        },
+        "required": [
+          "name",
+          "available",
+          "version",
+          "error"
+        ],
+        "title": "ComponentCheck",
+        "type": "object"
+      },
       "Counts": {
         "additionalProperties": false,
         "properties": {
+          "history": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "History",
+            "type": "integer"
+          },
+          "paused": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Paused",
+            "type": "integer"
+          },
+          "scheduled": {
+            "default": 0,
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Scheduled",
+            "type": "integer"
+          },
           "total": {
             "maximum": 9007199254740991,
             "minimum": 0,
@@ -2307,9 +3227,95 @@
         },
         "required": [
           "total",
-          "unfinished"
+          "unfinished",
+          "paused",
+          "scheduled",
+          "history"
         ],
         "title": "Counts",
+        "type": "object"
+      },
+      "DiagnosticsSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "component_checks": {
+            "items": {
+              "$ref": "#/$defs/ComponentCheck"
+            },
+            "title": "Component Checks",
+            "type": "array"
+          },
+          "component_versions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Component Versions",
+            "type": "object"
+          },
+          "counts": {
+            "$ref": "#/$defs/Counts"
+          },
+          "disk_free_bytes": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Disk Free Bytes"
+          },
+          "download_dir": {
+            "title": "Download Dir",
+            "type": "string"
+          },
+          "download_dir_writable": {
+            "title": "Download Dir Writable",
+            "type": "boolean"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "media_mode": {
+            "enum": [
+              "fixture",
+              "ordinary"
+            ],
+            "title": "Media Mode",
+            "type": "string"
+          },
+          "recent_errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Recent Errors",
+            "type": "array"
+          },
+          "schema_version": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "instance_id",
+          "schema_version",
+          "media_mode",
+          "download_dir",
+          "download_dir_writable",
+          "disk_free_bytes",
+          "component_versions",
+          "component_checks",
+          "counts",
+          "recent_errors"
+        ],
+        "title": "DiagnosticsSnapshot",
         "type": "object"
       },
       "DownloadPage": {
@@ -2611,6 +3617,30 @@
       "Job": {
         "additionalProperties": false,
         "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Completed At"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Created At"
+          },
           "error_code": {
             "anyOf": [
               {
@@ -2621,6 +3651,31 @@
               }
             ],
             "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error Message"
+          },
+          "eta": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Eta"
           },
           "file_path": {
             "anyOf": [
@@ -2633,8 +3688,31 @@
             ],
             "title": "File Path"
           },
+          "file_size": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "File Size"
+          },
           "id": {
             "title": "Id",
+            "type": "string"
+          },
+          "job_kind": {
+            "default": "media",
+            "enum": [
+              "media",
+              "playlist"
+            ],
+            "title": "Job Kind",
             "type": "string"
           },
           "parent_id": {
@@ -2648,11 +3726,26 @@
             ],
             "title": "Parent Id"
           },
+          "priority": {
+            "default": 0,
+            "title": "Priority",
+            "type": "integer"
+          },
           "progress": {
             "maximum": 100,
             "minimum": 0,
             "title": "Progress",
             "type": "number"
+          },
+          "resume_mode": {
+            "default": "not_pausable",
+            "enum": [
+              "verified_partial",
+              "restart_or_unverified",
+              "not_pausable"
+            ],
+            "title": "Resume Mode",
+            "type": "string"
           },
           "retry_at": {
             "anyOf": [
@@ -2671,6 +3764,24 @@
             "minimum": 0,
             "title": "Revision",
             "type": "integer"
+          },
+          "scheduled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scheduled At"
+          },
+          "speed": {
+            "default": 0.0,
+            "minimum": 0,
+            "title": "Speed",
+            "type": "number"
           },
           "status": {
             "title": "Status",
@@ -2702,7 +3813,17 @@
           "file_path",
           "error_code",
           "retry_at",
-          "parent_id"
+          "parent_id",
+          "priority",
+          "scheduled_at",
+          "created_at",
+          "completed_at",
+          "speed",
+          "eta",
+          "file_size",
+          "error_message",
+          "job_kind",
+          "resume_mode"
         ],
         "title": "Job",
         "type": "object"
@@ -3191,6 +4312,11 @@
             "default": "remove",
             "title": "Sponsorblock Mode",
             "type": "string"
+          },
+          "transliterate_bangla_filenames": {
+            "default": true,
+            "title": "Transliterate Bangla Filenames",
+            "type": "boolean"
           }
         },
         "required": [
@@ -3209,7 +4335,8 @@
           "custom_ytdlp_args",
           "download_threads",
           "gpu_accelerated_conversion",
-          "max_retries"
+          "max_retries",
+          "transliterate_bangla_filenames"
         ],
         "title": "SettingsValues",
         "type": "object"
@@ -3291,6 +4418,15 @@
               },
               {
                 "$ref": "#/$defs/ActionResult"
+              },
+              {
+                "$ref": "#/$defs/Job"
+              },
+              {
+                "$ref": "#/$defs/ClearHistoryResult"
+              },
+              {
+                "$ref": "#/$defs/DiagnosticsSnapshot"
               }
             ],
             "title": "Data"

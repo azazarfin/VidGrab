@@ -34,7 +34,7 @@ def main():
             capabilities = driver.start({"webkitgtk:browserOptions": {"binary": config["app"], "args": ["--config", str(path)]}})
             wait_for(lambda: driver.script("return document.querySelector('.connection')?.textContent === 'Connected'"), label="native connected UI")
             body = driver.script("return document.body.innerText")
-            assert "Connection test" in body and "This desktop has no tray" in body, body
+            assert "Add URL or batch" in body and "This desktop has no tray" in body, body
             assert driver.script("return document.querySelectorAll('[role=alert]').length") == 0
             first = local_call(config)
             assert first["state"] == "ready"
@@ -45,12 +45,16 @@ def main():
             assert repeated.returncode == 0, repeated.stderr.decode()
             assert local_call(config)["supervisor_pid"] == first["supervisor_pid"]
             assert local_call(config)["engine_pid"] == first["engine_pid"]
-            driver.fill("#fixture-url", "https://example.com/fixture.wav")
-            driver.click(".primary")
-            wait_for(lambda: driver.script("return document.querySelector('[role=alert]')?.textContent.includes('loopback')"), label="native fixture validation")
-            driver.fill("#fixture-url", url)
-            driver.click(".primary")
-            wait_for(lambda: driver.script("return document.querySelector('.job-status')?.textContent === 'Finished'"), timeout=30, label="frozen MP3 download in native UI")
+            driver.fill("#media-url", "file:///fixture.wav")
+            driver.click(".download-form button.primary")
+            wait_for(lambda: driver.script("return document.querySelector('[role=alert]')?.textContent.includes('HTTP or HTTPS')"), label="native fixture validation")
+            driver.click("#toggle-media-options")
+            driver.click("#option-audio-only")
+            driver.fill("#media-url", url)
+            driver.click(".download-form button.primary")
+            wait_for(lambda: (snapshot := local_call(config)).get("jobs") and snapshot["jobs"][0]["status"] == "complete", timeout=30, label="frozen MP3 completion")
+            driver.click('[data-desktop-tab="history"]')
+            wait_for(lambda: driver.script("return document.querySelector('.history-view .job-status')?.textContent === 'Finished'"), timeout=15, label="frozen MP3 download in native UI")
             completed = local_call(config)
             job = completed["jobs"][0]
             media = Path(job["file_path"])

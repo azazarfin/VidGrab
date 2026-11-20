@@ -164,6 +164,7 @@ def packaged_guide(app, home, environment, desktop, virtual, focus):
         pid = local_call(config)['supervisor_pid']
         focus(desktop, pid)
         window = desktop.window(pid)
+        driver.script('document.querySelector(\'[data-desktop-tab="browser"]\')?.click()')
         driver.script('document.querySelector(".browser-setup summary").scrollIntoView({block:"center"})')
         virtual.input('Open the packaged Firefox Flatpak setup help',
             lambda: driver.script('return document.querySelector(".browser-setup").open'),

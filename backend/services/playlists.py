@@ -70,7 +70,7 @@ def public_parent_referer(parent_url, child_url, *, auth_required):
     return parent_url if source_origin == target_origin else None
 
 
-def validate_playlist_result(result):
+def validate_playlist_result(result, *, transliterate: bool = True):
     if not isinstance(result, dict) or set(result) != {"playlist"}:
         raise PlaylistError("Playlist metadata cannot contain media outputs")
     plan = result["playlist"]
@@ -95,7 +95,8 @@ def validate_playlist_result(result):
             raise PlaylistError("Invalid playlist duration")
         thumbnail = entry.get("thumbnail_url")
         normalized.append({"position": position, "url": media_url(entry.get("url")),
-                           "title": sanitize_text(title), "thumbnail_url": media_url(thumbnail) if thumbnail else None,
+                           "title": sanitize_text(title) if transliterate else title,
+                           "thumbnail_url": media_url(thumbnail) if thumbnail else None,
                            "duration": duration, "referer": media_url(entry["referer"]) if entry.get("referer") else None})
     canonical = {"playlist": {"entries": normalized}}
     if len(json.dumps(canonical, ensure_ascii=False, allow_nan=False).encode("utf-8")) > MAX_PLAN_BYTES:
@@ -103,7 +104,7 @@ def validate_playlist_result(result):
     return canonical
 
 
-def extract_playlist(ydl, url, selection, is_cancelled):
+def extract_playlist(ydl, url, selection, is_cancelled, *, transliterate: bool = True):
     selected = parse_selection(selection)
     info = ydl.extract_info(url, download=False, process=False)
     if not isinstance(info, dict) or info.get("_type") != "playlist" or "entries" not in info:
@@ -141,7 +142,7 @@ def extract_playlist(ydl, url, selection, is_cancelled):
         entries.append({"position": position, "url": child_url, "referer": referer,
                         "title": entry.get("title"), "thumbnail_url": entry.get("thumbnail"), "duration": entry.get("duration")})
         # Validate incrementally so lazy extractors cannot build an unbounded plan.
-        validate_playlist_result({"playlist": {"entries": entries}})
+        validate_playlist_result({"playlist": {"entries": entries}}, transliterate=transliterate)
     if selected is not None and tuple(entry["position"] for entry in entries) != selected:
         raise PlaylistError("Selected playlist entries are missing")
     if selected is None:
@@ -151,4 +152,4 @@ def extract_playlist(ydl, url, selection, is_cancelled):
             pass
         else:
             raise PlaylistError("Playlist scanning exceeds 4096 positions; select explicit items")
-    return validate_playlist_result({"playlist": {"entries": entries}})
+    return validate_playlist_result({"playlist": {"entries": entries}}, transliterate=transliterate)

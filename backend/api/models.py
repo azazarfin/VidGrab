@@ -1,15 +1,31 @@
 """Pydantic is the source of the v1 native/internal control contract."""
 
+from datetime import datetime, timezone
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, field_validator, model_validator
 
 from backend.config import ConfigModel, DEFAULT_CONFIG
 from backend.api.limits import MAX_COUNTER, MAX_EVENT_HISTORY, MAX_MESSAGE_BYTES, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION
 
 Identifier = Annotated[str, Field(strict=True, pattern=r"^[!-~]{1,128}$")]
 Counter = Annotated[int, Field(strict=True, ge=0, le=MAX_COUNTER)]
+
+
+def utc_timestamp(value: str) -> str:
+    if not isinstance(value, str) or "T" not in value or any(char.isspace() for char in value):
+        raise ValueError("A strict ISO-8601 UTC timestamp is required")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as error:
+        raise ValueError("A strict ISO-8601 UTC timestamp is required") from error
+    if parsed.tzinfo is None:
+        raise ValueError("Timestamp must include an explicit timezone offset or Z")
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+UtcTimestamp = Annotated[str, Field(min_length=1, max_length=64), AfterValidator(utc_timestamp)]
 
 
 def http_url(value):
@@ -81,6 +97,8 @@ class DownloadParams(Model):
     options: DownloadOptions = Field(default_factory=DownloadOptions)
     auth_ref: Identifier | None = None
     probe_id: Identifier | None = None
+    priority: int = Field(default=0, strict=True, ge=-10, le=10)
+    scheduled_at: UtcTimestamp | None = None
 
 
 class ProbeParams(Model):
@@ -134,8 +152,23 @@ class AuthReference(Model):
 class ActionParams(Model):
     job_id: str = Field(min_length=1, max_length=256)
     expected_revision: Counter
-    action: Literal["cancel", "retry"]
+    action: Literal["cancel", "retry", "pause", "resume", "set_priority", "set_schedule", "delete_history"]
     auth_ref: Identifier | None = None
+    priority: int | None = Field(default=None, strict=True, ge=-10, le=10)
+    scheduled_at: UtcTimestamp | None = None
+
+    @model_validator(mode="after")
+    def validate_action_fields(self):
+        if self.action == "set_priority":
+            if self.priority is None:
+                raise ValueError("priority is required for set_priority")
+        elif self.priority is not None:
+            raise ValueError("priority is only allowed for set_priority")
+        if self.scheduled_at is not None and self.action != "set_schedule":
+            raise ValueError("scheduled_at is only allowed for set_schedule")
+        if self.auth_ref is not None and self.action not in {"retry", "resume"}:
+            raise ValueError("auth_ref is only allowed for retry or resume")
+        return self
 
 
 class AuthenticationParams(Model):
@@ -146,7 +179,7 @@ class AuthenticationParams(Model):
 
 class ActionResult(Model):
     job_id: str
-    action: Literal["cancel", "retry", "authenticate"]
+    action: Literal["cancel", "retry", "authenticate", "pause", "resume", "set_priority", "set_schedule", "delete_history"]
     accepted_status: str
     accepted_revision: Counter
 
@@ -197,6 +230,11 @@ class ProbeResult(Model):
 class DownloadPageParams(Model):
     limit: int = Field(default=25, ge=1, le=50)
     after: str | None = Field(default=None, max_length=256)
+    view: Literal["all", "active", "history"] = "all"
+
+
+class JobLookupParams(Model):
+    job_id: str = Field(min_length=1, max_length=256)
 
 
 class EventParams(Model):
@@ -228,11 +266,49 @@ class Job(Model):
     error_code: str | None
     retry_at: float | None = Field(default=None, allow_inf_nan=False)
     parent_id: str | None
+    priority: int = 0
+    scheduled_at: str | None = None
+    created_at: str | None = None
+    completed_at: str | None = None
+    speed: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    eta: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    file_size: Counter | None = None
+    error_message: str | None = None
+    job_kind: Literal["media", "playlist"] = "media"
+    resume_mode: Literal["verified_partial", "restart_or_unverified", "not_pausable"] = "not_pausable"
 
 
 class Counts(Model):
     total: Counter
     unfinished: Counter
+    paused: Counter = 0
+    scheduled: Counter = 0
+    history: Counter = 0
+
+
+class ClearHistoryResult(Model):
+    deleted_count: Counter
+    retained_count: Counter
+
+
+class ComponentCheck(Model):
+    name: str
+    available: bool
+    version: str | None = None
+    error: str | None = None
+
+
+class DiagnosticsSnapshot(Model):
+    instance_id: str
+    schema_version: Counter
+    media_mode: Literal["fixture", "ordinary"]
+    download_dir: str
+    download_dir_writable: bool
+    disk_free_bytes: Counter | None = None
+    component_versions: dict[str, str]
+    component_checks: list[ComponentCheck]
+    counts: Counts
+    recent_errors: list[str]
 
 
 class DownloadPage(Model):
@@ -310,7 +386,10 @@ class Success(Model):
     protocol_version: Literal[1] = 1
     request_id: Identifier
     ok: Literal[True] = True
-    data: Capabilities | SettingsSnapshot | DownloadPage | Enqueued | EventBatch | ProbeResult | AuthReference | ActionResult
+    data: (
+        Capabilities | SettingsSnapshot | DownloadPage | Enqueued | EventBatch
+        | ProbeResult | AuthReference | ActionResult | Job | ClearHistoryResult | DiagnosticsSnapshot
+    )
 
 
 OPERATIONS = {
@@ -318,12 +397,15 @@ OPERATIONS = {
     "settings.get": (Empty, SettingsSnapshot, False),
     "settings.patch": (SettingsUpdate, SettingsSnapshot, True),
     "downloads.list": (DownloadPageParams, DownloadPage, False),
+    "downloads.get": (JobLookupParams, Job, False),
     "downloads.enqueue": (DownloadParams, Enqueued, True),
+    "downloads.clear_history": (Empty, ClearHistoryResult, True),
     "events.read": (EventParams, EventBatch, False),
     "probes.create": (ProbeParams, ProbeResult, False),
     "auth.create": (AuthParams, AuthReference, True),
     "downloads.action": (ActionParams, ActionResult, True),
     "downloads.authenticate": (AuthenticationParams, ActionResult, True),
+    "diagnostics.get": (Empty, DiagnosticsSnapshot, False),
 }
 
 

@@ -84,7 +84,7 @@ class NativeControlChecks:
             job_id = submitted['job_id']
             self.wait_for(lambda response: any(job['id'] == job_id and job['status'] == 'downloading'
                 for job in response.get('data', {}).get('jobs', [])))
-            self.assertEqual(self.control('downloads.list')['data']['counts'], {'total': 1, 'unfinished': 1})
+            self.assertEqual(self.control('downloads.list')['data']['counts'], {'total': 1, 'unfinished': 1, 'paused': 0, 'scheduled': 0, 'history': 0})
             gate.set()
             complete = self.wait_for(lambda response: any(job['id'] == job_id and job['status'] == 'complete'
                 for job in response.get('data', {}).get('jobs', [])))
@@ -103,7 +103,7 @@ class NativeControlChecks:
         self.assertTrue(snapshot['resnapshot'])
         self.assertNotEqual(snapshot['instance_id'], changes['instance_id'])
         self.assertEqual(snapshot['snapshot']['settings'], later)
-        self.assertEqual(snapshot['snapshot']['counts'], {'total': 1, 'unfinished': 0})
+        self.assertEqual(snapshot['snapshot']['counts'], {'total': 1, 'unfinished': 0, 'paused': 0, 'scheduled': 0, 'history': 1})
         self.assertEqual(self.control('downloads.enqueue', params, request_id='reopened-enqueue', key='stable-download')['data'], submitted)
         self.assertEqual(update(updates[winner])['data'], original)
         self.assertEqual(self.control('settings.get')['data'], later)

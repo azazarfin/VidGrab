@@ -196,7 +196,6 @@ def optional_grants_journey(browser, native, source, base, candidates, screensho
         return [item for item in candidates() if item['source'] == 'request']
 
     try:
-        options.click('[data-tab="tab-advanced"]')
         if permission_input:
             options.click('#chk-request-observation + .slider')
             report['denial_input'] = permission_input(browser, 'deny')
@@ -279,10 +278,8 @@ def optional_grants_journey(browser, native, source, base, candidates, screensho
         report['checks'].append('actual grant removal disables observation while the preference stays enabled')
         if permission_input:
             review = options
-            review.click('[data-tab="tab-advanced"]')
             review.button('Test connection')
             review.has_text('#permission-status', 'Request observation: not granted')
-            review.click('[data-tab="tab-advanced"]')
             assert review.script("return document.querySelector('#chk-request-observation').checked")
             review.screenshot(screenshots / (browser.kind + '-optional-revoked.png'))
             report['revocation_review'] = 'actual options Test connection; removal used ' + (

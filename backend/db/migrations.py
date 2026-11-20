@@ -16,7 +16,7 @@ import aiosqlite
 
 from backend.runtime import RuntimeCompatibilityError, RuntimeConfig
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 BASE_COLUMNS = {
     "id", "url", "title", "thumbnail_url", "status", "progress", "speed", "eta",
     "file_size", "file_path", "format_selected", "error_message", "created_at", "completed_at",
@@ -42,6 +42,9 @@ REQUEST_COLUMNS = {
     "request_count": "INTEGER NOT NULL DEFAULT 0 CHECK (typeof(request_count)='integer' AND request_count >= 0)",
 }
 PROTOCOL_COLUMNS = {"revision": "INTEGER NOT NULL DEFAULT 1 CHECK (typeof(revision)='integer' AND revision BETWEEN 1 AND 9007199254740991)"}
+PRIORITY_COLUMNS = {
+    "priority": "INTEGER NOT NULL DEFAULT 0 CHECK (typeof(priority)='integer' AND priority BETWEEN -10 AND 10)",
+}
 OWNERSHIP_COLUMNS = {
     "owner_id": "TEXT REFERENCES runtime_owners(id)",
     "lease_expires_at": "REAL",
@@ -257,13 +260,31 @@ async def _migration_ten(db):
         result TEXT NOT NULL CHECK (length(CAST(result AS BLOB))<=65536))""")
 
 
+async def _migration_eleven(db):
+    async with db.execute("PRAGMA table_info(downloads)") as cursor:
+        existing = {row[1] for row in await cursor.fetchall()}
+    for column, definition in PRIORITY_COLUMNS.items():
+        if column not in existing:
+            await db.execute(f"ALTER TABLE downloads ADD COLUMN {column} {definition}")
+    await db.execute("CREATE INDEX IF NOT EXISTS runnable_priority_downloads ON downloads(status, priority DESC, created_at ASC)")
+    await db.execute("CREATE INDEX IF NOT EXISTS scheduled_deadlines ON downloads(scheduled_at) WHERE status='scheduled'")
+    await db.execute("DROP TRIGGER IF EXISTS protocol_download_update")
+    changed_columns = sorted(BASE_COLUMNS | EXTRA_COLUMNS.keys() | ATTEMPT_COLUMNS.keys() | AUTH_COLUMNS.keys()
+                             | PLAYLIST_COLUMNS.keys() | REQUEST_COLUMNS.keys() | PRIORITY_COLUMNS.keys())
+    changed = " OR ".join(f"NEW.{name} IS NOT OLD.{name}" for name in changed_columns)
+    await db.execute(f"""CREATE TRIGGER protocol_download_update AFTER UPDATE OF {','.join(changed_columns)} ON downloads
+        WHEN {changed} BEGIN
+        UPDATE downloads SET revision=OLD.revision+1 WHERE id=NEW.id;
+        INSERT INTO protocol_events(topic,entity_id,revision,kind) VALUES ('downloads',NEW.id,OLD.revision+1,'changed'); END""")
+
+
 async def _validate_schema(db):
     async with db.execute("PRAGMA quick_check") as cursor:
         if await cursor.fetchall() != [("ok",)]:
             raise RuntimeCompatibilityError("Database integrity check failed")
     async with db.execute("PRAGMA table_info(downloads)") as cursor:
         columns = {row[1] for row in await cursor.fetchall()}
-    missing = (BASE_COLUMNS | EXTRA_COLUMNS.keys() | ATTEMPT_COLUMNS.keys() | AUTH_COLUMNS.keys() | PLAYLIST_COLUMNS.keys() | REQUEST_COLUMNS.keys() | PROTOCOL_COLUMNS.keys()) - columns
+    missing = (BASE_COLUMNS | EXTRA_COLUMNS.keys() | ATTEMPT_COLUMNS.keys() | AUTH_COLUMNS.keys() | PLAYLIST_COLUMNS.keys() | REQUEST_COLUMNS.keys() | PROTOCOL_COLUMNS.keys() | PRIORITY_COLUMNS.keys()) - columns
     if missing:
         raise RuntimeCompatibilityError(f"Database is missing download columns: {', '.join(sorted(missing))}")
     async with db.execute("PRAGMA table_info(config)") as cursor:
@@ -279,21 +300,24 @@ async def _validate_schema(db):
         state = await cursor.fetchall()
         if len(state) != 1 or state[0][0] != 1 or not isinstance(state[0][1], int) or not 0 <= state[0][1] <= 2**53 - 1:
             raise RuntimeCompatibilityError("Database has an invalid settings revision")
-    async with db.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name IN "
+    async with db.execute("SELECT name, sql FROM sqlite_master WHERE type='trigger' AND name IN "
                           "('protocol_event_retention','protocol_download_insert','protocol_download_update','protocol_download_delete')") as cursor:
-        if len(await cursor.fetchall()) != 4:
+        triggers = {row[0]: row[1] for row in await cursor.fetchall()}
+        if len(triggers) != 4 or "priority" not in (triggers.get("protocol_download_update") or ""):
             raise RuntimeCompatibilityError("Database is missing its protocol event guards")
     async with db.execute("PRAGMA foreign_key_check") as cursor:
         if await cursor.fetchone():
             raise RuntimeCompatibilityError("Database contains orphan attempt/artifact records")
     for table, index, columns in (("downloads", "retry_deadlines", ["retry_at"]),
+                                  ("downloads", "runnable_priority_downloads", ["status", "priority", "created_at"]),
+                                  ("downloads", "scheduled_deadlines", ["scheduled_at"]),
                                   ("request_leases", "request_host_leases", ["host_key"])):
         async with db.execute(f"PRAGMA index_list({table})") as cursor:
             if not any(row[1] == index for row in await cursor.fetchall()):
-                raise RuntimeCompatibilityError("Database is missing its request budget index")
+                raise RuntimeCompatibilityError("Database is missing its request budget or queue index")
         async with db.execute(f"PRAGMA index_info({index})") as cursor:
             if [row[2] for row in await cursor.fetchall()] != columns:
-                raise RuntimeCompatibilityError("Database has an invalid request budget index")
+                raise RuntimeCompatibilityError("Database has an invalid request budget or queue index")
     async with db.execute("PRAGMA index_list(downloads)") as cursor:
         indexes = await cursor.fetchall()
     if not any(row[1] == "playlist_positions" and row[2] == 1 and row[4] == 1 for row in indexes):
@@ -364,7 +388,9 @@ async def migrate_database(runtime: RuntimeConfig, defaults: dict, validate_sett
                 version = (await cursor.fetchone())[0]
             _check_version(version)
             for target, migration in ((1, _migration_one), (2, _migration_two), (3, _migration_three),
-                                      (4, _migration_four), (5, _migration_five), (6, _migration_six), (7, _migration_seven), (8, _migration_eight), (9, _migration_nine), (10, _migration_ten)):
+                                      (4, _migration_four), (5, _migration_five), (6, _migration_six),
+                                      (7, _migration_seven), (8, _migration_eight), (9, _migration_nine),
+                                      (10, _migration_ten), (11, _migration_eleven)):
                 if version < target:
                     await migration(db)
                     await db.execute(f"PRAGMA user_version = {target}")

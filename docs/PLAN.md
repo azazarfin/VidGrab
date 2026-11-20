@@ -113,12 +113,12 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 - Acceptance: controlled fixtures pass for direct media, HLS, DASH, cookies, referer, redirects, expiring URLs, and playlists, plus a separately recorded bounded anonymous live-site matrix (signed-in media deferred out of P05 by user choice). Accepted within [ADR-028](DECISIONS.md#adr-028--scoped-media-discovery-and-format-review) on 2026-11-20.
 - Suggested commit: `feat(extension): add context-aware media discovery`.
 
-### [ ] P06 — Build the standalone manager and connection UX
+### [x] P06 — Build the standalone manager and connection UX
 
-- Add app screens for Add URL/batch, active queue, history, settings, browser connections, and diagnostics. Support file/folder selection, priorities, retry, cancel, schedule, and capability-aware pause/resume.
-- Provide first-run dependency checks, background/login toggles, clear Quit behavior, and recovery after engine failure. Keep a visible-window fallback when a system tray is unavailable.
+- Add app screens for Add URL/batch (including `probes.create` format inspection, inline multi-line URL paste, and `.txt` file import), active queue (`view: 'active'` merged across pagination), searchable/filterable history (with non-destructive `<dialog>` clear confirmation), settings (KiB/s ↔ bytes/s `speed_limit`, `1..32` `download_threads`, `none`/`mp4`/`mkv`/`webm` codecs, bare `default_quality` values, legacy `custom_ytdlp_args` clear-only banner, UTC scheduling note), browser connections, and redacted diagnostics (`engine_generation`, copy button, bounded `engine.log` tail). Support file/folder selection, priorities, retry, cancel, schedule, and capability-aware pause/resume.
+- Provide first-run dependency checks, background/login toggles, clear Quit behavior (checking active downloads only when `!close_to_tray` or explicit Quit, and treating non-ready engines safely), and recovery after engine failure (`20 s` `restart_engine` IPC timeout). Keep a visible-window fallback when a system tray is unavailable.
 - Reduce the extension to detection, format selection, quick queue actions, status, and Open in app; retain usable behavior when the app is missing/offline or permissions are denied.
-- Acceptance: the app works without the extension, downloads survive popup/browser closure, and both clients reflect changed settings without reopening.
+- Acceptance: the app works without the extension, downloads survive popup/browser closure, and both clients reflect changed settings without reopening. Implemented and host-verified under [ADR-029](DECISIONS.md#adr-029--standalone-desktop-manager-and-slim-extension-ux-p06) on 2026-11-20 (**44** Rust supervisor/native-host tests, **482** guarded Python tests, **82** offline helpers, **142** Node checks, and all 5 Playwright Chromium UI suites pass on the Fedora host; full `vidgrab-desktop` linking and cross-OS VM re-validation happen where GTK3/WebKitGTK-4.1 `-devel` / Windows toolchains are present in P07).
 - Suggested commit: `feat(desktop): add download manager and companion onboarding`.
 
 ### [ ] P07 — Release Linux and Windows with repeatable updates
@@ -139,7 +139,7 @@ Each milestone ends with a focused commit and an updated [HANDOFF.md](../HANDOFF
 ## Follow-up decisions at the relevant gate
 
 - P02: exact minimum OS versions, Linux distro baseline, ARM64 priority, and sandboxed-browser support validated on available machines.
-- P05/P06: retain the current Bangla-to-Latin behavior as an optional filename preference or remove it; do not silently change it while moving modules.
+- P05/P06: retain the current Bangla-to-Latin behavior as an optional filename preference (`transliterate_bangla_filenames`, default `true`) or remove it; resolved in [ADR-029](DECISIONS.md#adr-029--standalone-desktop-manager-and-slim-extension-ux-p06).
 - P07: release hosting, store extension IDs, signing credentials/budget, and project license ownership (README says MIT but no LICENSE file is currently tracked).
 
 These do not block P01. Record answers in [DECISIONS.md](DECISIONS.md) instead of relying on chat history.

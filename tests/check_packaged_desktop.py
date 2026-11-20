@@ -84,7 +84,7 @@ def check_ui(app, environment, url, screenshots, *, fuse=False):
         wait_for(lambda: driver.script("return document.querySelector('.connection')?.textContent === 'Connected'"), label="packaged connected UI")
         startup_seconds = round(time.monotonic() - started, 3)
         body = driver.script("return document.body.innerText")
-        assert "Connection test" in body and "This desktop has no tray" in body, body
+        assert "Add URL or batch" in body and "This desktop has no tray" in body, body
         first = local_call(config)
         fuse_mount = None
         if fuse:
@@ -104,12 +104,16 @@ def check_ui(app, environment, url, screenshots, *, fuse=False):
         assert repeated.returncode == 0, repeated.stderr.decode(errors="replace")
         assert local_call(config)["supervisor_pid"] == first["supervisor_pid"]
         assert local_call(config)["engine_pid"] == first["engine_pid"]
-        driver.fill("#fixture-url", "https://example.com/fixture.wav")
-        driver.click(".primary")
-        wait_for(lambda: driver.script("return document.querySelector('[role=alert]')?.textContent.includes('loopback')"), label="packaged fixture rejection")
-        driver.fill("#fixture-url", url)
-        driver.click(".primary")
-        wait_for(lambda: driver.script("return document.querySelector('.job-status')?.textContent === 'Finished'"), timeout=30, label="packaged frozen MP3")
+        driver.fill("#media-url", "file:///fixture.wav")
+        driver.click(".download-form button.primary")
+        wait_for(lambda: driver.script("return document.querySelector('[role=alert]')?.textContent.includes('HTTP or HTTPS')"), label="packaged fixture rejection")
+        driver.click("#toggle-media-options")
+        driver.click("#option-audio-only")
+        driver.fill("#media-url", url)
+        driver.click(".download-form button.primary")
+        wait_for(lambda: (snapshot := local_call(config)).get("jobs") and snapshot["jobs"][0]["status"] == "complete", timeout=30, label="packaged frozen MP3 completion")
+        driver.click('[data-desktop-tab="history"]')
+        wait_for(lambda: driver.script("return document.querySelector('.history-view .job-status')?.textContent === 'Finished'"), timeout=15, label="packaged frozen MP3")
         completed = local_call(config)
         media = Path(completed["jobs"][0]["file_path"])
         assert media.is_file() and media.suffix == ".mp3"

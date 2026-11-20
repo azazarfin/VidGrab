@@ -10,17 +10,19 @@ from backend.db.events import EventRepository, read_transaction
 from backend.db.control_actions import ControlAction
 from backend.services.control_errors import ControlError
 from backend.services.credentials import CredentialStore
+from backend.services.diagnostics import check_download_dir, inspect_components, redact_diagnostic
 from backend.services.format_selection import ProbeWitnesses
 from backend.services.retry_policy import RequestFailure, decide, nested_errors
 
 
 class ControlService:
-    def __init__(self, settings, queue, owner, *, fixture_validator, component_versions=None, probes=None):
+    def __init__(self, settings, queue, owner, *, fixture_validator, component_versions=None, probes=None, components=None):
         self.settings = settings
         self.queue = queue
         self.owner = owner
         self.fixture_validator = fixture_validator
         self.component_versions = component_versions or {}
+        self.components = dict(components) if components is not None else {}
         self.events = EventRepository(settings.runtime, owner, settings.validate_settings)
         self.probes = probes
         self.credentials = CredentialStore(owner, lambda: queue.clock())
@@ -96,9 +98,19 @@ class ControlService:
         accepted = ControlAction.from_request(request, params, action)
         if action == "cancel":
             return await self.queue.cancel(params.job_id, control_action=accepted)
+        if action == "pause":
+            return await self.queue.pause(params.job_id, control_action=accepted)
+        if action == "set_priority":
+            return await self.queue.set_priority(params.job_id, params.priority, control_action=accepted)
+        if action == "set_schedule":
+            return await self.queue.set_schedule(params.job_id, params.scheduled_at, control_action=accepted)
+        if action == "delete_history":
+            return await self.queue.delete_history(params.job_id, control_action=accepted)
         loader = None
         if params.auth_ref is not None:
             loader = lambda url, job: self.credentials.resolve(params.auth_ref, url, job)
+        if action == "resume":
+            return await self.queue.resume(params.job_id, control_action=accepted, credential_loader=loader)
         return await self.queue.retry(params.job_id, expected_status="waiting_for_auth" if action == "authenticate" else None,
                                       control_action=accepted, credential_loader=loader)
 
@@ -125,7 +137,9 @@ class ControlService:
         if request.operation == "capabilities.get":
             result = Capabilities(fixture_only=self.fixture_validator is not None, instance_id=self.owner.id,
                                   features=["settings.revisions", "downloads.idempotency", "downloads.source", "events.snapshots", "events.replay",
-                                            "downloads.actions", "downloads.options", "auth.scoped", "auth.headers", "probes.http", "probes.fresh"],
+                                            "downloads.actions", "downloads.options", "auth.scoped", "auth.headers", "probes.http", "probes.fresh",
+                                            "downloads.priority", "downloads.schedule", "downloads.pause_resume", "downloads.history_delete",
+                                            "diagnostics.summary", "settings.transliterate_bangla"],
                                   component_versions=self.component_versions)
         elif request.operation == "settings.get":
             result = await self.events.settings()
@@ -135,7 +149,29 @@ class ControlService:
                 raise ControlError("UNSUPPORTED_OPTION", 422, "Executable legacy arguments are unavailable through this contract")
             result = await self.settings.patch_revision(patch, params.expected_revision, request.idempotency_key)
         elif request.operation == "downloads.list":
-            result = await self.events.downloads(params.limit, params.after)
+            result = await self.events.downloads(params.limit, params.after, params.view)
+        elif request.operation == "downloads.get":
+            result = await self.events.get_job(params.job_id)
+            if result is None:
+                raise ControlError("NOT_FOUND", 404, "The selected download no longer exists")
+        elif request.operation == "downloads.clear_history":
+            key = "v1.clear_history." + hashlib.sha256(request.idempotency_key.encode("ascii")).hexdigest()
+            result = await self.queue.delete_history(clear_key=key)
+        elif request.operation == "diagnostics.get":
+            db_diag = await self.events.diagnostics()
+            fs_info = check_download_dir(db_diag["download_dir"])
+            result = {
+                "instance_id": self.owner.id,
+                "schema_version": db_diag["schema_version"],
+                "media_mode": "fixture" if self.fixture_validator is not None else "ordinary",
+                "download_dir": db_diag["download_dir"],
+                "download_dir_writable": fs_info["writable"],
+                "disk_free_bytes": fs_info["disk_free_bytes"],
+                "component_versions": {str(k): redact_diagnostic(v) for k, v in self.component_versions.items()},
+                "component_checks": inspect_components(self.components, self.component_versions),
+                "counts": db_diag["counts"],
+                "recent_errors": db_diag["recent_errors"],
+            }
         elif request.operation == "events.read":
             result = await self.events.events(params.instance_id, params.cursor, params.limit)
         elif request.operation == "probes.create":
@@ -153,7 +189,7 @@ class ControlService:
             defaults = await self.settings.get_all()
             # Keep the original six-operation enqueue identity when all added
             # fields have defaults, so schema-9 receipts survive this extension.
-            semantic = params.model_dump(exclude={"options", "auth_ref", "probe_id"})
+            semantic = params.model_dump(exclude={"options", "auth_ref", "probe_id", "priority", "scheduled_at"})
             if params.probe_id is not None:
                 semantic["probe_id"] = params.probe_id
             selected_options = params.options.model_dump(exclude_defaults=True)
@@ -161,6 +197,10 @@ class ControlService:
                 semantic["options"] = selected_options
             if params.auth_ref is not None:
                 semantic["auth_ref"] = params.auth_ref
+            if params.priority != 0:
+                semantic["priority"] = params.priority
+            if params.scheduled_at is not None:
+                semantic["scheduled_at"] = params.scheduled_at
             intent = {"protocol_version": PROTOCOL_VERSION, "operation": request.operation, "params": semantic}
             def credentials():
                 if defaults.get("custom_ytdlp_args"):
@@ -176,7 +216,9 @@ class ControlService:
                 thumbnail_url=params.thumbnail_url, audio_only=params.audio_only, audio_format=params.audio_format,
                 idempotency_key=key, idempotency_intent=intent, credential_loader=credentials,
                 format_intent_loader=format_intent if params.probe_id else None,
-                requires_auth=params.auth_ref is not None, **params.options.model_dump(),
+                requires_auth=params.auth_ref is not None,
+                priority=params.priority, scheduled_at=params.scheduled_at,
+                **params.options.model_dump(),
             )
             result = {"job_id": job_id}
         if request.operation.startswith("settings."):

@@ -84,18 +84,26 @@ def main():
                           sessionStorage.setItem('application', JSON.stringify(window.__fixture.application));
                           return structuredClone(window.__fixture.application);
                         }
+                        if (command === 'get_desktop_preferences' || command === 'set_desktop_preferences'
+                            || command === 'diagnostics_report' || command === 'restart_engine'
+                            || command.startsWith('plugin:')) {
+                          return window.__vidgrabControl({type:'fixture.invoke', command, arguments});
+                        }
                         if (command === 'quit_companion') return;
-                        throw 'Unexpected command';
-                      }
+                        throw 'Unexpected command: ' + command;
+                      },
+                      transformCallback: () => 1,
                     };
                 ''')
                 page.goto('http://127.0.0.1:4173', wait_until='networkidle')
                 page.evaluate('document.fonts.ready')
-                expect(page.get_by_role('heading', name='Downloads', level=1)).to_be_visible()
+                expect(page.locator('.toolbar .brand')).to_contain_text('VidGrab')
+                expect(page.get_by_role('heading', name='Queue', level=2)).to_be_visible()
                 expect(page.locator('.connection')).to_have_text('Connected', timeout=5000)
                 expect(page.get_by_role('alert')).to_have_count(0)
-                expect(page.get_by_text('No downloads yet')).to_be_visible()
+                expect(page.get_by_text('No downloads in this view')).to_be_visible()
                 expect(page.get_by_text('This desktop has no tray.', exact=False)).to_be_visible()
+                page.locator('[data-desktop-tab="browser"]').click()
                 installation = page.locator('.application-setup')
                 installation.locator('summary').click(timeout=3000)
                 page.evaluate('window.__installFailure = true')
@@ -120,8 +128,10 @@ def main():
                 page.get_by_role('button', name='Disconnect browsers', exact=True).click()
                 expect(page.locator('.browser-connection-summary')).to_have_text('Disconnected')
                 expect(page.locator('.connection')).to_have_text('Connected')
+                page.locator('[data-desktop-tab="queue"]').click()
                 expect(page.get_by_role('button', name='Download', exact=True)).to_be_enabled()
                 page.reload(wait_until='networkidle')
+                page.locator('[data-desktop-tab="browser"]').click()
                 expect(page.locator('.browser-connection-summary')).to_have_text('Disconnected')
                 page.evaluate('window.__registrationFailure = true')
                 page.get_by_role('button', name='Connect browsers', exact=True).click()
@@ -147,6 +157,7 @@ def main():
                 page.screenshot(path=str(arguments.screenshots / f'{width}-setup.png'), full_page=True)
                 summary.press('Space')
                 expect(help).not_to_have_attribute('open', '')
+                page.locator('[data-desktop-tab="queue"]').click()
                 page.screenshot(path=str(arguments.screenshots / f'{width}-empty.png'), full_page=True)
                 page.get_by_label('Media URL', exact=True).fill('file:///fixture.wav')
                 page.get_by_role('button', name='Download', exact=True).click()
@@ -158,15 +169,18 @@ def main():
                 expect(page.get_by_role('alert')).to_have_count(1)
                 expect(page.get_by_role('alert')).to_contain_text('HTTP or HTTPS')
                 page.get_by_label('Media URL', exact=True).fill('http://127.0.0.1:8080/fixture.wav')
+                page.get_by_role('button', name='Options', exact=True).click()
                 page.get_by_label('Audio only', exact=True).check()
                 page.get_by_role('button', name='Download', exact=True).click()
                 expect(page.get_by_role('status').filter(has_text='queued')).to_be_visible(timeout=5000)
                 job = fixture.jobs()[0]
                 fixture.set_status(job['id'], 'complete')
+                page.locator('.queue .pill', has_text='All loaded').click()
                 expect(page.get_by_text('Finished', exact=True)).to_be_visible(timeout=5000)
                 expect(page.get_by_role('alert')).to_have_count(0)
                 assert not page.evaluate('document.documentElement.scrollWidth > innerWidth'), f'Overflow at {width}px'
                 page.screenshot(path=str(arguments.screenshots / f'{width}-complete.png'), full_page=True)
+                page.locator('[data-desktop-tab="browser"]').click()
                 installation.locator('summary').click()
                 active = fixture.request('downloads.enqueue', {'url': 'http://127.0.0.1:8080/active.wav'}, key='active')['job_id']
                 expect(page.get_by_role('button', name='Remove installed copy…', exact=True)).to_be_disabled(timeout=5000)

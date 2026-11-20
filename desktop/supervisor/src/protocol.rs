@@ -24,7 +24,7 @@ impl Request {
         }
         match self.op.as_str() {
             "status" | "activate" if self.params.is_empty() => Ok(()),
-            "quit" | "quit_if_idle" if !browser && self.params.is_empty() => Ok(()),
+            "quit" | "quit_if_idle" | "restart_engine" if !browser && self.params.is_empty() => Ok(()),
             "fixture.download" => {
                 let url = self.params.get("url").and_then(Value::as_str).ok_or("BAD_REQUEST")?;
                 let local = url.strip_prefix("http://127.0.0.1:").ok_or("BAD_REQUEST")?;
@@ -41,7 +41,7 @@ impl Request {
                 if value["request_id"] != self.id { return Err("BAD_REQUEST"); }
                 Ok(())
             }
-            "status" | "activate" | "quit" | "quit_if_idle" => Err("BAD_REQUEST"),
+            "status" | "activate" | "quit" | "quit_if_idle" | "restart_engine" => Err("BAD_REQUEST"),
             _ => Err("UNSUPPORTED_OPERATION"),
         }
     }
@@ -110,6 +110,16 @@ mod tests {
         let request = Request { spike_version: 1, id: "remove".into(), op: "quit_if_idle".into(), params: Default::default() };
         assert_eq!(request.validate(false), Ok(()));
         assert!(request.validate(true).is_err(), "Browser requests cannot shut down the app for removal");
+    }
+
+    #[test]
+    fn engine_restart_is_available_only_to_the_local_desktop() {
+        let request = Request { spike_version: 1, id: "restart".into(), op: "restart_engine".into(), params: Default::default() };
+        assert_eq!(request.validate(false), Ok(()));
+        assert_eq!(request.validate(true), Err("BAD_REQUEST"));
+        let with_params = Request { spike_version: 1, id: "restart".into(), op: "restart_engine".into(),
+            params: json!({"unexpected": true}).as_object().unwrap().clone() };
+        assert_eq!(with_params.validate(false), Err("BAD_REQUEST"));
     }
 
     #[test]

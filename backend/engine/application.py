@@ -38,7 +38,8 @@ class EngineAccess:
 
     allowed = {("GET", "/health"), ("GET", "/spike/status"), ("POST", "/spike/fixture"),
                ("POST", "/v1/requests"), ("GET", "/v1/capabilities"), ("GET", "/v1/settings"),
-               ("PATCH", "/v1/settings"), ("GET", "/v1/downloads"), ("POST", "/v1/downloads"), ("GET", "/v1/events"),
+               ("PATCH", "/v1/settings"), ("GET", "/v1/downloads"), ("POST", "/v1/downloads"),
+               ("DELETE", "/v1/downloads/history"), ("GET", "/v1/diagnostics"), ("GET", "/v1/events"),
                ("POST", "/v1/probes"), ("POST", "/v1/auth/contexts")}
 
     def __init__(self, app, token, port):
@@ -65,7 +66,11 @@ class EngineAccess:
             error = reject("ORIGIN_REJECTED", 403)
         elif (scope["method"], scope["path"]) not in self.allowed:
             action_path = re.fullmatch(r"/v1/downloads/[^/]{1,256}/(?:actions|authentication)", scope["path"])
-            if not (scope["method"] == "POST" and action_path):
+            get_job_path = re.fullmatch(r"/v1/downloads/([^/]{1,256})", scope["path"])
+            if not (
+                (scope["method"] == "POST" and action_path)
+                or (scope["method"] == "GET" and get_job_path and get_job_path.group(1) != "history")
+            ):
                 error = reject("UNSUPPORTED_OPERATION", 404)
         if error:
             return await error(scope, receive, send)
@@ -107,7 +112,7 @@ def create_engine_app(runtime: RuntimeConfig, *, token: str, port: int, componen
     app.state.probes.components = dict(components)
     service = ControlService(app.state.settings, app.state.queue, app.state.owner,
                              fixture_validator=FixtureRequest.model_validate if media_mode == "fixture" else None,
-                             component_versions=component_versions, probes=app.state.probes)
+                             component_versions=component_versions, probes=app.state.probes, components=components)
     app.state.control = service
     app.include_router(create_control_router(service))
 

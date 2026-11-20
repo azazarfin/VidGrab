@@ -185,6 +185,7 @@ def run_download(
     referer: Optional[str] = None,
     credential_url: Optional[str] = None,
     format_intent: Optional[Dict[str, Any]] = None,
+    transliterate_bangla_filenames: bool = True,
 ) -> Dict[str, Any]:
     """Synchronous yt-dlp attempt, normally run inside an owned worker process."""
     
@@ -214,7 +215,7 @@ def run_download(
     ydl_opts = {
         'format': format_id,
         'outtmpl': outtmpl,
-        'restrictfilenames': True,
+        'restrictfilenames': bool(transliterate_bangla_filenames),
         'progress_hooks': [make_progress_hook(task_id, progress_callback, is_cancelled_cb)],
         'postprocessor_hooks': [make_postprocessor_hook(task_id, progress_callback)],
         'merge_output_format': 'mkv',
@@ -376,7 +377,10 @@ def run_download(
         if is_playlist or playlist_items:
             from backend.services.playlists import extract_playlist
             # Raw extraction neither downloads media nor runs playlist postprocessors.
-            result = extract_playlist(ydl, url, playlist_items, is_cancelled_cb or (lambda: False))
+            result = extract_playlist(
+                ydl, url, playlist_items, is_cancelled_cb or (lambda: False),
+                transliterate=bool(transliterate_bangla_filenames),
+            )
             if budget is not None:
                 budget.check()
             return result
@@ -405,10 +409,11 @@ def run_download(
                 raise RuntimeError("yt-dlp did not report completed post-processing outputs")
             # Explicit diagnostic adapters may return an authoritative info record directly.
             artifacts = result_artifacts({'filepath': info.get('filepath')})
+        raw_title = info.get("title")
         result = {
             "filepath": artifacts[0]['path'],
             "artifacts": artifacts,
-            "title": sanitize_text(info.get("title")),
+            "title": sanitize_text(raw_title) if transliterate_bangla_filenames else raw_title,
             "thumbnail_url": info.get("thumbnail")
         }
         if workspace is not None:

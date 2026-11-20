@@ -8,7 +8,7 @@ use std::ptr::{null, null_mut};
 use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND};
 use windows_sys::Win32::System::Registry::*;
 
-struct Key(HKEY);
+pub(crate) struct Key(pub(crate) HKEY);
 impl Drop for Key {
     fn drop(&mut self) {
         unsafe {
@@ -16,17 +16,17 @@ impl Drop for Key {
         }
     }
 }
-fn checked(code: u32) -> io::Result<()> {
+pub(crate) fn checked(code: u32) -> io::Result<()> {
     if code == 0 {
         Ok(())
     } else {
         Err(io::Error::from_raw_os_error(code as i32))
     }
 }
-fn missing(code: u32) -> bool {
+pub(crate) fn missing(code: u32) -> bool {
     code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND
 }
-fn open(path: &str, view: u32, access: u32) -> io::Result<Option<Key>> {
+pub(crate) fn open(path: &str, view: u32, access: u32) -> io::Result<Option<Key>> {
     let name = wide(OsStr::new(path))?;
     let mut key = null_mut();
     let code = unsafe {
@@ -44,7 +44,7 @@ fn open(path: &str, view: u32, access: u32) -> io::Result<Option<Key>> {
     checked(code)?;
     Ok(Some(Key(key)))
 }
-fn reject_links(path: &str, view: u32) -> io::Result<()> {
+pub(crate) fn reject_links(path: &str, view: u32) -> io::Result<()> {
     let mut prefix = String::new();
     let link = wide(OsStr::new("SymbolicLinkValue"))?;
     for part in path.split('\\') {

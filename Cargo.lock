@@ -3631,6 +3631,8 @@ name = "vidgrab-desktop"
 version = "0.1.0"
 dependencies = [
  "gio",
+ "gtk",
+ "libc",
  "serde_json",
  "tauri",
  "tauri-build",

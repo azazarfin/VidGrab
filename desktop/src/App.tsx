@@ -1,54 +1,78 @@
 import { useEffect, useRef, useState } from 'react';
-import type { FormEvent } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { companionSession } from './protocol';
-import { DownloadDefaults } from './DownloadDefaults';
-import type { ControlState, Job, SettingsPatch, SettingsSnapshot } from '../../packages/protocol/generated/client';
+import { listen } from '@tauri-apps/api/event';
+import {
+  companionSession,
+  exportDiagnosticsFile,
+  getCompanionStatus,
+  getDesktopPreferences,
+  getDiagnosticsReport,
+  installAppImageNative,
+  openDownload,
+  openSoftwareManagerNative,
+  pickDownloadFolder,
+  quitCompanionNative,
+  removeApplicationNative,
+  restartEngine,
+  revealDownload,
+  setBrowserConnectionNative,
+  setDesktopPreferences,
+} from './protocol';
+import type {
+  DesktopPreferences,
+  DesktopPreferencesPatch,
+  FullDiagnosticsReport,
+  Snapshot,
+} from './protocol';
+import type {
+  ActionParams,
+  ControlState,
+  DownloadParams,
+  Job,
+  SettingsPatch,
+  SettingsSnapshot,
+} from '../../packages/protocol/generated/client';
+import { OnboardingBanner } from './components/OnboardingBanner';
+import { AddDownloadCard } from './components/AddDownloadCard';
+import { QueueView } from './components/QueueView';
+import { HistoryView } from './components/HistoryView';
+import { SettingsView } from './components/SettingsView';
+import { BrowserView } from './components/BrowserView';
+import { DiagnosticsView } from './components/DiagnosticsView';
 
-interface Snapshot {
-  state: 'starting' | 'ready' | 'recovering' | 'failed';
-  tray_available: boolean;
-  downloads_active?: boolean;
-  browser_connection?: BrowserConnection;
-  browser_connection_error?: string;
-  application?: ApplicationStatus;
-  application_error?: string;
-}
+type DesktopTab = 'queue' | 'history' | 'settings' | 'browser' | 'diagnostics';
 
-interface ApplicationStatus {
-  kind: 'deb' | 'appimage' | 'windows';
-  installed: boolean;
-  app: string;
-  shortcut?: string;
-}
-
-interface BrowserConnection {
-  enabled: boolean;
-  bridge_ready: boolean;
-  chrome: 'missing' | 'registered' | 'conflict';
-  firefox: 'missing' | 'registered' | 'conflict';
-}
-
-const states = { starting: 'Starting', ready: 'Connected', recovering: 'Reconnecting', failed: 'Engine stopped' };
-const jobStates: Record<string, string> = { queued: 'Queued', downloading: 'Downloading', postprocessing: 'Converting', complete: 'Finished', failed: 'Failed', cancelled: 'Cancelled', cancelling: 'Cancelling', waiting_for_auth: 'Fresh browser context needed', retry_wait: 'Retry scheduled', waiting_children: 'Waiting for playlist items' };
+const CONNECTION_LABELS = {
+  starting: 'Starting',
+  ready: 'Connected',
+  recovering: 'Reconnecting',
+  failed: 'Engine stopped',
+};
 
 export function App() {
+  const [activeTab, setActiveTab] = useState<DesktopTab>('queue');
   const [snapshot, setSnapshot] = useState<Snapshot>({ state: 'starting', tray_available: false });
-  const [url, setUrl] = useState('');
   const [control, setControl] = useState<ControlState>(companionSession.state);
-  const [audioOnly, setAudioOnly] = useState(false);
-  const [audioFormat, setAudioFormat] = useState('mp3');
+  const [activeJobs, setActiveJobs] = useState<Job[]>([]);
+  const [activeNextAfter, setActiveNextAfter] = useState<string | null>(null);
+  const [desktopPrefs, setDesktopPrefs] = useState<DesktopPreferences | null>(null);
+  const [diagnostics, setDiagnostics] = useState<FullDiagnosticsReport | null>(null);
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [connectionError, setConnectionError] = useState('');
   const [actionError, setActionError] = useState('');
   const [announcement, setAnnouncement] = useState('');
   const [removalError, setRemovalError] = useState('');
   const removalDialog = useRef<HTMLDialogElement>(null);
+  const confirmQuitDialog = useRef<HTMLDialogElement>(null);
 
-  function explain(reason: unknown) {
+  function explain(reason: unknown): string {
     const code = (reason as { code?: string })?.code;
-    if (code === 'REVISION_CONFLICT') return 'This item changed in another window. Your edits are kept; review its current state before trying again.';
-    if (companionSession.pending) return 'The request may have succeeded. Check it before submitting another change.';
+    if (code === 'REVISION_CONFLICT') {
+      return 'This item changed in another window. Your edits are kept; review its current state before trying again.';
+    }
+    if (companionSession.pending) {
+      return 'The request may have succeeded. Check it before submitting another change.';
+    }
     return reason instanceof Error ? reason.message : String(reason);
   }
 
@@ -58,79 +82,305 @@ export function App() {
     return current;
   }
 
+  async function refreshDiagnostics() {
+    setDiagnosticsLoading(true);
+    try {
+      const report = await getDiagnosticsReport();
+      setDiagnostics(report);
+    } catch (reason) {
+      setActionError(explain(reason));
+    } finally {
+      setDiagnosticsLoading(false);
+    }
+  }
+
   useEffect(() => {
     let disposed = false;
     let timeout: ReturnType<typeof setTimeout>;
     async function refresh() {
       const [native, versioned] = await Promise.allSettled([
-        invoke<Snapshot>('companion_status'), companionSession.sync(),
+        getCompanionStatus(),
+        companionSession.sync(),
       ]);
       if (!disposed) {
         if (native.status === 'fulfilled') setSnapshot(native.value);
         else setSnapshot(current => ({ ...current, state: 'recovering' }));
         if (versioned.status === 'fulfilled') setControl(versioned.value);
         else setControl(companionSession.state);
-        setConnectionError(versioned.status === 'rejected' ? explain(versioned.reason)
-          : native.status === 'rejected' ? explain(native.reason) : '');
+        setConnectionError(
+          versioned.status === 'rejected'
+            ? explain(versioned.reason)
+            : native.status === 'rejected'
+            ? explain(native.reason)
+            : '',
+        );
         timeout = setTimeout(refresh, 2000);
       }
     }
     void refresh();
-    return () => { disposed = true; clearTimeout(timeout); };
+    void getDesktopPreferences().then(prefs => {
+      if (!disposed) setDesktopPrefs(prefs);
+    }).catch(() => {});
+    void getDiagnosticsReport().then(report => {
+      if (!disposed) setDiagnostics(report);
+    }).catch(() => {});
+    return () => {
+      disposed = true;
+      clearTimeout(timeout);
+    };
   }, []);
 
-  async function download(event: FormEvent) {
-    event.preventDefault();
-    setBusy(true); setActionError(''); setAnnouncement('');
-    try {
-      const parsed = new URL(url);
-      if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
-        throw new Error('Enter an HTTP or HTTPS media URL without embedded credentials.');
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let mounted = true;
+    void (async () => {
+      try {
+        const stop = await listen('vidgrab://confirm-quit', () => {
+          if (mounted) confirmQuitDialog.current?.showModal();
+        });
+        if (mounted) unlisten = stop;
+        else stop();
+      } catch {
+        // Ignore in standalone browser renderer tests where Tauri event plugin isn't mocked.
       }
-      await companionSession.mutate('downloads.enqueue', { url, audio_only: audioOnly,
-        audio_format: audioFormat as 'mp3' | 'm4a' | 'opus' | 'wav' | 'flac' });
+    })();
+    return () => {
+      mounted = false;
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  const snapshotCursor = control.snapshot?.cursor ?? null;
+  const unfinishedCount = control.snapshot?.counts?.unfinished ?? 0;
+
+  useEffect(() => {
+    if (!control.connected || !control.snapshot) {
+      return;
+    }
+    if (unfinishedCount <= 0) {
+      setActiveJobs([]);
+      setActiveNextAfter(null);
+      return;
+    }
+    let cancelled = false;
+    void companionSession.read('downloads.list', { view: 'active', limit: 25 }).then(page => {
+      if (!cancelled) {
+        setActiveJobs(page.jobs);
+        setActiveNextAfter(page.next_after);
+      }
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [control.connected, snapshotCursor, unfinishedCount]);
+
+  useEffect(() => {
+    if (activeTab === 'diagnostics') {
+      void refreshDiagnostics();
+    }
+  }, [activeTab]);
+
+  async function enqueueSingle(params: DownloadParams) {
+    setBusy(true);
+    setActionError('');
+    setAnnouncement('');
+    try {
+      await companionSession.mutate('downloads.enqueue', params);
       await refreshControl();
-      setUrl(''); setAnnouncement('Download queued.');
-    } catch (reason) { setActionError(explain(reason)); }
-    finally { setBusy(false); }
+      setAnnouncement('Download queued.');
+    } catch (reason) {
+      const message = explain(reason);
+      setActionError(message);
+      throw new Error(message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function enqueueBatch(items: DownloadParams[]): Promise<{ submitted: number; total: number }> {
+    setBusy(true);
+    setActionError('');
+    setAnnouncement('');
+    let submitted = 0;
+    try {
+      for (const item of items) {
+        await companionSession.mutate('downloads.enqueue', item);
+        submitted += 1;
+      }
+      await refreshControl();
+      setAnnouncement(`${submitted} download${submitted === 1 ? '' : 's'} queued.`);
+      return { submitted, total: items.length };
+    } catch (reason) {
+      setActionError(explain(reason));
+      if (!companionSession.pending) {
+        try { await refreshControl(); } catch {}
+      }
+      return { submitted, total: items.length };
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function saveDefaults(revision: number, patch: SettingsPatch): Promise<SettingsSnapshot> {
-    setBusy(true); setActionError(''); setAnnouncement('');
+    setBusy(true);
+    setActionError('');
+    setAnnouncement('');
     try {
       await companionSession.mutate('settings.patch', { expected_revision: revision, patch });
       const current = await refreshControl(true);
       setAnnouncement('Defaults saved.');
       return current.snapshot!.settings;
     } catch (reason) {
-      const message = explain(reason); setActionError(message); throw new Error(message);
-    } finally { setBusy(false); }
+      const message = explain(reason);
+      setActionError(message);
+      throw new Error(message);
+    } finally {
+      setBusy(false);
+    }
   }
 
-  async function jobAction(job: Job, action: 'cancel' | 'retry') {
-    setBusy(true); setActionError(''); setAnnouncement('');
+  async function jobAction(
+    job: Job,
+    action: ActionParams['action'],
+    extra: { priority?: number; scheduled_at?: string | null } = {},
+  ) {
+    setBusy(true);
+    setActionError('');
+    setAnnouncement('');
     try {
-      await companionSession.mutate('downloads.action', { job_id: job.id, expected_revision: job.revision, action });
-      await refreshControl(); setAnnouncement('Download action accepted.');
+      const params: ActionParams = {
+        job_id: job.id,
+        expected_revision: job.revision,
+        action,
+        ...extra,
+      };
+      await companionSession.mutate('downloads.action', params);
+      await refreshControl();
+      const label = action === 'delete_history'
+        ? 'History entry removed (files on disk kept).'
+        : 'Download action accepted.';
+      setAnnouncement(label);
     } catch (reason) {
       setActionError(explain(reason));
-      if (!companionSession.pending) { try { await refreshControl(); } catch {} }
-    } finally { setBusy(false); }
+      if (!companionSession.pending) {
+        try { await refreshControl(); } catch {}
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearHistory() {
+    setBusy(true);
+    setActionError('');
+    setAnnouncement('');
+    try {
+      await companionSession.mutate('downloads.clear_history', {});
+      await refreshControl();
+      setAnnouncement('Finished history cleared (saved files kept).');
+    } catch (reason) {
+      setActionError(explain(reason));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function checkRequest() {
-    setBusy(true); setActionError(''); setAnnouncement('');
+    setBusy(true);
+    setActionError('');
+    setAnnouncement('');
     try {
       await companionSession.replay();
-      await refreshControl(true); setAnnouncement('Request checked. Current downloads and settings refreshed.');
-    } catch (reason) { setActionError(explain(reason)); }
-    finally { setBusy(false); }
+      await refreshControl(true);
+      setAnnouncement('Request checked. Current downloads and settings refreshed.');
+    } catch (reason) {
+      setActionError(explain(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleUpdateDesktopPrefs(patch: DesktopPreferencesPatch) {
+    setBusy(true);
+    setActionError('');
+    setAnnouncement('');
+    try {
+      const updated = await setDesktopPreferences(patch);
+      setDesktopPrefs(updated);
+      if (patch.onboarding_completed === undefined) {
+        setAnnouncement('Desktop preferences saved.');
+      }
+    } catch (reason) {
+      setActionError(explain(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleOnboardingFolder() {
+    if (!control.snapshot) return;
+    setActionError('');
+    try {
+      const picked = await pickDownloadFolder();
+      if (!picked) return;
+      await saveDefaults(control.snapshot.settings.revision, { download_dir: picked });
+    } catch (reason) {
+      setActionError(explain(reason));
+    }
+  }
+
+  async function handleRestartEngine() {
+    setBusy(true);
+    setActionError('');
+    setAnnouncement('');
+    try {
+      const next = await restartEngine();
+      setSnapshot(current => ({ ...current, ...next }));
+      await refreshDiagnostics();
+      setAnnouncement('Engine restart requested.');
+    } catch (reason) {
+      setActionError(explain(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleExportDiagnostics() {
+    setBusy(true);
+    setActionError('');
+    setAnnouncement('');
+    try {
+      const savedPath = await exportDiagnosticsFile();
+      if (savedPath) setAnnouncement(`Diagnostics saved to ${savedPath}.`);
+    } catch (reason) {
+      setActionError(explain(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleReveal(jobId: string) {
+    setActionError('');
+    try {
+      await revealDownload(jobId);
+    } catch (reason) {
+      setActionError(explain(reason));
+    }
+  }
+
+  async function handleOpen(jobId: string) {
+    setActionError('');
+    try {
+      await openDownload(jobId);
+    } catch (reason) {
+      setActionError(explain(reason));
+    }
   }
 
   async function quit() {
     setBusy(true);
     try {
-      await invoke('quit_companion');
+      await quitCompanionNative();
     } catch (reason) {
       setActionError(String(reason));
       setBusy(false);
@@ -142,7 +392,7 @@ export function App() {
     setActionError('');
     setAnnouncement('');
     try {
-      const connection = await invoke<BrowserConnection>('set_browser_connection', { enabled });
+      const connection = await setBrowserConnectionNative(enabled);
       setSnapshot(current => ({ ...current, browser_connection: connection, browser_connection_error: undefined }));
       setAnnouncement(enabled ? 'Browser registration saved.' : 'Browser access disconnected. Downloads keep running.');
     } catch (reason) {
@@ -157,7 +407,7 @@ export function App() {
     setActionError('');
     setAnnouncement('');
     try {
-      const application = await invoke<ApplicationStatus>('install_appimage');
+      const application = await installAppImageNative();
       setSnapshot(current => ({ ...current, application, application_error: undefined }));
       setAnnouncement('Installed in Applications. Your current download session stays open.');
     } catch (reason) {
@@ -171,7 +421,7 @@ export function App() {
     setBusy(true);
     setRemovalError('');
     try {
-      const application = await invoke<ApplicationStatus>('remove_application');
+      const application = await removeApplicationNative();
       setSnapshot(current => ({ ...current, application }));
       removalDialog.current?.close();
     } catch (reason) {
@@ -183,8 +433,11 @@ export function App() {
 
   async function openAppCenter() {
     setActionError('');
-    try { await invoke('open_software_manager'); }
-    catch (reason) { setActionError(String(reason)); }
+    try {
+      await openSoftwareManagerNative();
+    } catch (reason) {
+      setActionError(String(reason));
+    }
   }
 
   function confirmRemoval() {
@@ -192,164 +445,275 @@ export function App() {
     removalDialog.current?.showModal();
   }
 
-  const browserConnection = snapshot.browser_connection;
-  const registered = browserConnection?.enabled && browserConnection.bridge_ready
-    && browserConnection.chrome === 'registered' && browserConnection.firefox === 'registered';
-  const browserStates = { missing: 'Not registered', registered: 'Registered', conflict: 'Another installation' };
   const application = snapshot.application;
-  const activeDownloads = snapshot.downloads_active === true || (control.snapshot?.counts.unfinished || 0) > 0;
+  const counts = control.snapshot?.counts;
+  const activeDownloads = snapshot.state === 'ready' && (snapshot.downloads_active === true || (counts?.unfinished || 0) > 0);
   const connected = control.connected && snapshot.state === 'ready';
-  const jobs = control.snapshot?.jobs || [];
+  const mergedJobsMap = new Map<string, Job>();
+  for (const job of control.snapshot?.jobs || []) {
+    mergedJobsMap.set(job.id, job);
+  }
+  for (const job of activeJobs) {
+    const existing = mergedJobsMap.get(job.id);
+    if (!existing || job.revision >= existing.revision) {
+      mergedJobsMap.set(job.id, job);
+    }
+  }
+  const jobs = [...mergedJobsMap.values()];
+  const hasPendingRequest = Boolean(companionSession.pending);
+  const showOnboarding = Boolean(desktopPrefs && !desktopPrefs.onboarding_completed);
+  const historyRefreshKey = `${control.snapshot?.cursor ?? 0}:${counts?.history ?? 0}:${counts?.total ?? 0}`;
+
+  async function loadMoreQueue(scope: 'active' | 'all') {
+    setBusy(true);
+    setActionError('');
+    try {
+      if (scope === 'active' || activeNextAfter) {
+        if (activeNextAfter) {
+          const page = await companionSession.read('downloads.list', {
+            view: 'active',
+            limit: 25,
+            after: activeNextAfter,
+          });
+          setActiveJobs(prev => {
+            const byId = new Map(prev.map(item => [item.id, item]));
+            for (const item of page.jobs) byId.set(item.id, item);
+            return [...byId.values()];
+          });
+          setActiveNextAfter(page.next_after);
+        }
+      }
+      if (scope === 'all' && control.snapshot?.next_after) {
+        setControl(await companionSession.loadMore());
+      }
+    } catch (reason) {
+      setActionError(explain(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const navItems: Array<{ id: DesktopTab; label: string; count?: number }> = [
+    { id: 'queue', label: 'Queue', count: counts?.unfinished },
+    { id: 'history', label: 'History', count: counts?.history },
+    { id: 'settings', label: 'Settings' },
+    { id: 'browser', label: 'Browser' },
+    { id: 'diagnostics', label: 'Diagnostics' },
+  ];
 
   return (
-    <main className="shell">
+    <div className="app-frame">
       <header className="toolbar">
-        <div className="brand"><img src="/vidgrab.png" alt="" width="32" height="32" /><span>VidGrab</span></div>
-        <span className="connection" data-state={snapshot.state} role="status">{connected ? 'Connected' : states[snapshot.state] === 'Connected' ? 'Connecting' : states[snapshot.state]}</span>
-      </header>
-      <section className="intro" aria-labelledby="title">
-        <h1 id="title">Downloads</h1>
-        <p>Download from an HTTP or HTTPS media URL. VidGrab keeps the queue running when the browser closes.</p>
-      </section>
-      {control.snapshot && <DownloadDefaults settings={control.snapshot.settings} busy={busy || !connected}
-        save={saveDefaults} reload={async () => (await refreshControl(true)).snapshot!.settings} />}
-      <details className="application-setup">
-        <summary>Install and remove VidGrab</summary>
-        {application?.kind === 'appimage' ? <>
-          <p className="installation-status" role="status">{application.installed ? 'Installed in Applications' : 'Running from an AppImage file'}</p>
-          {application.installed ? <>
-            <p>Open <strong>VidGrab (AppImage preview)</strong> from Applications. The installed copy stays in its own folder.</p>
-            <p className="installation-path">{application.app}</p>
-            <p>Removing the installed copy disconnects browser access and quits VidGrab. Your history and saved files are kept. The AppImage you downloaded stays available for reinstalling.</p>
-            <button className="secondary critical" type="button" onClick={confirmRemoval}
-              disabled={busy || activeDownloads}>Remove installed copy…</button>
-          </> : <>
-            <p>Install a copy and an Applications shortcut for this user. You can keep using this window while the copy is installed.</p>
-            <button className="secondary" type="button" onClick={installAppImage} disabled={busy}>Install AppImage</button>
-            <p>To remove a portable AppImage, quit VidGrab and move the downloaded file to Trash in Files.</p>
-          </>}
-        </> : application?.kind === 'deb' ? <>
-          <p className="installation-status">Installed as an Ubuntu package</p>
-          <p>To install again, open the <strong>.deb</strong> file in Files with <strong>App Center</strong> and select <strong>Install</strong>.</p>
-          <p>Prepare for removal here, then use <strong>Manage</strong> in App Center to uninstall <strong>VidGrab</strong>. Browser access is disconnected before the app quits; your history and saved files are kept.</p>
-          <div className="connection-actions">
-            <button className="secondary" type="button" onClick={openAppCenter} disabled={busy}>Open App Center</button>
-            <button className="secondary critical" type="button" onClick={confirmRemoval}
-              disabled={busy || activeDownloads}>Prepare to remove…</button>
-          </div>
-        </> : application?.kind === 'windows' ? <>
-          <p className="installation-status">{application.installed ? 'Installed for this Windows user' : 'Running from a Windows preview folder'}</p>
-          <p>Open the <strong>VidGrab installer</strong> to install or reinstall for your Windows account.</p>
-          <p>Prepare for removal here, then uninstall <strong>VidGrab</strong> in <strong>Settings → Apps → Installed apps</strong>. Your history and saved files are kept.</p>
-          <div className="connection-actions">
-            <button className="secondary" type="button" onClick={openAppCenter} disabled={busy}>Open Installed apps</button>
-            <button className="secondary critical" type="button" onClick={confirmRemoval} disabled={busy || activeDownloads}>Prepare to remove…</button>
-          </div>
-        </> : <p className="helper">{snapshot.application_error || 'Installation controls are available in packaged builds.'}</p>}
-        {activeDownloads && application?.installed && <p className="helper">Finish active downloads before removing VidGrab.</p>}
-      </details>
-      <section className="browser-connections" aria-labelledby="browser-title">
-        <h2 id="browser-title">Browser connections</h2>
-        {browserConnection ? <>
-          <p className="browser-connection-summary" role="status">{!browserConnection.enabled
-            ? 'Disconnected' : registered ? 'Registered for Chrome and Firefox' : 'Connection needs repair'}</p>
-          <dl className="browser-registration">
-            <div><dt>Google Chrome</dt><dd>{browserStates[browserConnection.chrome]}</dd></div>
-            <div><dt>Firefox</dt><dd>{browserStates[browserConnection.firefox]}</dd></div>
-          </dl>
-          <p className="helper">Registration lets the extension ask for access. Confirm access with its native connection test.</p>
-          <div className="connection-actions">
-            {!registered && <button className="secondary" type="button" disabled={busy}
-              data-connection-action="connect"
-              onClick={() => setBrowserConnection(true)}>{browserConnection.enabled ? 'Repair connection' : 'Connect browsers'}</button>}
-            {browserConnection.enabled && <button className="secondary" type="button" disabled={busy}
-              data-connection-action="disconnect"
-              onClick={() => setBrowserConnection(false)}>Disconnect browsers</button>}
-          </div>
-          <p className="helper">Disconnecting preserves your downloads and history, and stays in effect when VidGrab reopens.</p>
-        </> : <p className="helper">{snapshot.browser_connection_error
-          ? 'The browser connection settings need attention.' : 'Browser connection controls are available in packaged builds.'}</p>}
-        {snapshot.browser_connection_error && <p className="error" role="alert">{snapshot.browser_connection_error}</p>}
-      </section>
-      {application?.kind !== 'windows' && <details className="browser-setup">
-        <summary>Firefox Flatpak setup</summary>
-        <p>Firefox Flatpak needs one browser setting to allow the native connection test in this preview.</p>
-        <ol>
-          <li>Open VidGrab from its current location once to register the browser connection.</li>
-          <li>In Firefox, open <code>about:config</code>, accept the browser notice if shown, and search for
-            <code className="portal-preference">widget.use-xdg-desktop-portal.native-messaging</code>
-          </li>
-          <li>Set the existing <strong>Number</strong> value to <code>1</code> and save it. Fully quit Firefox, then reopen it.</li>
-          <li>After restarting Firefox, load the temporary VidGrab add-on, then run its native connection test with Firefox visible. Choose <strong>Allow</strong> when the desktop asks Firefox to launch <strong>VidGrab P02 desktop companion</strong>.</li>
-        </ol>
-        <p>If Firefox Flatpak was installed during this desktop session, sign out and back in before connecting so the desktop can recognize it.</p>
-        <p>The app’s Connected status means VidGrab is ready. Confirm Firefox access with the native connection test; the extension popup now uses this native connection for downloads and settings.</p>
-      </details>}
-      <form className="download-form" onSubmit={download}>
-        <label htmlFor="media-url">Media URL</label>
-        <input id="media-url" type="url" value={url} required maxLength={16384}
-          placeholder="https://example.com/video" aria-describedby="download-help"
-          onChange={event => setUrl(event.target.value)} />
-        <button className="primary" type="submit" disabled={busy || !connected}>{busy ? 'Working…' : 'Download'}</button>
-        <div className="media-options">
-          <label className="checkbox-label"><input type="checkbox" checked={audioOnly} onChange={event => setAudioOnly(event.target.checked)} />Audio only</label>
-          {audioOnly && <label>Audio format<select value={audioFormat} onChange={event => setAudioFormat(event.target.value)}>
-            {['mp3', 'm4a', 'opus', 'wav', 'flac'].map(format => <option key={format} value={format}>{format.toUpperCase()}</option>)}
-          </select></label>}
+        <div className="brand">
+          <img src="/vidgrab.png" alt="" width="32" height="32" />
+          <span>VidGrab</span>
         </div>
-        <p className="helper" id="download-help">App format: {control.snapshot?.settings.values.default_format || 'Loading defaults…'}.
-          Save location: {control.snapshot?.settings.values.download_dir || 'Loading…'}.</p>
-      </form>
-      {connectionError && <p className="error" role="alert">{connectionError}</p>}
-      {actionError && <p className="error" role="alert">{actionError}</p>}
-      {companionSession.pending && <button className="secondary" type="button" onClick={checkRequest} disabled={busy}>Check request</button>}
-      <p className="announcement" role="status">{announcement}</p>
-      {snapshot.state === 'failed' && <p className="error">Quit and reopen VidGrab to restart the engine.</p>}
-      <section className="queue" aria-labelledby="downloads-title">
-        <h2 id="downloads-title">Downloads</h2>
-        {control.snapshot && <p className="helper" role="status">{jobs.length} shown · {control.snapshot.counts.total} total · {control.snapshot.counts.unfinished} unfinished</p>}
-        {jobs.length ? <ul className="jobs">{jobs.map(job => (
-          <li className="job" key={job.id}>
-            <span className="job-title">{job.title || 'Download'}</span>
-            <span className="job-status">{jobStates[job.status] || job.status}</span>
-            {!['complete', 'failed', 'cancelled'].includes(job.status) && <progress max="100" value={job.progress} aria-label={(job.title || 'Download') + ' progress'} />}
-            {job.file_path && <span className="file-name">{job.file_path}</span>}
-            {job.error_code && <span className="error">{job.error_code}</span>}
-            {job.status === 'waiting_for_auth' && <p className="helper">Return to the source page and use the VidGrab browser popup to share fresh cookies or context for this media.</p>}
-            {job.error_code === 'FORMAT_UNAVAILABLE' && <p className="helper">Review this media's current formats in the VidGrab browser popup before starting it again.</p>}
-            {(job.status === 'waiting_for_auth' || job.error_code === 'FORMAT_UNAVAILABLE') && <span className="file-name">{job.url}</span>}
-            <div className="job-actions">
-              {['failed', 'cancelled'].includes(job.status) && <button className="secondary" type="button" disabled={busy || !connected} onClick={() => jobAction(job, 'retry')}>Retry</button>}
-              {!['complete', 'failed', 'cancelled', 'cancelling'].includes(job.status) && <button className="secondary" type="button" disabled={busy || !connected} onClick={() => jobAction(job, 'cancel')}>Cancel</button>}
+        <div className="toolbar-status">
+          <span className="connection" data-state={snapshot.state} role="status">
+            {connected ? 'Connected' : CONNECTION_LABELS[snapshot.state] === 'Connected' ? 'Connecting' : CONNECTION_LABELS[snapshot.state]}
+          </span>
+          {snapshot.state === 'failed' && (
+            <button className="secondary compact" type="button" onClick={() => void handleRestartEngine()} disabled={busy}>
+              Restart engine
+            </button>
+          )}
+        </div>
+      </header>
+
+      <div className="workspace">
+        <nav className="sidebar-nav" aria-label="Manager sections">
+          {navItems.map(item => (
+            <button
+              key={item.id}
+              type="button"
+              className={`nav-tab ${activeTab === item.id ? 'active' : ''}`}
+              data-desktop-tab={item.id}
+              aria-current={activeTab === item.id ? 'page' : undefined}
+              onClick={() => setActiveTab(item.id)}
+            >
+              <span>{item.label}</span>
+              {item.count !== undefined && <span className="nav-badge">{item.count}</span>}
+            </button>
+          ))}
+        </nav>
+
+        <main className="main-panel">
+          {connectionError && <p className="error banner-alert" role="alert">{connectionError}</p>}
+          {actionError && <p className="error banner-alert" role="alert">{actionError}</p>}
+          {hasPendingRequest && (
+            <div className="pending-review" role="status">
+              <span>A control request outcome is unknown. Check it before submitting new changes.</span>
+              <button className="secondary compact" type="button" onClick={() => void checkRequest()} disabled={busy}>
+                Check request
+              </button>
             </div>
-          </li>
-        ))}</ul> : <p className="empty">No downloads yet</p>}
-        {control.snapshot?.next_after && <button className="secondary" type="button" disabled={busy || !connected} onClick={() => {
-          setBusy(true); void companionSession.loadMore().then(setControl).catch(reason => setActionError(explain(reason))).finally(() => setBusy(false));
-        }}>Load more downloads</button>}
-      </section>
+          )}
+          <p className="announcement" role="status">{announcement}</p>
+
+          {snapshot.state === 'failed' && (
+            <div className="card engine-failed-card" role="alert">
+              <p className="error">The background download engine stopped unexpectedly.</p>
+              <button className="primary compact" type="button" onClick={() => void handleRestartEngine()} disabled={busy}>
+                Restart engine
+              </button>
+            </div>
+          )}
+
+          {activeTab === 'queue' && (
+            <>
+              {showOnboarding && (
+                <OnboardingBanner
+                  downloadDir={control.snapshot?.settings.values.download_dir || ''}
+                  diagnostics={diagnostics}
+                  browserConnection={snapshot.browser_connection}
+                  busy={busy}
+                  onChangeFolder={() => void handleOnboardingFolder()}
+                  onOpenBrowserTab={() => setActiveTab('browser')}
+                  onOpenDiagnosticsTab={() => setActiveTab('diagnostics')}
+                  onDismiss={() => void handleUpdateDesktopPrefs({ onboarding_completed: true })}
+                />
+              )}
+              <AddDownloadCard
+                busy={busy}
+                connected={connected}
+                defaultFormat={control.snapshot?.settings.values.default_format || ''}
+                downloadDir={control.snapshot?.settings.values.download_dir || ''}
+                hasPendingRequest={hasPendingRequest}
+                onEnqueue={enqueueSingle}
+                onBatchEnqueue={enqueueBatch}
+                onError={setActionError}
+              />
+              <QueueView
+                jobs={jobs}
+                counts={counts}
+                hasMoreActive={Boolean(activeNextAfter)}
+                hasMoreAll={Boolean(control.snapshot?.next_after || activeNextAfter)}
+                busy={busy}
+                connected={connected}
+                hasPendingRequest={hasPendingRequest}
+                onAction={jobAction}
+                onLoadMore={loadMoreQueue}
+                onReveal={handleReveal}
+                onOpen={handleOpen}
+              />
+            </>
+          )}
+
+          {activeTab === 'history' && (
+            <HistoryView
+              connected={connected}
+              busy={busy}
+              hasPendingRequest={hasPendingRequest}
+              refreshKey={historyRefreshKey}
+              counts={counts}
+              onAction={jobAction}
+              onClearHistory={clearHistory}
+              onReveal={handleReveal}
+              onOpen={handleOpen}
+              onError={setActionError}
+            />
+          )}
+
+          {activeTab === 'settings' && (
+            <SettingsView
+              settings={control.snapshot?.settings || null}
+              desktopPrefs={desktopPrefs}
+              busy={busy}
+              connected={connected}
+              onSaveDefaults={saveDefaults}
+              onReloadDefaults={async () => (await refreshControl(true)).snapshot!.settings}
+              onPickFolder={pickDownloadFolder}
+              onUpdateDesktopPrefs={handleUpdateDesktopPrefs}
+            />
+          )}
+
+          {activeTab === 'browser' && (
+            <BrowserView
+              browserConnection={snapshot.browser_connection}
+              browserConnectionError={snapshot.browser_connection_error}
+              application={application}
+              applicationError={snapshot.application_error}
+              busy={busy}
+              activeDownloads={activeDownloads}
+              onSetBrowserConnection={setBrowserConnection}
+              onInstallAppImage={installAppImage}
+              onOpenSoftwareManager={openAppCenter}
+              onConfirmRemoval={confirmRemoval}
+            />
+          )}
+
+          {activeTab === 'diagnostics' && (
+            <DiagnosticsView
+              report={diagnostics}
+              loading={diagnosticsLoading}
+              busy={busy}
+              onRefresh={refreshDiagnostics}
+              onRestartEngine={handleRestartEngine}
+              onExportDiagnostics={handleExportDiagnostics}
+            />
+          )}
+        </main>
+      </div>
+
       <footer className="footer">
-        <p>{snapshot.tray_available
-          ? 'Closing this window keeps VidGrab running in the tray.'
-          : 'This desktop has no tray. Keep this window open; use Quit VidGrab to close the app.'}</p>
-        <button className="secondary" type="button" onClick={quit} disabled={busy}>Quit VidGrab</button>
+        <p>
+          {snapshot.tray_available && desktopPrefs?.close_to_tray !== false
+            ? 'Closing this window keeps VidGrab running in the tray.'
+            : !snapshot.tray_available
+            ? 'This desktop has no tray. Keep this window open; use Quit VidGrab to close the app.'
+            : 'Closing this window quits VidGrab.'}
+        </p>
+        <button
+          className="secondary"
+          type="button"
+          onClick={() => {
+            if (activeDownloads) {
+              confirmQuitDialog.current?.showModal();
+            } else {
+              void quit();
+            }
+          }}
+          disabled={busy}
+        >
+          Quit VidGrab
+        </button>
       </footer>
+
       <dialog className="removal-dialog" ref={removalDialog} aria-labelledby="remove-title" aria-describedby="remove-description">
         <h2 id="remove-title">{application?.kind === 'appimage' ? 'Remove the installed copy?' : 'Prepare to remove VidGrab?'}</h2>
-        <p id="remove-description">{application?.kind === 'appimage'
-          ? 'VidGrab will disconnect browser access, quit and remove its installed AppImage and Applications shortcut. Your history and saved files are kept.'
-          : application?.kind === 'windows'
-          ? 'VidGrab will disconnect browser access, quit and open Installed apps. Uninstall VidGrab there. Your history and saved files are kept.'
-          : 'VidGrab will disconnect browser access, quit and open App Center. Use Manage to uninstall the Ubuntu package. Your history and saved files are kept.'}</p>
+        <p id="remove-description">
+          {application?.kind === 'appimage'
+            ? 'VidGrab will disconnect browser access, quit and remove its installed AppImage and Applications shortcut. Your history and saved files are kept.'
+            : application?.kind === 'windows'
+            ? 'VidGrab will disconnect browser access, quit and open Installed apps. Uninstall VidGrab there. Your history and saved files are kept.'
+            : 'VidGrab will disconnect browser access, quit and open App Center. Use Manage to uninstall the Ubuntu package. Your history and saved files are kept.'}
+        </p>
         {activeDownloads && <p className="helper">Finish active downloads before removing VidGrab.</p>}
         {removalError && <p className="error" role="alert">{removalError}</p>}
         <div className="dialog-actions">
-          <button className="secondary" type="button" autoFocus disabled={busy} onClick={() => removalDialog.current?.close()}>Keep VidGrab</button>
-          <button className="secondary critical" type="button" disabled={busy || activeDownloads} onClick={removeApplication}>
+          <button className="secondary" type="button" autoFocus disabled={busy} onClick={() => removalDialog.current?.close()}>
+            Keep VidGrab
+          </button>
+          <button className="secondary critical" type="button" disabled={busy || activeDownloads} onClick={() => void removeApplication()}>
             {busy ? 'Working…' : application?.kind === 'appimage' ? 'Remove and quit' : 'Disconnect and quit'}
           </button>
         </div>
       </dialog>
-    </main>
+
+      <dialog className="removal-dialog" ref={confirmQuitDialog} aria-labelledby="confirm-quit-title" aria-describedby="confirm-quit-description">
+        <h2 id="confirm-quit-title">Quit while downloads are active?</h2>
+        <p id="confirm-quit-description">
+          Active downloads will be interrupted safely and can be resumed when VidGrab opens again.
+        </p>
+        <div className="dialog-actions">
+          <button className="secondary" type="button" autoFocus onClick={() => confirmQuitDialog.current?.close()}>
+            Keep running
+          </button>
+          <button className="secondary critical" type="button" onClick={() => { confirmQuitDialog.current?.close(); void quit(); }}>
+            Quit VidGrab
+          </button>
+        </div>
+      </dialog>
+    </div>
   );
 }

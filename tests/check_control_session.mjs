@@ -14,7 +14,9 @@ const values = Object.fromEntries(Object.entries(definition.properties).map(([ke
 values.download_dir = '/fixture/media';
 const plain = value => JSON.parse(JSON.stringify(value));
 const job = (id, revision = 0) => ({ id, url: 'https://fixture.invalid/' + id, revision, title: id,
-  status: 'queued', progress: 0, file_path: null, error_code: null, retry_at: null, parent_id: null });
+  status: 'queued', progress: 0, file_path: null, error_code: null, retry_at: null, parent_id: null,
+  priority: 0, scheduled_at: null, created_at: null, completed_at: null, speed: 0, eta: null,
+  file_size: null, error_message: null, job_kind: 'media', resume_mode: 'not_pausable' });
 
 function fixture(api, options = {}) {
   assert.equal(typeof api.createSession, 'function', 'Generated clients must expose a shared control session');
@@ -27,7 +29,8 @@ function fixture(api, options = {}) {
     calls.push(plain(request));
     let data;
     const page = () => ({ jobs: engine.jobs.slice(0, request.params.limit || 25), next_after: engine.more ? engine.jobs.at(-1).id : null,
-      counts: { total: engine.jobs.length, unfinished: engine.jobs.filter(item => item.status === 'queued').length } });
+      counts: { total: engine.jobs.length, unfinished: engine.jobs.filter(item => item.status === 'queued').length,
+        paused: 0, scheduled: 0, history: 0 } });
     const settings = () => ({ revision: engine.revision, values: { ...values, max_concurrent: 3 + engine.revision } });
     const fail = (code, details = {}) => ({ protocol_version: 1, request_id: request.request_id, ok: false,
       error: { code, message: code, request_id: request.request_id, retryable: false, retry_at: null, provenance: 'local', details } });
@@ -45,7 +48,7 @@ function fixture(api, options = {}) {
       if (engine.mode === 'read-failure') throw new Error('read failed');
       data = settings();
     } else if (request.operation === 'downloads.list') {
-      if (request.params.after) data = { jobs: [job('older')], next_after: null, counts: { total: 2, unfinished: 2 } };
+      if (request.params.after) data = { jobs: [job('older')], next_after: null, counts: { total: 2, unfinished: 2, paused: 0, scheduled: 0, history: 0 } };
       else data = page();
     } else if (request.operation === 'settings.patch') {
       if (engine.mode === 'lost') throw new Error('reply lost');

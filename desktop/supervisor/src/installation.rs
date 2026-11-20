@@ -1,6 +1,7 @@
 //! Per-user package discovery and browser connection state.
 #[cfg(target_os = "linux")]
 pub mod application;
+pub mod autostart;
 #[cfg(windows)]
 #[path = "installation/windows_application.rs"]
 pub mod application;
@@ -54,6 +55,7 @@ impl UserDirs {
     pub fn bridge_dir(&self) -> PathBuf { self.data_home.join("vidgrab-p02/native") }
     pub fn config_path(&self) -> PathBuf { self.bridge_dir().join("host-config.json") }
     pub fn connection_path(&self) -> PathBuf { self.bridge_dir().join("browser-connection.json") }
+    pub fn preferences_path(&self) -> PathBuf { self.bridge_dir().join("desktop-preferences.json") }
 }
 
 #[derive(Clone, Debug)]

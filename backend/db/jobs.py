@@ -56,6 +56,13 @@ class AttemptStore:
                 WHERE status='retry_wait' AND retry_at<=? RETURNING *""", (now,))
             return [dict(row) for row in await cursor.fetchall()]
 
+    async def promote_due_scheduled(self, now_iso: str):
+        async with self.transaction() as db:
+            await require_owner(db, self.owner)
+            cursor = await db.execute("""UPDATE downloads SET status='queued', scheduled_at=NULL
+                WHERE status='scheduled' AND scheduled_at IS NOT NULL AND scheduled_at<=? RETURNING *""", (now_iso,))
+            return [dict(row) for row in await cursor.fetchall()]
+
     async def expand(self, job_id, attempt_id, result, now):
         return await PlaylistStore(self.runtime, self.owner).expand(job_id, attempt_id, result, now)
 
@@ -116,8 +123,8 @@ class AttemptStore:
         if not fields.keys() <= JOB_FIELDS:
             raise ValueError("Unsupported job transition fields")
         expected = FINISH_FROM[status]
-        outcome = outcome or ("interrupted" if status in ("queued", "waiting_for_auth", "retry_wait") else status)
-        permitted = {"failed", "interrupted"} if status in ("queued", "waiting_for_auth", "retry_wait") else {status}
+        outcome = outcome or ("interrupted" if status in ("queued", "paused", "waiting_for_auth", "retry_wait") else status)
+        permitted = {"failed", "interrupted"} if status in ("queued", "paused", "waiting_for_auth", "retry_wait") else {status}
         if outcome not in ATTEMPT_OUTCOMES or outcome not in permitted:
             raise ValueError("Invalid attempt outcome")
         async with self.transaction() as db:
@@ -149,7 +156,7 @@ class AttemptStore:
                           completed_at=now if status in TERMINAL else None)
             if status != "retry_wait":
                 fields["retry_at"] = None
-            if status in ("complete", "cancelled", "queued"):
+            if status in ("complete", "cancelled", "queued", "paused"):
                 fields["error_code"] = None
             assignments = ", ".join(f"{key}=?" for key in fields)
             await db.execute(f"UPDATE downloads SET {assignments} WHERE id=?", (*fields.values(), job_id))
@@ -194,6 +201,9 @@ class AttemptStore:
                     for key in ("title", "thumbnail_url"):
                         if recovery.result.get(key) is not None:
                             fields[key] = recovery.result[key]
+                elif attempt["job_status"] == "pausing":
+                    status, outcome = "paused", "interrupted"
+                    fields = {"file_path": None, "error_message": None}
                 else:
                     status, outcome = "queued", "interrupted"
                     fields = {"file_path": None, "error_message": None}
@@ -204,12 +214,12 @@ class AttemptStore:
                               completed_at=now if status in TERMINAL else None, retry_at=None, error_code=None)
                 assignments = ", ".join(f"{key}=?" for key in fields)
                 await db.execute(f"UPDATE downloads SET {assignments} WHERE id=?", (*fields.values(), owned.job_id))
-            states = (*sorted(ACTIVE), "cancelling")
+            states = (*sorted(ACTIVE), "cancelling", "pausing")
             placeholders = ", ".join("?" for _ in states)
             async with db.execute(f"SELECT id FROM downloads WHERE status IN ({placeholders})", states) as cursor:
                 recovered_ids = [row["download_id"] for row in attempts] + [row["id"] for row in await cursor.fetchall()]
             await db.execute(f"""UPDATE downloads SET
-                                 status=CASE WHEN status='cancelling' THEN 'cancelled' ELSE 'queued' END,
+                                 status=CASE WHEN status='cancelling' THEN 'cancelled' WHEN status='pausing' THEN 'paused' ELSE 'queued' END,
                                  completed_at=CASE WHEN status='cancelling' THEN ? ELSE NULL END,
                                  speed=0, eta=NULL, current_attempt_id=NULL, retry_at=NULL, error_code=NULL
                                  WHERE status IN ({placeholders})""",

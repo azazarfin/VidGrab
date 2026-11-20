@@ -29,6 +29,7 @@ pub fn same_user(stream: &UnixStream) -> io::Result<bool> {
 }
 
 pub const DEFAULT_IPC_READ_TIMEOUT: Duration = Duration::from_secs(4);
+pub const RESTART_IPC_READ_TIMEOUT: Duration = Duration::from_secs(20);
 pub const PROBE_IPC_READ_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DEFAULT_ENGINE_READ_TIMEOUT: Duration = Duration::from_secs(2);
 pub const PROBE_ENGINE_READ_TIMEOUT: Duration = Duration::from_secs(25);
@@ -38,7 +39,13 @@ pub fn call(config: &Config, request: &protocol::Request) -> io::Result<Value> {
 }
 
 pub fn ipc_read_timeout(request: &protocol::Request) -> Duration {
-    if request.is_probe_request() { PROBE_IPC_READ_TIMEOUT } else { DEFAULT_IPC_READ_TIMEOUT }
+    if request.is_probe_request() {
+        PROBE_IPC_READ_TIMEOUT
+    } else if request.op == "restart_engine" {
+        RESTART_IPC_READ_TIMEOUT
+    } else {
+        DEFAULT_IPC_READ_TIMEOUT
+    }
 }
 
 pub fn call_socket(path: &Path, request: &protocol::Request) -> io::Result<Value> {
@@ -221,5 +228,18 @@ mod tests {
         server.join().unwrap();
         let _ = std::fs::remove_file(&socket_path);
         assert_eq!(succeeded.unwrap()["error"]["code"], "ENGINE_UNAVAILABLE");
+    }
+
+    #[test]
+    fn restart_engine_uses_extended_ipc_read_timeout() {
+        let restart_request = protocol::Request {
+            spike_version: 1,
+            id: "restart-1".into(),
+            op: "restart_engine".into(),
+            params: Default::default(),
+        };
+        assert!(!restart_request.is_probe_request());
+        assert_eq!(ipc_read_timeout(&restart_request), RESTART_IPC_READ_TIMEOUT);
+        assert!(RESTART_IPC_READ_TIMEOUT > Duration::from_secs(12));
     }
 }

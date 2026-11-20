@@ -4,11 +4,14 @@ pub const OPERATIONS: &[(&str, bool)] = &[
     ("settings.get", false),
     ("settings.patch", true),
     ("downloads.list", false),
+    ("downloads.get", false),
     ("downloads.enqueue", true),
+    ("downloads.clear_history", true),
     ("events.read", false),
     ("probes.create", false),
     ("auth.create", true),
     ("downloads.action", true),
     ("downloads.authenticate", true),
+    ("diagnostics.get", false),
 ];
 pub const VERSION: u64 = 1;

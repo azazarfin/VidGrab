@@ -632,11 +632,11 @@ def run_browser_live_lane(args):
                             )
                             row.update(job_row)
                             if row['result'] == 'complete':
-                                desktop.page.has_text('body', 'Finished')
-                                browser.popup.click('[data-tab="history"]')
+                                desktop.page.click('[data-desktop-tab="history"]')
+                                desktop.page.has_text('.history-view', 'Finished')
                                 wait(
                                     lambda: browser.popup.visible('#task-card-' + created['id']),
-                                    f'{kind} popup history shows completed live download',
+                                    f'{kind} popup recent list shows completed live download',
                                     timeout=25,
                                 )
                         finally:

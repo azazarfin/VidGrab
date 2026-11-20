@@ -28,16 +28,41 @@ def main():
                 page.route('**/*', route)
                 page.add_init_script("""
                     window.__calls = [];
-                    window.__fixture = {state:'ready',tray_available:true,jobs:[],application:{kind:'windows',installed:true,app:'C:\\Users\\Preview বাংলা\\AppData\\Local\\VidGrab\\VidGrab.exe'},browser_connection:{enabled:true,bridge_ready:true,chrome:'registered',firefox:'registered'}};
-                    window.__TAURI_INTERNALS__ = {invoke:async (name,args) => {
+                    window.__fixture = {state:'ready',tray_available:true,jobs:[],application:{kind:'windows',installed:true,app:'C:\\\\Users\\\\Preview বাংলা\\\\AppData\\\\Local\\\\VidGrab\\\\VidGrab.exe'},browser_connection:{enabled:true,bridge_ready:true,chrome:'registered',firefox:'registered'}};
+                    window.__TAURI_INTERNALS__ = {
+                      invoke: async (name, args) => {
                         if (name === 'companion_status') return structuredClone(window.__fixture);
+                        if (name === 'protocol_request') {
+                          const req = args.request;
+                          const settings = {revision:1,values:{download_dir:'C:\\\\Users\\\\Preview বাংলা\\\\Downloads',max_concurrent:3,default_format:'bestvideo+bestaudio/best',default_quality:'best',filename_template:'%(title)s.%(ext)s',speed_limit:0,auto_update_ytdlp:false,sponsorblock_enabled:false,sponsorblock_categories:['sponsor'],sponsorblock_mode:'remove',postprocess_codec:'none',postprocess_normalize_audio:false,custom_ytdlp_args:'',download_threads:4,gpu_accelerated_conversion:false,max_retries:3,transliterate_bangla_filenames:true}};
+                          const counts = {total:0,unfinished:0,paused:0,scheduled:0,history:0};
+                          if (req.operation === 'capabilities.get') {
+                            return {protocol_version:1,request_id:req.request_id,ok:true,data:{protocol_min:1,protocol_max:1,max_message_bytes:65536,max_payload_bytes:64512,fixture_only:false,instance_id:'win-mock',paired_loopback:false,features:['downloads.source','downloads.priority','downloads.schedule','downloads.pause_resume','downloads.delete_history','diagnostics.get'],component_versions:{}}};
+                          }
+                          if (req.operation === 'events.read') {
+                            return {protocol_version:1,request_id:req.request_id,ok:true,data:{instance_id:'win-mock',cursor:1,resnapshot:true,has_more:false,events:[],snapshot:{jobs:[],next_after:null,counts,instance_id:'win-mock',cursor:1,settings}}};
+                          }
+                          if (req.operation === 'settings.get') {
+                            return {protocol_version:1,request_id:req.request_id,ok:true,data:settings};
+                          }
+                          if (req.operation === 'downloads.list') {
+                            return {protocol_version:1,request_id:req.request_id,ok:true,data:{jobs:[],next_after:null,counts}};
+                          }
+                          return {protocol_version:1,request_id:req.request_id,ok:true,data:{}};
+                        }
+                        if (name === 'get_desktop_preferences') return {preferences_version:1,start_at_login:false,close_to_tray:true,start_minimized:false,onboarding_completed:true,tray_available:true,packaged:true,autostart_state:'missing'};
+                        if (name === 'diagnostics_report') return {supervisor:structuredClone(window.__fixture),engine:{error:'offline'},desktop_preferences:{preferences_version:1,start_at_login:false,close_to_tray:true,start_minimized:false,onboarding_completed:true,tray_available:true,packaged:true,autostart_state:'missing'}};
+                        if (name.startsWith('plugin:')) return 1;
                         window.__calls.push(name);
                         if (name === 'remove_application') return {...window.__fixture.application,installed:false};
                         return {};
-                    }};
+                      },
+                      transformCallback: () => 1,
+                    };
                 """)
                 page.goto('http://127.0.0.1:4173', wait_until='networkidle')
                 expect(page.locator('.connection')).to_have_text('Connected')
+                page.locator('[data-desktop-tab="browser"]').click()
                 page.locator('.application-setup summary').click()
                 expect(page.get_by_text('Installed for this Windows user', exact=True)).to_be_visible()
                 expect(page.get_by_text('Firefox Flatpak setup', exact=True)).to_have_count(0)

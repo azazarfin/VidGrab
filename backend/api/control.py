@@ -115,6 +115,18 @@ def create_control_router(service):
         params = await payload(http)
         return await rest(http, "downloads.enqueue", params)
 
+    @router.delete("/downloads/history")
+    async def clear_history(http: HttpRequest):
+        return await rest(http, "downloads.clear_history", {})
+
+    @router.get("/downloads/{job_id}")
+    async def get_download(job_id: str, http: HttpRequest):
+        return await rest(http, "downloads.get", {"job_id": job_id})
+
+    @router.get("/diagnostics")
+    async def diagnostics(http: HttpRequest):
+        return await rest(http, "diagnostics.get", {})
+
     @router.get("/events")
     async def events(http: HttpRequest):
         params = dict(http.query_params)

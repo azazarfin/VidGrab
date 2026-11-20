@@ -6,6 +6,40 @@ import aiosqlite
 
 from backend.db.ownership import require_owner
 from backend.db.settings import read_settings
+from backend.services.diagnostics import redact_diagnostic
+
+_PAUSABLE_OR_PAUSED = frozenset({"queued", "scheduled", "retry_wait", "downloading", "probing", "pausing", "paused"})
+
+_JOB_SELECT = (
+    "SELECT id,url,revision,title,status,progress,file_path,error_code,retry_at,parent_id,"
+    "priority,scheduled_at,created_at,completed_at,speed,eta,file_size,error_message,job_kind,"
+    "EXISTS(SELECT 1 FROM attempt_partials ap JOIN download_attempts da ON da.id=ap.attempt_id "
+    "WHERE da.download_id=downloads.id) AS has_partial FROM downloads"
+)
+
+
+def _format_job(row):
+    data = dict(row)
+    has_partial = bool(data.pop("has_partial", 0))
+    status = data["status"]
+    if status not in _PAUSABLE_OR_PAUSED:
+        resume_mode = "not_pausable"
+    elif has_partial:
+        resume_mode = "verified_partial"
+    else:
+        resume_mode = "restart_or_unverified"
+    data["title"] = data["title"][:512] if data["title"] else data["title"]
+    data["progress"] = float(data["progress"] or 0.0)
+    data["priority"] = int(data["priority"] if data.get("priority") is not None else 0)
+    data["speed"] = max(0.0, float(data.get("speed") or 0.0))
+    data["eta"] = max(0.0, float(data["eta"])) if data.get("eta") is not None else None
+    file_size = data.get("file_size")
+    data["file_size"] = int(file_size) if file_size is not None and int(file_size) >= 0 else None
+    error_message = data.get("error_message")
+    data["error_message"] = redact_diagnostic(error_message)[:512] if error_message else None
+    data["job_kind"] = data.get("job_kind") or "media"
+    data["resume_mode"] = resume_mode
+    return data
 
 
 @asynccontextmanager
@@ -26,16 +60,43 @@ async def event_cursor(db):
     return row[0] if row is not None else 0
 
 
-async def download_page(db, limit=25, after=None):
-    async with db.execute("SELECT COUNT(*), COALESCE(SUM(status NOT IN ('complete','failed','cancelled')),0) FROM downloads") as cursor:
-        total, unfinished = await cursor.fetchone()
-    async with db.execute("SELECT id,url,revision,title,status,progress,file_path,error_code,retry_at,parent_id "
-                          "FROM downloads WHERE (? IS NULL OR id>?) ORDER BY id LIMIT ?", (after, after, limit + 1)) as cursor:
+async def download_counts(db):
+    async with db.execute(
+        "SELECT COUNT(*), "
+        "COALESCE(SUM(status NOT IN ('complete','failed','cancelled')),0), "
+        "COALESCE(SUM(status IN ('paused','pausing')),0), "
+        "COALESCE(SUM(status='scheduled'),0), "
+        "COALESCE(SUM(status IN ('complete','failed','cancelled')),0) "
+        "FROM downloads"
+    ) as cursor:
+        total, unfinished, paused, scheduled, history = await cursor.fetchone()
+    return {
+        "total": total,
+        "unfinished": unfinished,
+        "paused": paused,
+        "scheduled": scheduled,
+        "history": history,
+    }
+
+
+async def download_page(db, limit=25, after=None, view="all"):
+    counts = await download_counts(db)
+    view_clause = ""
+    if view == "active":
+        view_clause = " AND status NOT IN ('complete','failed','cancelled')"
+    elif view == "history":
+        view_clause = " AND status IN ('complete','failed','cancelled')"
+    async with db.execute(
+        f"{_JOB_SELECT} WHERE (? IS NULL OR id>?){view_clause} ORDER BY id LIMIT ?",
+        (after, after, limit + 1),
+    ) as cursor:
         rows = await cursor.fetchall()
-    jobs = [{**dict(row), "title": row["title"][:512] if row["title"] else row["title"],
-             "progress": row["progress"] or 0.0} for row in rows[:limit]]
-    return {"jobs": jobs, "next_after": jobs[-1]["id"] if len(rows) > limit else None,
-            "counts": {"total": total, "unfinished": unfinished}}
+    jobs = [_format_job(row) for row in rows[:limit]]
+    return {
+        "jobs": jobs,
+        "next_after": jobs[-1]["id"] if len(rows) > limit else None,
+        "counts": counts,
+    }
 
 
 class EventRepository:
@@ -49,9 +110,39 @@ class EventRepository:
             revision, values = await read_settings(db)
             return {"revision": revision, "values": self.validate_settings(values).model_dump()}
 
-    async def downloads(self, limit, after):
+    async def downloads(self, limit, after, view="all"):
         async with read_transaction(self.runtime, self.owner) as db:
-            return await download_page(db, limit, after)
+            return await download_page(db, limit, after, view)
+
+    async def get_job(self, job_id):
+        async with read_transaction(self.runtime, self.owner) as db:
+            async with db.execute(f"{_JOB_SELECT} WHERE id=?", (job_id,)) as cursor:
+                row = await cursor.fetchone()
+            return _format_job(row) if row is not None else None
+
+    async def diagnostics(self):
+        async with read_transaction(self.runtime, self.owner) as db:
+            async with db.execute("PRAGMA user_version") as cursor:
+                schema_ver = (await cursor.fetchone())[0]
+            _, values = await read_settings(db)
+            counts = await download_counts(db)
+            async with db.execute(
+                "SELECT error_code, error_message FROM downloads "
+                "WHERE error_message IS NOT NULL OR error_code IS NOT NULL "
+                "ORDER BY created_at DESC, id DESC LIMIT 10"
+            ) as cursor:
+                err_rows = await cursor.fetchall()
+        recent_errors = []
+        for row in err_rows:
+            code = row["error_code"] or "ERROR"
+            msg = redact_diagnostic(row["error_message"] or "Download error")
+            recent_errors.append(f"{code}: {msg}"[:512])
+        return {
+            "schema_version": schema_ver,
+            "download_dir": str(values.get("download_dir") or self.runtime.download_dir),
+            "counts": counts,
+            "recent_errors": recent_errors,
+        }
 
     async def events(self, instance_id, cursor, limit):
         async with read_transaction(self.runtime, self.owner) as db:

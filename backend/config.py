@@ -30,6 +30,7 @@ DEFAULT_CONFIG = {
     "download_threads": 4,
     "gpu_accelerated_conversion": False,
     "max_retries": 3,
+    "transliterate_bangla_filenames": True,
 }
 
 
@@ -52,6 +53,7 @@ class ConfigModel(BaseModel):
     download_threads: int = Field(default=DEFAULT_CONFIG["download_threads"], strict=True, ge=1, le=32)
     gpu_accelerated_conversion: bool = Field(default=DEFAULT_CONFIG["gpu_accelerated_conversion"])
     max_retries: int = Field(default=DEFAULT_CONFIG["max_retries"], strict=True, ge=0, le=10)
+    transliterate_bangla_filenames: bool = Field(default=DEFAULT_CONFIG["transliterate_bangla_filenames"])
 
 
 def runtime_defaults(runtime: RuntimeConfig) -> Dict[str, Any]:

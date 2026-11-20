@@ -29,44 +29,68 @@
           <span class="status-dot"></span>
           <span class="status-text">Connecting</span>
         </div>
-        <button class="icon-button" id="settings-btn" title="Settings">
+        <button class="text-button open-app-btn" id="open-app-btn" type="button" title="Open VidGrab Desktop">
+          Open in VidGrab
+        </button>
+        <button class="icon-button" id="settings-btn" type="button" title="Extension Settings" aria-label="Extension Settings">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
         </button>
       </div>
     </header>
 
     <p id="client-status" class="client-status" role="status" hidden></p>
-    <button id="check-request-btn" class="text-button" type="button" hidden>Check request</button>
-    <button id="review-request-btn" class="text-button" type="button" hidden>Review request notices in Settings</button>
-    <!-- Tab Bar -->
-    <nav class="tab-bar">
-      <button class="tab-btn active" data-tab="downloads">
-        Downloads <span class="tab-badge" id="badge-downloads">0</span>
-      </button>
-      <button class="tab-btn" data-tab="detected">
-        Detected <span class="tab-badge" id="badge-detected">0</span>
-      </button>
-      <button class="tab-btn" data-tab="queue">
+    <div class="recovery-bar" id="recovery-bar">
+      <button id="check-request-btn" class="text-button" type="button" hidden>Check request</button>
+      <button id="review-request-btn" class="text-button" type="button" hidden>Review request notices in Settings</button>
+    </div>
+
+    <!-- Tab Bar (2 focused tabs: Queue & Detected) -->
+    <nav class="tab-bar" aria-label="Extension views">
+      <button class="tab-btn active" data-tab="queue" type="button">
         Queue <span class="tab-badge" id="badge-queue">0</span>
       </button>
-      <button class="tab-btn" data-tab="history">
-        History <span class="tab-badge" id="badge-history">0</span>
+      <button class="tab-btn" data-tab="detected" type="button">
+        Detected <span class="tab-badge" id="badge-detected">0</span>
       </button>
     </nav>
 
     <!-- Content Panels -->
     <main class="content-panel">
-      <p id="jobs-summary" class="jobs-summary" role="status"></p>
-      <button id="load-more-btn" class="text-button" type="button" hidden>Load more downloads</button>
-      <!-- Downloads Panel -->
-      <section class="tab-content active" id="panel-downloads">
-        <div class="download-list" id="active-download-list">
-          <!-- Active download cards will be injected here -->
+      <!-- Queue Panel -->
+      <section class="tab-content active" id="panel-queue">
+        <!-- Non-blocking companion offline / incompatible notice inside Queue -->
+        <div class="offline-card" id="backend-error-overlay" hidden>
+          <div class="offline-card-header">
+            <svg class="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+            <div>
+              <h3>Companion Unavailable</h3>
+              <p>Open VidGrab and review Browser connections, then retry. Page detection remains available in the Detected tab.</p>
+            </div>
+          </div>
+          <div class="offline-card-actions">
+            <button class="action-btn secondary" id="offline-open-app-btn" type="button">Open in VidGrab</button>
+            <button class="action-btn primary" id="retry-backend-btn" type="button">Retry Connection</button>
+          </div>
         </div>
-        <div class="empty-state" id="downloads-empty">
+
+        <div class="queue-toolbar">
+          <p id="jobs-summary" class="jobs-summary" role="status"></p>
+          <button id="load-more-btn" class="text-button" type="button" hidden>Load more downloads</button>
+        </div>
+
+        <div class="download-list" id="queue-list"></div>
+        <div class="empty-state" id="queue-empty">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="empty-icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-          <p>No active downloads</p>
-          <span class="empty-hint">Paste a video URL below to start downloading</span>
+          <p>No active or queued downloads</p>
+          <span class="empty-hint">Paste a media URL below or pick one from Detected.</span>
+        </div>
+
+        <div class="recent-section" id="recent-section" hidden>
+          <div class="recent-header">
+            <span class="recent-title">Recent</span>
+            <button class="text-button" id="recent-open-app-btn" type="button">Manage all in VidGrab</button>
+          </div>
+          <div class="download-list" id="recent-list"></div>
         </div>
       </section>
 
@@ -86,42 +110,15 @@
             <span id="detected-selected-count" style="font-size: 14px; font-weight: 600; color: var(--text-secondary);">0 selected</span>
           </div>
           <div style="display: flex; gap: 8px;">
-            <button class="text-button" id="detected-download-btn" style="color: var(--accent);" disabled>Download</button>
-            <button class="text-button danger" id="detected-remove-btn" disabled>Remove</button>
+            <button class="text-button" id="detected-download-btn" type="button" style="color: var(--accent-bright);" disabled>Download</button>
+            <button class="text-button danger" id="detected-remove-btn" type="button" disabled>Remove</button>
           </div>
         </div>
-        <div class="download-list" id="detected-list">
-          <!-- Detected video cards will be injected here -->
-        </div>
+        <div class="download-list" id="detected-list"></div>
         <div class="empty-state" id="detected-empty">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="empty-icon"><path d="M15 10l5 5-5 5M4 4v7a4 4 0 004 4h12"></path></svg>
           <p>No videos detected on this tab</p>
           <span class="empty-hint">Play a video or navigate to a video page to detect.</span>
-        </div>
-      </section>
-
-      <!-- Queue Panel -->
-      <section class="tab-content" id="panel-queue">
-        <div class="download-list" id="queue-list">
-          <!-- Queued items will be injected here -->
-        </div>
-        <div class="empty-state" id="queue-empty">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="empty-icon"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-          <p>Queue is empty</p>
-        </div>
-      </section>
-
-      <!-- History Panel -->
-      <section class="tab-content" id="panel-history">
-        <div class="panel-header-actions" id="history-actions" style="display: none;">
-          <button class="text-button danger" id="clear-history-btn">Clear All</button>
-        </div>
-        <div class="download-list" id="history-list">
-          <!-- History items will be injected here -->
-        </div>
-        <div class="empty-state" id="history-empty">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="empty-icon"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-          <p>No download history</p>
         </div>
       </section>
     </main>
@@ -130,10 +127,10 @@
     <footer class="footer-bar">
       <div class="input-group">
         <input type="text" id="video-url-input" aria-label="Media URL" placeholder="Paste video URL here..." autocomplete="off">
-        <button class="action-btn secondary" id="paste-btn" title="Paste from clipboard">
+        <button class="action-btn secondary" id="paste-btn" type="button" title="Paste from clipboard">
           Paste
         </button>
-        <button class="action-btn primary" id="download-btn">
+        <button class="action-btn primary" id="download-btn" type="button">
           Download
         </button>
       </div>
@@ -144,7 +141,7 @@
       <div class="modal-card">
         <div class="modal-header">
           <h3 id="modal-header-title">Download Options</h3>
-          <button class="close-btn" id="modal-close-btn" aria-label="Close download options">&times;</button>
+          <button class="close-btn" id="modal-close-btn" type="button" aria-label="Close download options">&times;</button>
         </div>
         <div class="modal-body">
           <div class="ffmpeg-warning" id="modal-ffmpeg-warning" style="display: none; margin-bottom: 12px; padding: 8px 12px; background: rgba(255, 192, 72, 0.15); border: 1px solid var(--warning); border-radius: 6px; font-size: 14px; color: var(--warning); line-height: 1.4;">
@@ -164,7 +161,7 @@
                 <p class="preview-duration" id="modal-duration"></p>
               </div>
             </div>
-            
+
             <div class="form-group" id="video-title-group" style="margin-top: 10px;">
               <label for="custom-title-input">Title</label>
               <input type="text" id="custom-title-input" class="form-input" placeholder="Custom video title...">
@@ -172,7 +169,7 @@
 
             <div class="form-group" id="download-dir-group" style="margin-top: 10px;">
               <label for="modal-download-dir-input">Save location in app settings</label>
-              <input type="text" id="modal-download-dir-input" readonly class="form-input" placeholder="Leave empty for default folder...">
+              <input type="text" id="modal-download-dir-input" readonly class="form-input" placeholder="Managed by VidGrab app">
             </div>
 
             <div class="form-group" id="output-template-group" style="margin-top: 10px;">
@@ -184,7 +181,6 @@
               <label for="format-select">Quality</label>
               <select id="format-select" class="form-select">
                 <option value="">App default</option>
-                <!-- Dynamic formats will be injected here -->
               </select>
             </div>
 
@@ -224,9 +220,7 @@
             <div id="subtitle-options-group" style="display: none; margin-top: 12px; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
               <div class="form-group">
                 <label for="subtitle-lang-select">Subtitle Languages</label>
-                <select id="subtitle-lang-select" class="form-select" multiple style="height: 60px; width: 100%;">
-                  <!-- Dynamically populated -->
-                </select>
+                <select id="subtitle-lang-select" class="form-select" multiple style="height: 60px; width: 100%;"></select>
                 <span style="font-size: 14px; color: var(--text-muted); margin-top: 4px; display: block;">Hold Ctrl/Cmd to select multiple</span>
               </div>
               <div style="display: flex; gap: 12px; margin-top: 8px; align-items: center;">
@@ -248,24 +242,7 @@
               </div>
             </div>
 
-            <!-- Scheduler Options Group -->
-            <div class="scheduler-options" style="margin-top: 12px; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
-              <label class="checkbox-container">
-                <input type="checkbox" id="chk-schedule-later" disabled>
-                <span class="checkbox-checkmark"></span>
-                Scheduling is unavailable in the companion
-              </label>
-              
-              <div id="schedule-inputs" style="display: none; margin-top: 10px; flex-direction: column; gap: 8px;">
-                <label for="input-schedule-time" style="font-size: 14px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase;">Download Time</label>
-                <input type="datetime-local" id="input-schedule-time" class="form-input" style="width: 100%; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); color: #fff; padding: 8px 12px; border-radius: 6px; outline: none; box-sizing: border-box;">
-                
-                <div class="preset-buttons" style="display: flex; gap: 8px; margin-top: 4px;">
-                  <button class="btn btn-secondary" id="btn-preset-tonight" style="padding: 4px 8px; font-size: 14px;" type="button">Tonight 11 PM</button>
-                  <button class="btn btn-secondary" id="btn-preset-tomorrow" style="padding: 4px 8px; font-size: 14px;" type="button">Tomorrow 6 AM</button>
-                </div>
-              </div>
-            </div>
+            <p class="modal-app-hint">Priority and scheduling are managed in the VidGrab app.</p>
           </div>
 
           <!-- Playlist Content -->
@@ -276,18 +253,16 @@
                 <p class="playlist-meta" id="playlist-meta" style="margin: 4px 0 0 0; font-size: 14px; color: var(--text-secondary);"></p>
               </div>
             </div>
-            
+
             <div class="playlist-actions" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
               <span class="selected-count" id="playlist-selected-count" style="font-size: 14px; font-weight: 600; color: var(--text-secondary);">0 items selected</span>
               <div class="action-buttons-row" style="display: flex; gap: 8px;">
-                <button class="text-button" id="playlist-select-all" style="font-size: 14px;">Select All</button>
-                <button class="text-button" id="playlist-deselect-all" style="font-size: 14px;">Deselect All</button>
+                <button class="text-button" id="playlist-select-all" type="button" style="font-size: 14px;">Select All</button>
+                <button class="text-button" id="playlist-deselect-all" type="button" style="font-size: 14px;">Deselect All</button>
               </div>
             </div>
 
-            <div class="playlist-entries-list" id="playlist-entries-list" style="max-height: 180px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; background: rgba(0,0,0,0.2); padding: 4px;">
-              <!-- Playlist items will be dynamically added here -->
-            </div>
+            <div class="playlist-entries-list" id="playlist-entries-list" style="max-height: 180px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; background: rgba(0,0,0,0.2); padding: 4px;"></div>
 
             <div class="playlist-settings-group" style="margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 12px;">
               <div style="display: flex; gap: 12px; flex-direction: column;">
@@ -302,15 +277,15 @@
                 </div>
                 <div style="flex: 1; margin-top: 10px;">
                   <label for="playlist-download-dir-input" style="font-size: 14px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; display: block; margin-bottom: 5px;">Save location in app settings</label>
-                  <input type="text" id="playlist-download-dir-input" readonly class="form-input" style="width: 100%;" placeholder="Leave empty for default folder...">
+                  <input type="text" id="playlist-download-dir-input" readonly class="form-input" style="width: 100%;" placeholder="Managed by VidGrab app">
                 </div>
               </div>
             </div>
           </div>
         </div>
         <div class="modal-footer">
-          <button class="action-btn secondary" id="modal-cancel-btn">Cancel</button>
-          <button class="action-btn primary" id="modal-start-btn">Start Download</button>
+          <button class="action-btn secondary" id="modal-cancel-btn" type="button">Cancel</button>
+          <button class="action-btn primary" id="modal-start-btn" type="button">Start Download</button>
         </div>
       </div>
     </dialog>
@@ -320,7 +295,7 @@
       <div class="modal-card" style="max-height: 320px;">
         <div class="modal-header">
           <h3 class="modal-header-title" id="batch-modal-title">Batch Download Options</h3>
-          <button class="close-btn" id="batch-modal-close-btn" aria-label="Close batch download options">&times;</button>
+          <button class="close-btn" id="batch-modal-close-btn" type="button" aria-label="Close batch download options">&times;</button>
         </div>
         <div class="modal-body" style="padding: 12px 16px;">
           <div class="form-group" style="margin-top: 5px;">
@@ -335,7 +310,7 @@
           </div>
           <div class="form-group" style="margin-top: 10px;">
             <label for="batch-download-dir-input" style="font-size: 14px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; display: block; margin-bottom: 5px;">Save location in app settings</label>
-            <input type="text" id="batch-download-dir-input" readonly class="form-input" style="width: 100%;" placeholder="Leave empty for default folder...">
+            <input type="text" id="batch-download-dir-input" readonly class="form-input" style="width: 100%;" placeholder="Managed by VidGrab app">
           </div>
           <div class="options-grid" style="margin-top: 15px;">
             <label class="checkbox-container">
@@ -346,24 +321,11 @@
           </div>
         </div>
         <div class="modal-footer" style="padding: 12px 16px;">
-          <button class="action-btn secondary" id="batch-modal-cancel-btn">Cancel</button>
-          <button class="action-btn primary" id="batch-modal-start-btn">Start Downloads</button>
+          <button class="action-btn secondary" id="batch-modal-cancel-btn" type="button">Cancel</button>
+          <button class="action-btn primary" id="batch-modal-start-btn" type="button">Start Downloads</button>
         </div>
       </div>
     </dialog>
-
-    <!-- Connection Error Overlay -->
-    <div class="connection-error-overlay" id="backend-error-overlay" hidden>
-      <div class="error-card" style="max-width: 340px; text-align: left; padding: 20px;">
-        <div style="text-align: center; margin-bottom: 12px;">
-          <svg class="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 8px auto;"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
-          <h3 style="margin-top: 8px; margin-bottom: 4px; font-size: 18px;">Companion Unavailable</h3>
-          <p style="font-size: 14px; color: var(--text-secondary); margin-bottom: 0;">Open VidGrab and review Browser connections, then retry.</p>
-        </div>
-        
-        <button class="action-btn primary" id="retry-backend-btn" style="width: 100%;">Retry Connection</button>
-      </div>
-    </div>
   </div>
 
   <!-- Scripts -->

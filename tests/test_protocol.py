@@ -300,7 +300,7 @@ class ProtocolTests(OfflineTestCase):
         second = self.ok(self.send("downloads.list", {"limit": 25, "after": first["next_after"]}))
         third = self.ok(self.send("downloads.list", {"limit": 25, "after": second["next_after"]}))
         self.assertEqual(len(first["jobs"]) + len(second["jobs"]) + len(third["jobs"]), 51)
-        self.assertEqual(first["counts"], {"total": 51, "unfinished": 1})
+        self.assertEqual(first["counts"], {"total": 51, "unfinished": 1, "paused": 0, "scheduled": 0, "history": 50})
         self.assertIsNone(third["next_after"])
         self.execute("UPDATE downloads SET file_path=?", (str(self.root.joinpath(*["p" * 200] * 15, "media.mp3")),))
         snapshot = self.ok(self.send("events.read", {"limit": 1}))["snapshot"]

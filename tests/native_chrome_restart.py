@@ -168,7 +168,6 @@ def restart_browser(browser, source, args, environment, playwright, identifier, 
     browser.background(INSTRUMENT, 'vidGrabNative', 'request', False)
     browser.popup.has_text('#connection-status', 'Connected')
     browser.options.has_text('#status-message', 'Settings loaded')
-    browser.options.click('[data-tab="tab-advanced"]')
     cdp = browser.context.browser.new_browser_cdp_session()
     try:
         browser.version = cdp.send('Browser.getVersion')

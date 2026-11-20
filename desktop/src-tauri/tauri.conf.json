@@ -10,7 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{"label": "main", "title": "VidGrab", "width": 620, "height": 640, "minWidth": 390, "minHeight": 480}],
+    "windows": [{"label": "main", "title": "VidGrab", "width": 980, "height": 700, "minWidth": 390, "minHeight": 480}],
     "security": {"csp": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost"}
   },
   "bundle": {
@@ -19,7 +19,7 @@
     "icon": ["icons/icon.png"],
     "category": "Utility",
     "publisher": "VidGrab contributors",
-    "shortDescription": "VidGrab P02 desktop companion fixture spike",
+    "shortDescription": "VidGrab standalone download manager and browser companion",
     "externalBin": ["binaries/vidgrab-native-host"],
     "resources": {"resources/engine/": "engine/"},
     "linux": {"deb": {

@@ -86,6 +86,24 @@ class ClientFixture:
         self.probe_extra = {}
         self.application = {"kind": "appimage", "installed": False, "app": "/fixture/VidGrab.AppImage", "shortcut": None}
         self.connection = {"enabled": True, "bridge_ready": True, "chrome": "registered", "firefox": "registered"}
+        self.desktop_preferences = {
+            "preferences_version": 1,
+            "start_at_login": False,
+            "close_to_tray": True,
+            "start_minimized": False,
+            "onboarding_completed": False,
+            "tray_available": False,
+            "packaged": True,
+            "autostart_state": "missing",
+        }
+        self.activated = 0
+        self.restarts = 0
+        self.revealed = []
+        self.opened = []
+        self.picked_folder = None
+        self.url_list_pick = None
+        self.exported_diagnostics_path = None
+        self.engine_log_tail = ["INFO engine ready"]
 
         def probe(url, runtime, *, auth_context=None):
             self.probe_urls.append(url)
@@ -217,17 +235,71 @@ class ClientFixture:
             self.preferences[key] = [item for item in self.preferences.get(key, [])
                                      if item.get("id", item["url"]) not in message["ids"]]
             return {"ok": True}
+        if kind == "companion.activate":
+            self.activated += 1
+            return {"ok": True, "data": {"activated": True}}
         if kind == "fixture.invoke":
             command = message["command"]
             arguments = message.get("arguments") or {}
             if command == "protocol_request":
                 return self.control(arguments["request"])
             if command == "companion_status":
-                return {"state": "ready", "tray_available": False, "jobs": [{"id": "legacy-decoy", "title": "Legacy decoy", "status": "complete"}],
-                        "browser_connection": self.connection, "application": self.application, "downloads_active": bool(self.request("downloads.list")["counts"]["unfinished"])}
+                return {"state": "ready", "tray_available": self.desktop_preferences["tray_available"],
+                        "supervisor_pid": 1001, "engine_pid": 2001 + self.restarts,
+                        "engine_generation": 1 + self.restarts,
+                        "jobs": [{"id": "legacy-decoy", "title": "Legacy decoy", "status": "complete"}],
+                        "browser_connection": self.connection, "application": self.application,
+                        "downloads_active": bool(self.request("downloads.list")["counts"]["unfinished"])}
             if command == "set_browser_connection":
                 self.connection["enabled"] = arguments["enabled"]
+                self.connection["chrome"] = "registered" if arguments["enabled"] else "missing"
+                self.connection["firefox"] = "registered" if arguments["enabled"] else "missing"
                 return self.connection
+            if command == "get_desktop_preferences":
+                return dict(self.desktop_preferences)
+            if command == "set_desktop_preferences":
+                patch = arguments.get("preferences") or {}
+                for key in ("start_at_login", "close_to_tray", "start_minimized", "onboarding_completed"):
+                    if key in patch and patch[key] is not None:
+                        self.desktop_preferences[key] = bool(patch[key])
+                self.desktop_preferences["autostart_state"] = (
+                    "registered" if self.desktop_preferences["start_at_login"] else "missing"
+                )
+                return dict(self.desktop_preferences)
+            if command == "restart_engine":
+                self.restarts += 1
+                return {"state": "ready", "tray_available": self.desktop_preferences["tray_available"],
+                        "supervisor_pid": 1001, "engine_pid": 2001 + self.restarts,
+                        "engine_generation": 1 + self.restarts,
+                        "browser_connection": self.connection, "application": self.application,
+                        "downloads_active": bool(self.request("downloads.list")["counts"]["unfinished"])}
+            if command == "pick_download_folder":
+                return self.picked_folder
+            if command == "pick_url_list_file":
+                return self.url_list_pick
+            if command == "reveal_download":
+                self.revealed.append(arguments.get("jobId"))
+                return None
+            if command == "open_download":
+                self.opened.append(arguments.get("jobId"))
+                return None
+            if command == "diagnostics_report":
+                diag = self.request("diagnostics.get")
+                return {
+                    "supervisor": {"state": "ready", "tray_available": self.desktop_preferences["tray_available"],
+                                   "supervisor_pid": 1001, "engine_pid": 2001 + self.restarts,
+                                   "engine_generation": 1 + self.restarts,
+                                   "browser_connection": self.connection, "application": self.application},
+                    "engine": diag,
+                    "desktop_preferences": dict(self.desktop_preferences),
+                    "browser_connection": dict(self.connection),
+                    "application": dict(self.application),
+                    "engine_log_tail": list(self.engine_log_tail),
+                }
+            if command == "export_diagnostics_file":
+                return self.exported_diagnostics_path
+            if command.startswith("plugin:"):
+                return 1 if command.endswith("|listen") else None
             if command in ("quit_companion", "open_software_manager"):
                 return None
             raise AssertionError("Unmigrated desktop command: " + command)

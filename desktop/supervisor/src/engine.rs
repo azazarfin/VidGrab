@@ -95,6 +95,19 @@ impl Engine {
         }
     }
 
+    pub fn restart_now(&mut self, config: &Config) -> io::Result<()> {
+        self.process.take();
+        self.generation = 0;
+        self.state = "starting";
+        self.next_restart = None;
+        self.protocol_range = None;
+        if let Err(error) = self.launch(config) {
+            self.schedule_restart();
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub fn tick(&mut self, config: &Config) {
         if self.process.as_mut().is_some_and(|process| !matches!(process.has_exited(), Ok(false))) {
             self.schedule_restart();

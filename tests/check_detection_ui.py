@@ -179,7 +179,6 @@ def observation_preference(browser, root):
         try:
             page.goto((Path.cwd() / "extension/options/options.html").as_uri())
             page.wait_for_load_state("networkidle")
-            page.locator('[data-tab="tab-advanced"]').click()
             toggle = page.get_by_label("Observe media requests", exact=True)
             restart_notice = page.locator("#request-observation-restart-notice")
             expect(toggle).to_have_count(1)
@@ -192,7 +191,7 @@ def observation_preference(browser, root):
             popup.wait_for_load_state("networkidle")
             popup.locator('[data-tab="detected"]').click()
             expect(popup.locator("#detected-restart-notice")).to_be_hidden()
-            popup.locator('[data-tab="downloads"]').click()
+            popup.locator('[data-tab="queue"]').click()
 
             assert fixture.preferences["requestObservationEnabled"] is False
             fixture.permission_approval = False
@@ -260,7 +259,6 @@ def observation_preference(browser, root):
             fixture.restart_browser()
             page.reload()
             page.wait_for_load_state("networkidle")
-            page.locator('[data-tab="tab-advanced"]').click()
             expect(restart_notice).to_be_hidden()
             popup = context.new_page()
             popup.goto((Path.cwd() / "extension/popup/popup.html").as_uri())
@@ -285,7 +283,6 @@ def observation_preference(browser, root):
         try:
             page.goto((Path.cwd() / "extension/options/options.html").as_uri())
             page.wait_for_load_state("networkidle")
-            page.locator('[data-tab="tab-advanced"]').click()
             toggle = page.get_by_label("Observe media requests", exact=True)
             toggle.locator("..").click()
             expect(toggle).to_be_checked()
@@ -528,10 +525,8 @@ def job_frame_context(browser, root):
             assert fixture.context_calls[-1]["referer"] == "https://other.fixture.invalid/"
             assert fixture.context_calls[-1]["cookies"] == []
             card.get_by_role("button", name="Cancel", exact=True).click()
-            page.locator('[data-tab="history"]').click()
             expect(card.get_by_label("Source frame", exact=True)).to_have_value("frame-b")
             card.get_by_role("button", name="Retry", exact=True).click()
-            page.locator('[data-tab="queue"]').click()
             expect(card.locator(".card-status-badge")).to_have_text("queued")
             assert fixture.context_calls[-1]["referer"] == "https://other.fixture.invalid/"
             assert len(fixture.context_calls) == 2

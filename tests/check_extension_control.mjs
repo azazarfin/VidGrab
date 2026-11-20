@@ -40,7 +40,7 @@ function environment(browser, storage = {}, engine = {}, sessionStorage = {}) {
         else if (request.operation === 'events.read') data = { instance_id: 'engine', cursor: 0, resnapshot: true,
           has_more: false, events: [], snapshot: { instance_id: 'engine', cursor: 0,
             settings: { revision: 0, values: config }, jobs: engine.jobs, next_after: null,
-            counts: { total: engine.jobs.length, unfinished: engine.jobs.length } } };
+            counts: { total: engine.jobs.length, unfinished: engine.jobs.length, paused: 0, scheduled: 0, history: 0 } } };
         else if (request.operation === 'settings.get') data = { revision: 0, values: config };
         else if (request.operation === 'probes.create') data = { probe_id: 'probe', url, title: 'Fixture', thumbnail: null,
           duration: 1, uploader: null, is_playlist: false, entries: null, formats: [], subtitles: null,
@@ -49,7 +49,9 @@ function environment(browser, storage = {}, engine = {}, sessionStorage = {}) {
         else if (request.operation === 'downloads.enqueue') {
           if (!engine.receipts.has(request.idempotency_key)) {
             const job = { id: 'job-' + engine.receipts.size, url: request.params.url, revision: 0, title: 'Fixture',
-              status: 'queued', progress: 0, file_path: null, error_code: null, retry_at: null, parent_id: null };
+              status: 'queued', progress: 0, file_path: null, error_code: null, retry_at: null, parent_id: null,
+              priority: 0, scheduled_at: null, created_at: null, completed_at: null, speed: 0, eta: null,
+              file_size: null, error_message: null, job_kind: 'media', resume_mode: 'not_pausable' };
             engine.jobs.push(job);
             engine.receipts.set(request.idempotency_key, { job_id: job.id });
           }
@@ -60,7 +62,7 @@ function environment(browser, storage = {}, engine = {}, sessionStorage = {}) {
         } else if (['downloads.action', 'downloads.authenticate'].includes(request.operation)) {
           data = { job_id: request.params.job_id, action: request.params.action || 'authenticate',
             accepted_revision: request.params.expected_revision + 1,
-            accepted_status: request.params.action === 'cancel' ? 'cancelled' : 'queued' };
+            accepted_status: request.params.action === 'cancel' ? 'cancelled' : request.params.action === 'pause' ? 'paused' : 'queued' };
         } else throw new Error('Unexpected native operation: ' + request.operation);
         callback({ spike_version: 1, id: outer.id, ok: true, data: outer.op === 'v1.request'
           ? { protocol_version: 1, request_id: request.request_id, ok: true, data } : data });
@@ -690,5 +692,38 @@ for (const browser of ['chrome', 'firefox']) {
     const restarted = environment(browser, plain(sameSession.storage), { tabUrl: pageUrl, permissions: ['cookies', 'nativeMessaging', 'webRequest', 'webNavigation'] }, {});
     await restarted.context.vidGrabObservation.configure();
     assert.equal((await restarted.context.vidGrabAPI.getPermissions(mediaUrl)).request_observation_restart_required, false);
+  });
+
+  test(browser + ': companion.activate enforces ownPage and nativeMessaging permission before calling activate', async () => {
+    const e = environment(browser, {}, { permissions: ['cookies'] });
+    const denied = await e.message({ type: 'companion.activate' }, { id: e.chrome.runtime.id, tab: { id: 0 }, url: pageUrl });
+    assert.equal(denied.error.code, 'UNAUTHORIZED');
+    assert.equal(e.calls.length, 0);
+
+    const popupSender = { id: e.chrome.runtime.id, url: e.chrome.runtime.getURL('popup/popup.html') };
+    const noNative = await e.message({ type: 'companion.activate' }, popupSender);
+    assert.equal(noNative.error.code, 'BROWSER_CONNECTION_UNAVAILABLE');
+    assert.equal(e.calls.length, 0);
+
+    e.engine.permissions = ['cookies', 'nativeMessaging'];
+    const opened = await e.message({ type: 'companion.activate' }, popupSender);
+    assert.equal(opened.ok, true);
+    assert.equal(e.calls.at(-1).op, 'activate');
+    assert.deepEqual(e.calls.at(-1).params, {});
+
+    await e.context.vidGrabAPI.openApp();
+    assert.equal(e.calls.filter(item => item.op === 'activate').length, 2);
+  });
+
+  test(browser + ': pauseDownload and resumeDownload issue downloads.action mutations', async () => {
+    const e = environment(browser);
+    await e.context.vidGrabAPI.startDownload(url);
+    const job = e.engine.jobs[0];
+    const paused = await e.context.vidGrabAPI.pauseDownload(job);
+    assert.equal(paused.accepted_status, 'paused');
+    const resumed = await e.context.vidGrabAPI.resumeDownload({ ...job, revision: paused.accepted_revision });
+    assert.equal(resumed.accepted_status, 'queued');
+    const actions = e.calls.filter(item => item.params?.operation === 'downloads.action').map(item => item.params.params.action);
+    assert.deepEqual(actions, ['pause', 'resume']);
   });
 }

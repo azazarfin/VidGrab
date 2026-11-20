@@ -14,19 +14,258 @@ pub mod transport;
 
 use engine::Engine;
 use serde::Deserialize;
+use std::borrow::Cow;
 use std::fs::{self, File, TryLockError};
 #[cfg(target_os = "linux")]
 use std::fs::OpenOptions;
-use std::io;
+use std::io::{self, Read, Seek, SeekFrom};
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 #[cfg(target_os = "linux")]
 use std::os::unix::net::UnixListener as Listener;
 #[cfg(windows)]
+use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+#[cfg(windows)]
 use windows::PipeListener as Listener;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use std::time::Duration;
+
+pub fn strip_windows_verbatim_prefix(raw: &str) -> Cow<'_, str> {
+    if let Some(rest) = raw.strip_prefix(r"\\?\") {
+        if let Some(unc) = rest.strip_prefix(r"UNC\") {
+            return Cow::Owned(format!(r"\\{unc}"));
+        }
+        let bytes = rest.as_bytes();
+        if bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && (bytes[2] == b'\\' || bytes[2] == b'/')
+        {
+            return Cow::Borrowed(rest);
+        }
+    }
+    Cow::Borrowed(raw)
+}
+
+pub fn normalize_windows_shell_path(path: &Path) -> PathBuf {
+    path.to_str()
+        .map(|raw| PathBuf::from(strip_windows_verbatim_prefix(raw).as_ref()))
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
+fn is_word_char(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+fn has_sensitive_header_kv(line: &str) -> bool {
+    const KEYS: &[&str] = &[
+        "proxy-authorization",
+        "authorization",
+        "set-cookie",
+        "cookies",
+        "cookie",
+        "referer",
+        "user-agent",
+        "user_agent",
+        "http-headers",
+        "http_headers",
+        "request-headers",
+        "request_headers",
+        "headers",
+        "auth-ref",
+        "auth_ref",
+        "probe-id",
+        "probe_id",
+        "credential-url",
+        "credential_url",
+    ];
+    let bytes = line.as_bytes();
+    let lower = line.to_ascii_lowercase();
+    for key in KEYS {
+        let mut search_from = 0usize;
+        while let Some(rel) = lower[search_from..].find(key) {
+            let start = search_from + rel;
+            let end = start + key.len();
+            let boundary_ok = start == 0 || !is_word_char(bytes[start - 1]);
+            if boundary_ok {
+                let mut idx = end;
+                if idx < bytes.len() && (bytes[idx] == b'\'' || bytes[idx] == b'"') {
+                    idx += 1;
+                }
+                while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+                    idx += 1;
+                }
+                if idx < bytes.len() && (bytes[idx] == b':' || bytes[idx] == b'=') {
+                    return true;
+                }
+            }
+            search_from = start + 1;
+        }
+    }
+    false
+}
+
+fn starts_with_ignore_ascii_case(haystack: &str, prefix: &str) -> bool {
+    haystack.len() >= prefix.len() && haystack.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
+}
+
+pub fn redact_diagnostic_line(line: &str) -> String {
+    if has_sensitive_header_kv(line) {
+        return "Request details omitted from diagnostics".to_owned();
+    }
+    let bytes = line.as_bytes();
+    let mut out = String::with_capacity(line.len().min(512));
+    let mut i = 0usize;
+    while i < line.len() {
+        let rest = &line[i..];
+        let boundary = i == 0 || !is_word_char(bytes[i - 1]);
+        if boundary
+            && (starts_with_ignore_ascii_case(rest, "https://")
+                || starts_with_ignore_ascii_case(rest, "http://")
+                || starts_with_ignore_ascii_case(rest, "https%3a%2f%2f")
+                || starts_with_ignore_ascii_case(rest, "http%3a%2f%2f"))
+        {
+            out.push_str("[redacted URL]");
+            while i < line.len() && !bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            continue;
+        }
+        if boundary && starts_with_ignore_ascii_case(rest, "bearer") {
+            let after_kw = i + 6;
+            if after_kw < line.len() && bytes[after_kw].is_ascii_whitespace() {
+                let mut k = after_kw;
+                while k < line.len() && bytes[k].is_ascii_whitespace() {
+                    k += 1;
+                }
+                if k < line.len() {
+                    out.push_str("Bearer [redacted]");
+                    while k < line.len() && !bytes[k].is_ascii_whitespace() {
+                        k += 1;
+                    }
+                    i = k;
+                    continue;
+                }
+            }
+        }
+        let token_len = if boundary && starts_with_ignore_ascii_case(rest, "access_token") {
+            Some(12)
+        } else if boundary && starts_with_ignore_ascii_case(rest, "token") {
+            Some(5)
+        } else {
+            None
+        };
+        if let Some(kw_len) = token_len {
+            let mut k = i + kw_len;
+            if k < line.len() && (bytes[k] == b'\'' || bytes[k] == b'"') {
+                k += 1;
+            }
+            while k < line.len() && bytes[k].is_ascii_whitespace() {
+                k += 1;
+            }
+            if k < line.len() && (bytes[k] == b':' || bytes[k] == b'=') {
+                k += 1;
+                while k < line.len() && bytes[k].is_ascii_whitespace() {
+                    k += 1;
+                }
+                if k < line.len() {
+                    out.push_str("token=[redacted]");
+                    while k < line.len() && !bytes[k].is_ascii_whitespace() {
+                        k += 1;
+                    }
+                    i = k;
+                    continue;
+                }
+            }
+        }
+        let ch = rest.chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    if out.len() > 512 {
+        let mut end = 512;
+        while !out.is_char_boundary(end) {
+            end -= 1;
+        }
+        out.truncate(end);
+    }
+    out
+}
+
+pub fn read_redacted_engine_log_tail(data_dir: &Path) -> Vec<String> {
+    const MAX_TAIL_BYTES: u64 = 16 * 1024;
+    const MAX_LINES: usize = 50;
+    let log_path = data_dir.join("logs").join("engine.log");
+    let Ok(sym_meta) = fs::symlink_metadata(&log_path) else {
+        return Vec::new();
+    };
+    if sym_meta.is_symlink() || !sym_meta.is_file() {
+        return Vec::new();
+    }
+    #[cfg(target_os = "linux")]
+    let mut file = match OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(&log_path) {
+        Ok(file) => file,
+        Err(_) => return Vec::new(),
+    };
+    #[cfg(windows)]
+    let mut file = {
+        use windows_sys::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT};
+        let Ok(file) = std::fs::OpenOptions::new().read(true).custom_flags(FILE_FLAG_OPEN_REPARSE_POINT).open(&log_path) else {
+            return Vec::new();
+        };
+        let Ok(meta) = file.metadata() else {
+            return Vec::new();
+        };
+        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 || !meta.is_file() {
+            return Vec::new();
+        }
+        file
+    };
+    #[cfg(not(any(target_os = "linux", windows)))]
+    let mut file = match File::open(&log_path) {
+        Ok(file) => file,
+        Err(_) => return Vec::new(),
+    };
+    let Ok(meta) = file.metadata() else {
+        return Vec::new();
+    };
+    if !meta.is_file() {
+        return Vec::new();
+    }
+    let start = meta.len().saturating_sub(MAX_TAIL_BYTES);
+    if start > 0 && file.seek(SeekFrom::Start(start)).is_err() {
+        return Vec::new();
+    }
+    let mut raw = Vec::new();
+    if (&mut file).take(MAX_TAIL_BYTES + 1).read_to_end(&mut raw).is_err() {
+        return Vec::new();
+    }
+    let text = String::from_utf8_lossy(&raw);
+    let slice = if start > 0 {
+        match text.split_once('\n') {
+            Some((_, rest)) => rest,
+            None => text.as_ref(),
+        }
+    } else {
+        text.as_ref()
+    };
+    let mut lines: Vec<String> = slice
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .take(MAX_LINES)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(redact_diagnostic_line)
+        .collect();
+    lines.shrink_to_fit();
+    lines
+}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -135,6 +374,11 @@ impl Owner {
                         } else if request.op == "activate" {
                             notify(UiEvent::Activate);
                             protocol::success(&request, self.engine.snapshot())
+                        } else if request.op == "restart_engine" {
+                            match self.engine.restart_now(&self.config) {
+                                Ok(()) => protocol::success(&request, self.engine.snapshot()),
+                                Err(_) => protocol::failure(Some(&request.id), "ENGINE_UNAVAILABLE"),
+                            }
                         } else if request.op == "status" && self.engine.state != "ready" {
                             protocol::success(&request, self.engine.snapshot())
                         } else if request.op == "v1.request" && self.engine.state == "ready" && !self.engine.supports_protocol(1) {
@@ -160,5 +404,44 @@ impl Owner {
         drop(self.listener);
         drop(self._lock);
         notify(UiEvent::Stopped);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_verbatim_prefix_normalizes_drive_and_unc_paths() {
+        assert_eq!(strip_windows_verbatim_prefix(r"\\?\C:\Users\Alice\video.mp4"), r"C:\Users\Alice\video.mp4");
+        assert_eq!(strip_windows_verbatim_prefix(r"\\?\UNC\server\share\video.mp4"), r"\\server\share\video.mp4");
+        assert_eq!(strip_windows_verbatim_prefix(r"C:\Users\Alice\video.mp4"), r"C:\Users\Alice\video.mp4");
+        assert_eq!(
+            normalize_windows_shell_path(Path::new(r"\\?\D:\Media\বাংলা.mp4")),
+            PathBuf::from(r"D:\Media\বাংলা.mp4")
+        );
+    }
+
+    #[test]
+    fn read_redacted_engine_log_tail_bounds_lines_and_scrubs_secrets() {
+        let dir = std::env::temp_dir().join(format!("vidgrab-log-tail-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let logs = dir.join("logs");
+        fs::create_dir_all(&logs).unwrap();
+        let mut content = String::new();
+        for idx in 0..65 {
+            content.push_str(&format!("INFO line-{idx} https://example.com/watch?token=abc Bearer secret-tok token=xyz\n"));
+        }
+        content.push_str("DEBUG Authorization: Bearer supersecret\n");
+        content.push_str("ERROR failed downloading বাংলা.mp4\n");
+        fs::write(logs.join("engine.log"), content).unwrap();
+
+        let tail = read_redacted_engine_log_tail(&dir);
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(tail.len(), 50);
+        assert_eq!(tail[48], "Request details omitted from diagnostics");
+        assert_eq!(tail[49], "ERROR failed downloading বাংলা.mp4");
+        assert!(tail.iter().all(|line| !line.contains("secret-tok") && !line.contains("supersecret") && !line.contains("https://")));
+        assert!(tail[0].contains("[redacted URL]") && tail[0].contains("Bearer [redacted]") && tail[0].contains("token=[redacted]"));
     }
 }

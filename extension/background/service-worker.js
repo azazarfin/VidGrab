@@ -90,6 +90,12 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         else if (message.type === 'companion.discovery.remove') {
           await self.vidGrabDiscovery.removeCandidates(message.tab_id, message.ids);
           respond({ ok: true });
+        } else if (message.type === 'companion.activate') {
+          const permissions = await api.getPermissions();
+          if (!permissions.native_granted) {
+            throw { code: 'BROWSER_CONNECTION_UNAVAILABLE', message: 'Allow browser native messaging permission to open VidGrab' };
+          }
+          respond({ ok: true, data: await self.vidGrabNative.send('activate', {}) });
         }
         else throw { code: 'UNSUPPORTED_OPERATION', message: 'Unsupported companion message' };
       } catch (error) { respond(errorResponse(message.request, error)); }

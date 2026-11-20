@@ -131,6 +131,7 @@ class QueueManager:
         self.control_actions = ControlActionStore()
         self.active_attempts = {}
         self.cancelled_tasks: set = set()
+        self.paused_tasks: set = set()
         self.in_memory_progress: Dict[str, Dict[str, Any]] = {}
         self.worker_task: Optional[asyncio.Task] = None
         self.scheduler_task: Optional[asyncio.Task] = None
@@ -196,14 +197,17 @@ class QueueManager:
         self.stopping = False
         self.stop_task = None
         await self._recover()
+        for due in await self.attempts.promote_due_scheduled(self._now()):
+            self.in_memory_progress[due["id"]] = due
+        for due in await self.attempts.promote_due_retries(self.clock()):
+            self.in_memory_progress[due["id"]] = due
 
     def start(self):
         self.stopping = False
         self.stop_task = None
         self.loop = asyncio.get_running_loop()
         self.worker_task = asyncio.create_task(self._worker_loop())
-        self.scheduler_task = asyncio.create_task(self._scheduler_loop())
-        logger.info("Queue manager worker loop and scheduler loop started.")
+        logger.info("Queue manager worker loop started.")
 
     async def stop(self):
         if self.stop_task is None:
@@ -226,13 +230,13 @@ class QueueManager:
                 pass
         active = dict(self.active_tasks)
         for task_id, task in active.items():
-            if not task.done() and task_id not in self.cancelled_tasks:
+            if not task.done() and task_id not in self.cancelled_tasks and task_id not in self.paused_tasks:
                 task.cancel()
         if active:
             await asyncio.gather(*active.values(), return_exceptions=True)
             # A coroutine cancelled before its first turn cannot run its finally block.
             for task_id in active:
-                status = "cancelled" if task_id in self.cancelled_tasks else "queued"
+                status = "cancelled" if task_id in self.cancelled_tasks else "paused" if task_id in self.paused_tasks else "queued"
                 attempt = self.active_attempts.get(task_id)
                 if attempt is not None:
                     await self._finish(task_id, status, attempt_id=attempt.id)
@@ -244,7 +248,7 @@ class QueueManager:
         logger.info("Queue manager loops and active execution stopped.")
 
     def is_cancelled(self, task_id: str) -> bool:
-        return self.stopping or not self.owner.healthy or task_id in self.cancelled_tasks
+        return self.stopping or not self.owner.healthy or task_id in self.cancelled_tasks or task_id in self.paused_tasks
 
     async def enqueue(
         self,
@@ -274,7 +278,18 @@ class QueueManager:
         format_intent_loader=None,
         requires_auth=False,
         fixture_only=False,
+        priority: int = 0,
     ) -> str:
+        if type(priority) is not int or not -10 <= priority <= 10:
+            raise HTTPException(status_code=400, detail="Priority must be an integer between -10 and 10")
+        if scheduled_at is not None:
+            try:
+                parsed_schedule = datetime.fromisoformat(scheduled_at)
+                if parsed_schedule.tzinfo is None:
+                    parsed_schedule = parsed_schedule.replace(tzinfo=timezone.utc)
+                scheduled_at = parsed_schedule.astimezone(timezone.utc).isoformat()
+            except ValueError as error:
+                raise HTTPException(status_code=400, detail="Invalid scheduled_at timestamp") from error
         config = await self.settings.get_all()
         try:
             directory, _ = self.runtime.validate_output(
@@ -286,7 +301,8 @@ class QueueManager:
         if download_dir is not None:
             download_dir = str(directory)
         task_id = str(uuid4())
-        title = sanitize_text(title)
+        if config.get("transliterate_bangla_filenames", True):
+            title = sanitize_text(title)
         created_at = datetime.fromtimestamp(self.clock(), timezone.utc).isoformat()
         status = "scheduled" if scheduled_at else "queued"
 
@@ -331,6 +347,7 @@ class QueueManager:
             "scheduled_at": scheduled_at,
             "auth_required": int(bool(cookies) or requires_auth),
             "job_kind": "playlist" if is_playlist or playlist_items else "media",
+            "priority": priority,
         }
         operation = asyncio.create_task(self._admit(record, cookies, idempotency_key, idempotency_intent, credential_loader, format_intent_loader))
         return await join_owned_task(operation)
@@ -374,9 +391,8 @@ class QueueManager:
             "data": self.in_memory_progress[task_id]
         })
 
-        # Wake up worker if queued
-        if not record["scheduled_at"]:
-            self.wakeup_event.set()
+        # Wake up worker for queued or scheduled deadline recomputation
+        self.wakeup_event.set()
         return task_id
 
     async def cancel(self, task_id: str, *, control_action=None):
@@ -606,14 +622,249 @@ class QueueManager:
         self.in_memory_progress[parent_id] = parent
         await self.connections.broadcast({"event": "task_" + parent["status"], "data": parent})
 
-    async def delete_history(self, task_id=None):
+    async def pause(self, task_id: str, *, control_action=None):
+        operation = asyncio.create_task(self._pause(task_id, control_action=control_action))
+        return await join_owned_task(operation)
+
+    async def _pause(self, task_id: str, *, control_action=None):
+        accepted = None
+        attempt_id = None
+        broadcast_row = None
+        should_cancel_active = False
+        async with self.cancel_locks.setdefault(task_id, asyncio.Lock()):
+            async with self._state_lock(task_id):
+                async with self.attempts.transaction() as db:
+                    await require_owner(db, self.owner)
+                    if control_action is not None:
+                        replay = await self.control_actions.replay(db, control_action)
+                        if replay is not None:
+                            return replay
+                    async with db.execute("SELECT * FROM downloads WHERE id=?", (task_id,)) as cursor:
+                        current = await cursor.fetchone()
+                    if control_action is not None:
+                        await self.control_actions.validate(db, control_action, current)
+                    elif current is None:
+                        raise HTTPException(status_code=404, detail="Download task not found")
+                    if current["status"] == "paused":
+                        return await self.control_actions.record(db, control_action, task_id) if control_action is not None else None
+                    mem_status = self.in_memory_progress.get(task_id, {}).get("status")
+                    if current["status"] in ("postprocessing", "waiting_for_children") or mem_status == "postprocessing":
+                        raise ControlError("STATE_CONFLICT", 409, "Cannot pause while post-processing or waiting for playlist children")
+                    if current["status"] in ("complete", "failed", "cancelled", "cancelling", "waiting_for_auth"):
+                        raise ControlError("STATE_CONFLICT", 409, "This download cannot be paused in its current state")
+                    if current["status"] in ("queued", "scheduled", "retry_wait"):
+                        await db.execute(
+                            "UPDATE downloads SET status='paused', retry_at=NULL, speed=0, eta=NULL, current_attempt_id=NULL WHERE id=?",
+                            (task_id,),
+                        )
+                        if current["parent_id"] is not None:
+                            await sync_parent(db, current["parent_id"], self._now())
+                        if control_action is not None:
+                            accepted = await self.control_actions.record(db, control_action, task_id)
+                        async with db.execute("SELECT * FROM downloads WHERE id=?", (task_id,)) as cursor:
+                            broadcast_row = dict(await cursor.fetchone())
+                        self.in_memory_progress[task_id] = broadcast_row
+                    elif current["status"] in ("downloading", "probing", "pausing"):
+                        attempt_id = current["current_attempt_id"]
+                        if current["status"] != "pausing":
+                            await db.execute(
+                                "UPDATE downloads SET status='pausing' WHERE id=? AND status IN ('downloading', 'probing')",
+                                (task_id,),
+                            )
+                        if control_action is not None:
+                            accepted = await self.control_actions.record(db, control_action, task_id)
+                        self.paused_tasks.add(task_id)
+                        if task_id in self.in_memory_progress:
+                            self.in_memory_progress[task_id]["status"] = "pausing"
+                        should_cancel_active = True
+            if broadcast_row is not None:
+                await self.connections.broadcast({"event": "task_paused", "data": broadcast_row})
+                await self._refresh_playlist(task_id)
+                return accepted
+            if should_cancel_active:
+                task = self.active_tasks.get(task_id)
+                if task and not task.done():
+                    task.cancel()
+                    try:
+                        await join_owned_task(task)
+                    except asyncio.CancelledError:
+                        if not task.done():
+                            raise
+                await self._finish(task_id, "paused", attempt_id=attempt_id, outcome="interrupted")
+                self.paused_tasks.discard(task_id)
+            return accepted
+
+    async def resume(self, task_id: str, *, control_action=None, credential_loader=None):
+        operation = asyncio.create_task(self._resume(task_id, control_action=control_action, credential_loader=credential_loader))
+        return await join_owned_task(operation)
+
+    async def _resume(self, task_id: str, *, control_action=None, credential_loader=None):
+        accepted = None
+        current = None
+        new_cookies = None
+        new_headers = None
+        async with self._state_lock(task_id):
+            async with self.attempts.transaction() as db:
+                await require_owner(db, self.owner)
+                if control_action is not None:
+                    replay = await self.control_actions.replay(db, control_action)
+                    if replay is not None:
+                        return replay
+                async with db.execute("SELECT * FROM downloads WHERE id=?", (task_id,)) as cursor:
+                    row = await cursor.fetchone()
+                if control_action is not None:
+                    await self.control_actions.validate(db, control_action, row)
+                elif row is None:
+                    raise HTTPException(status_code=404, detail="Download task not found")
+                if row["status"] != "paused":
+                    raise ControlError("STATE_CONFLICT", 409, "Only paused downloads can be resumed")
+                options = json.loads(row["download_options"] or "{}")
+                if credential_loader is not None:
+                    context = credential_loader(row["url"], row["id"])
+                    new_cookies = context["cookies"]
+                    new_headers = {name: context[name] for name in ("user_agent", "referer") if context.get(name)}
+                    new_headers["credential_url"] = context["scope_url"]
+                    options["browser_context_requires_cookies"] = bool(new_cookies)
+                waiting_auth = False
+                waiting_code = None
+                waiting_msg = None
+                if row["auth_required"] and credential_loader is None:
+                    cookie_required = (
+                        options.get("browser_context_requires_cookies", True) is not False
+                        or row["error_code"] == "AUTH_REQUIRED"
+                    )
+                    headers = self.task_headers.get(task_id, {})
+                    context_ready = (
+                        bool(self.task_cookies.get(task_id))
+                        if cookie_required
+                        else bool(headers.get("referer") or headers.get("user_agent"))
+                    )
+                    if not context_ready:
+                        waiting_auth = True
+                        waiting_code = "AUTH_REQUIRED" if cookie_required else "BROWSER_CONTEXT_REQUIRED"
+                        waiting_msg = (
+                            "Fresh browser authentication is required"
+                            if cookie_required
+                            else "A fresh browser context is required"
+                        )
+                if waiting_auth:
+                    await db.execute(
+                        """UPDATE downloads SET status='waiting_for_auth', error_code=?, error_message=?,
+                           speed=0, eta=NULL, retry_at=NULL WHERE id=?""",
+                        (waiting_code, waiting_msg, task_id),
+                    )
+                else:
+                    target_status = "queued"
+                    next_scheduled = None
+                    if row["scheduled_at"]:
+                        if datetime.fromisoformat(row["scheduled_at"]).timestamp() > self.clock():
+                            target_status = "scheduled"
+                            next_scheduled = row["scheduled_at"]
+                    await db.execute(
+                        """UPDATE downloads SET status=?, scheduled_at=?, error_code=NULL, error_message=NULL,
+                           retry_at=NULL, speed=0, eta=NULL, download_options=? WHERE id=?""",
+                        (target_status, next_scheduled, json.dumps(options), task_id),
+                    )
+                if row["parent_id"] is not None:
+                    await sync_parent(db, row["parent_id"], self._now())
+                if control_action is not None:
+                    accepted = await self.control_actions.record(db, control_action, task_id)
+                async with db.execute("SELECT * FROM downloads WHERE id=?", (task_id,)) as cursor:
+                    current = dict(await cursor.fetchone())
+            if new_cookies is not None or new_headers is not None:
+                if new_cookies:
+                    self.task_cookies[task_id] = new_cookies
+                else:
+                    self.task_cookies.pop(task_id, None)
+                if new_headers is not None:
+                    self.task_headers[task_id] = dict(new_headers)
+            self.paused_tasks.discard(task_id)
+            self.in_memory_progress[task_id] = current
+        self.wakeup_event.set()
+        await self.connections.broadcast({"event": "task_" + current["status"], "data": current})
+        await self._refresh_playlist(task_id)
+        return accepted
+
+    async def set_priority(self, task_id: str, priority: int, *, control_action=None):
+        operation = asyncio.create_task(self._set_priority(task_id, priority, control_action=control_action))
+        return await join_owned_task(operation)
+
+    async def _set_priority(self, task_id: str, priority: int, *, control_action=None):
+        async with self._state_lock(task_id):
+            async with self.attempts.transaction() as db:
+                await require_owner(db, self.owner)
+                if control_action is not None:
+                    replay = await self.control_actions.replay(db, control_action)
+                    if replay is not None:
+                        return replay
+                async with db.execute("SELECT * FROM downloads WHERE id=?", (task_id,)) as cursor:
+                    row = await cursor.fetchone()
+                if control_action is not None:
+                    await self.control_actions.validate(db, control_action, row)
+                elif row is None:
+                    raise HTTPException(status_code=404, detail="Download task not found")
+                if row["status"] in TERMINAL:
+                    raise ControlError("STATE_CONFLICT", 409, "Cannot change priority of a finished download")
+                await db.execute("UPDATE downloads SET priority=? WHERE id=?", (priority, task_id))
+                accepted = await self.control_actions.record(db, control_action, task_id) if control_action is not None else None
+                async with db.execute("SELECT * FROM downloads WHERE id=?", (task_id,)) as cursor:
+                    current = dict(await cursor.fetchone())
+            self.in_memory_progress[task_id] = current
+        self.wakeup_event.set()
+        return accepted
+
+    async def set_schedule(self, task_id: str, scheduled_at: Optional[str], *, control_action=None):
+        operation = asyncio.create_task(self._set_schedule(task_id, scheduled_at, control_action=control_action))
+        return await join_owned_task(operation)
+
+    async def _set_schedule(self, task_id: str, scheduled_at: Optional[str], *, control_action=None):
+        async with self._state_lock(task_id):
+            async with self.attempts.transaction() as db:
+                await require_owner(db, self.owner)
+                if control_action is not None:
+                    replay = await self.control_actions.replay(db, control_action)
+                    if replay is not None:
+                        return replay
+                async with db.execute("SELECT * FROM downloads WHERE id=?", (task_id,)) as cursor:
+                    row = await cursor.fetchone()
+                if control_action is not None:
+                    await self.control_actions.validate(db, control_action, row)
+                elif row is None:
+                    raise HTTPException(status_code=404, detail="Download task not found")
+                if row["status"] not in ("queued", "scheduled", "paused", "retry_wait"):
+                    raise ControlError("STATE_CONFLICT", 409, "Pause or wait for this download before changing its schedule")
+                if scheduled_at is not None:
+                    target_status = "paused" if row["status"] == "paused" else "scheduled"
+                    next_scheduled = scheduled_at
+                else:
+                    target_status = "paused" if row["status"] == "paused" else "queued"
+                    next_scheduled = None
+                await db.execute(
+                    "UPDATE downloads SET status=?, scheduled_at=?, retry_at=NULL WHERE id=?",
+                    (target_status, next_scheduled, task_id),
+                )
+                accepted = await self.control_actions.record(db, control_action, task_id) if control_action is not None else None
+                async with db.execute("SELECT * FROM downloads WHERE id=?", (task_id,)) as cursor:
+                    current = dict(await cursor.fetchone())
+            self.in_memory_progress[task_id] = current
+        self.wakeup_event.set()
+        await self.connections.broadcast({"event": "task_" + current["status"], "data": current})
+        return accepted
+
+    async def delete_history(self, task_id=None, *, control_action=None, clear_key=None):
         async def remove():
-            removed = await PlaylistStore(self.runtime, self.owner).delete_history(task_id)
+            result = await PlaylistStore(self.runtime, self.owner).delete_history(
+                task_id, control_action=control_action, clear_key=clear_key
+            )
+            if control_action is not None or clear_key is not None:
+                removed, receipt = result
+            else:
+                removed, receipt = result, None
             for job_id in removed:
                 self.in_memory_progress.pop(job_id, None)
                 self.task_cookies.pop(job_id, None)
                 self.task_headers.pop(job_id, None)
-            return removed
+            return receipt if (control_action is not None or clear_key is not None) else removed
         return await join_owned_task(asyncio.create_task(remove()))
 
     async def _finish(self, task_id, status, *, attempt_id=None, artifacts=(), outcome=None, **fields):
@@ -626,7 +877,7 @@ class QueueManager:
                           completed_at=now if status in TERMINAL else None)
             if status != "retry_wait":
                 fields["retry_at"] = None
-            if status in ("complete", "cancelled", "queued"):
+            if status in ("complete", "cancelled", "queued", "paused"):
                 fields["error_code"] = None
             if changed:
                 async with aiosqlite.connect(self.runtime.db_path) as db:
@@ -670,33 +921,17 @@ class QueueManager:
             try:
                 await asyncio.sleep(30)
                 now_str = datetime.fromtimestamp(self.clock(), timezone.utc).isoformat()
-
-                async with aiosqlite.connect(self.runtime.db_path) as db:
-                    db.row_factory = aiosqlite.Row
-                    # Fetch scheduled downloads that are due
+                async with aiosqlite.connect(self.runtime.db_path.resolve().as_uri() + "?mode=ro", uri=True) as db:
                     async with db.execute(
-                        "SELECT * FROM downloads WHERE status = ? AND scheduled_at <= ? ORDER BY scheduled_at ASC",
-                        ("scheduled", now_str)
+                        "SELECT id FROM downloads WHERE status = ? AND scheduled_at <= ? ORDER BY scheduled_at ASC",
+                        ("scheduled", now_str),
                     ) as cursor:
-                        rows = await cursor.fetchall()
-
-                for row in rows:
-                    task_id = row["id"]
-                    async with self._state_lock(task_id):
-                        async with aiosqlite.connect(self.runtime.db_path) as db:
-                            cursor = await db.execute(
-                                "UPDATE downloads SET status='queued', scheduled_at=NULL WHERE id=? AND status='scheduled'",
-                                (task_id,),
-                            )
-                            await db.commit()
-                            if not cursor.rowcount:
-                                continue
-                        if task_id not in self.in_memory_progress:
-                            self.in_memory_progress[task_id] = dict(row)
-                        self.in_memory_progress[task_id].update(status="queued", scheduled_at=None)
-                        message = {"event": "task_queued", "data": dict(self.in_memory_progress[task_id])}
-                    self.wakeup_event.set()
-                    await self.connections.broadcast(message)
+                        due_ids = await cursor.fetchall()
+                if due_ids:
+                    for due in await self.attempts.promote_due_scheduled(now_str):
+                        self.in_memory_progress[due["id"]] = due
+                        self.wakeup_event.set()
+                        await self.connections.broadcast({"event": "task_queued", "data": dict(due)})
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -706,8 +941,14 @@ class QueueManager:
         while True:
             try:
                 config = await self.settings.get_all()
-                for due in await self.attempts.promote_due_retries(self.clock()):
+                now_ts = self.clock()
+                now_iso = datetime.fromtimestamp(now_ts, timezone.utc).isoformat()
+                for due in await self.attempts.promote_due_retries(now_ts):
                     self.in_memory_progress[due["id"]] = due
+                    await self.connections.broadcast({"event": "task_queued", "data": dict(due)})
+                for due in await self.attempts.promote_due_scheduled(now_iso):
+                    self.in_memory_progress[due["id"]] = due
+                    await self.connections.broadcast({"event": "task_queued", "data": dict(due)})
                 max_concurrent = config.get("max_concurrent", 3)
 
                 # Clean up finished tasks from active list
@@ -721,11 +962,11 @@ class QueueManager:
                 # Preserve an enqueue notification arriving during the database read.
                 self.wakeup_event.clear()
 
-                # Fetch next queued item
+                # Fetch next queued item ordered by priority descending, FIFO created_at ascending
                 async with aiosqlite.connect(self.runtime.db_path) as db:
                     db.row_factory = aiosqlite.Row
                     async with db.execute(
-                        "SELECT * FROM downloads WHERE status = ? ORDER BY created_at ASC LIMIT 1",
+                        "SELECT * FROM downloads WHERE status = ? ORDER BY priority DESC, created_at ASC LIMIT 1",
                         ("queued",)
                     ) as cursor:
                         row = await cursor.fetchone()
@@ -733,7 +974,13 @@ class QueueManager:
                 if not row:
                     async with aiosqlite.connect(self.runtime.db_path) as db:
                         async with db.execute("SELECT MIN(retry_at) FROM downloads WHERE status='retry_wait'") as cursor:
-                            deadline = (await cursor.fetchone())[0]
+                            retry_deadline = (await cursor.fetchone())[0]
+                        async with db.execute("SELECT MIN(scheduled_at) FROM downloads WHERE status='scheduled'") as cursor:
+                            scheduled_min = (await cursor.fetchone())[0]
+                    deadlines = [d for d in (retry_deadline,) if d is not None]
+                    if scheduled_min is not None:
+                        deadlines.append(datetime.fromisoformat(scheduled_min).timestamp())
+                    deadline = min(deadlines) if deadlines else None
                     if deadline is None:
                         await self.wakeup_event.wait()
                     else:
@@ -779,6 +1026,7 @@ class QueueManager:
             return
         download_dir = options.get("download_dir") or config.get("download_dir")
         filename_template = options.get("output_template") or config.get("filename_template")
+        transliterate = bool(config.get("transliterate_bangla_filenames", True))
         cookies_file_path = None
         fields = {}
         status = "failed"
@@ -838,11 +1086,12 @@ class QueueManager:
                 credential_url=headers.get("credential_url"),
                 **({"format_intent": options["format_intent"]} if options.get("format_intent") else {}),
                 fixture_only=options.get("fixture_only", False),
+                transliterate_bangla_filenames=transliterate,
             )
             if self.is_cancelled(task_id):
                 raise asyncio.CancelledError
             if row[2] == "playlist":
-                expansion = validate_playlist_result(result)
+                expansion = validate_playlist_result(result, transliterate=transliterate)
                 filepath = None
             else:
                 if "playlist" in result:
@@ -854,12 +1103,16 @@ class QueueManager:
             fields = {"file_path": filepath, "progress": 100.0, "error_message": None}
             current = self.in_memory_progress.get(task_id, {})
             if not current.get("title") and result.get("title"):
-                fields["title"] = sanitize_text(result["title"])
+                fields["title"] = sanitize_text(result["title"]) if transliterate else result["title"]
             if not current.get("thumbnail_url") and result.get("thumbnail_url"):
                 fields["thumbnail_url"] = result["thumbnail_url"]
         except asyncio.CancelledError:
-            status = "cancelled" if task_id in self.cancelled_tasks else "queued"
-            outcome = "cancelled" if status == "cancelled" else "interrupted"
+            if task_id in self.cancelled_tasks:
+                status, outcome = "cancelled", "cancelled"
+            elif task_id in self.paused_tasks:
+                status, outcome = "paused", "interrupted"
+            else:
+                status, outcome = "queued", "interrupted"
             fields = {"error_message": None}
         except FreshAuthRequired:
             status = "cancelled" if task_id in self.cancelled_tasks else "waiting_for_auth"
@@ -867,10 +1120,15 @@ class QueueManager:
             fields = {"error_message": "Fresh browser authentication is required", "auth_required": 1,
                       "error_code": "AUTH_REQUIRED", "retry_count": previous_retry_count}
         except Exception as error:
-            error_message = sanitize_text(redact_diagnostic(error))
+            raw_error = redact_diagnostic(error)
+            error_message = sanitize_text(raw_error) if transliterate else raw_error
             if task_id in self.cancelled_tasks:
                 status = "cancelled"
                 outcome = "cancelled"
+            elif task_id in self.paused_tasks:
+                status = "paused"
+                outcome = "interrupted"
+                error_message = None
             elif self.stopping:
                 status = "queued"
                 outcome = "interrupted"
@@ -922,7 +1180,9 @@ class QueueManager:
                         status = outcome = "failed"
                     elif recovery.error:
                         status = outcome = "failed"
-                        fields = {"error_message": sanitize_text(redact_diagnostic(recovery.error)), "retry_count": previous_retry_count}
+                        raw_rec_err = redact_diagnostic(recovery.error)
+                        fields = {"error_message": sanitize_text(raw_rec_err) if transliterate else raw_rec_err,
+                                  "retry_count": previous_retry_count}
                     elif recovery.result is not None:
                         status = outcome = "complete"
                         artifacts = [record for record in artifacts if record["path"] not in recovery.witness_paths]
@@ -931,13 +1191,21 @@ class QueueManager:
                         current = self.in_memory_progress.get(task_id, {})
                         for key in ("title", "thumbnail_url"):
                             if not current.get(key) and recovery.result.get(key):
-                                fields[key] = sanitize_text(recovery.result[key]) if key == "title" else recovery.result[key]
+                                if key == "title" and transliterate:
+                                    fields[key] = sanitize_text(recovery.result[key])
+                                else:
+                                    fields[key] = recovery.result[key]
+                    elif task_id in self.paused_tasks:
+                        status, outcome = "paused", "interrupted"
+                        fields = {"error_message": None, "retry_count": previous_retry_count}
                 except (OSError, ValueError) as error:
                     logger.error("Failed to record retained artifacts for task %s: %s", task_id, redact_exception(error))
                     if status != "cancelled":
                         status = outcome = "failed"
                         artifacts = []
-                        fields = {"error_message": sanitize_text(redact_diagnostic(error)), "retry_count": previous_retry_count}
+                        raw_err = redact_diagnostic(error)
+                        fields = {"error_message": sanitize_text(raw_err) if transliterate else raw_err,
+                                  "retry_count": previous_retry_count}
         if expansion is not None and status == "complete":
             operation = asyncio.create_task(self._expand_playlist(task_id, attempt.id, expansion, cookies, headers))
             await join_owned_task(operation)

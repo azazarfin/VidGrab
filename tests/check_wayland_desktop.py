@@ -115,8 +115,10 @@ def check(app, environment, screenshots, *, fuse):
         mount = mounted_image(pid) if fuse else None
         driver.screenshot(screenshots / 'wayland-empty.png')
         with fixture_server() as url:
-            driver.fill('#fixture-url', url)
-            driver.click('.primary')
+            driver.click('#toggle-media-options')
+            driver.click('#option-audio-only')
+            driver.fill('#media-url', url)
+            driver.click('.download-form button.primary')
             desktop.close_window(pid)
             wait_for(lambda: (window := desktop.window(pid)) is None or window['hidden'],
                 label='compositor Close hides window')
@@ -130,7 +132,8 @@ def check(app, environment, screenshots, *, fuse):
         desktop.select(tray, 'Open VidGrab')
         wait_for(lambda: (window := desktop.window(pid)) and not window['hidden'], label='tray Open reopens window')
         assert local_call(config)['engine_pid'] == first['engine_pid']
-        wait_for(lambda: driver.script("return document.querySelector('.job-status')?.textContent === 'Finished'"),
+        driver.click('[data-desktop-tab="history"]')
+        wait_for(lambda: driver.script("return document.querySelector('.history-view .job-status')?.textContent === 'Finished'"),
             label='reopened Wayland history')
         driver.screenshot(screenshots / 'wayland-complete.png')
         desktop.close_window(pid)

@@ -1,5 +1,5 @@
 // Shared view state; all transport calls still pass through the generated client.
-const retainedMutations = new Set(['settings.patch', 'downloads.enqueue', 'downloads.action', 'downloads.authenticate']);
+const retainedMutations = new Set(['settings.patch', 'downloads.enqueue', 'downloads.action', 'downloads.authenticate', 'downloads.clear_history']);
 
 function immutable(value) {
   if (value && typeof value === 'object') {
