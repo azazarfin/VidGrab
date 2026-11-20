@@ -252,15 +252,22 @@ fn linux_pick_folder(app: &tauri::AppHandle, initial: Option<PathBuf>) -> Result
     rx.recv().map_err(|_| "Folder selection was interrupted".to_owned())?
 }
 
+#[derive(Clone, Copy)]
+enum FilePickerKind {
+    OpenUrlList,
+    OpenLegacyJson,
+    SaveDiagnosticsJson,
+}
+
 #[cfg(target_os = "linux")]
-fn linux_pick_file(app: &tauri::AppHandle, save: bool, initial_name: Option<&str>) -> Result<Option<PathBuf>, String> {
+fn linux_pick_file(app: &tauri::AppHandle, kind: FilePickerKind, initial_name: Option<&str>) -> Result<Option<PathBuf>, String> {
     let (tx, rx) = mpsc::sync_channel(1);
     let initial_name = initial_name.map(str::to_owned);
     app.run_on_main_thread(move || {
-        let (title, action, accept) = if save {
-            ("Export diagnostics report", gtk::FileChooserAction::Save, "Save")
-        } else {
-            ("Import URL list", gtk::FileChooserAction::Open, "Open")
+        let (title, action, accept) = match kind {
+            FilePickerKind::SaveDiagnosticsJson => ("Export diagnostics report", gtk::FileChooserAction::Save, "Save"),
+            FilePickerKind::OpenLegacyJson => ("Import legacy config.json", gtk::FileChooserAction::Open, "Open"),
+            FilePickerKind::OpenUrlList => ("Import URL list", gtk::FileChooserAction::Open, "Open"),
         };
         let dialog = gtk::FileChooserNative::new(
             Some(title),
@@ -269,20 +276,29 @@ fn linux_pick_file(app: &tauri::AppHandle, save: bool, initial_name: Option<&str
             Some(accept),
             Some("Cancel"),
         );
-        if save {
-            dialog.set_do_overwrite_confirmation(true);
-            if let Some(name) = initial_name {
-                dialog.set_current_name(&name);
+        match kind {
+            FilePickerKind::SaveDiagnosticsJson => {
+                dialog.set_do_overwrite_confirmation(true);
+                if let Some(name) = initial_name {
+                    dialog.set_current_name(&name);
+                }
+                let filter = gtk::FileFilter::new();
+                filter.set_name(Some("JSON files (*.json)"));
+                filter.add_pattern("*.json");
+                dialog.add_filter(filter);
             }
-            let filter = gtk::FileFilter::new();
-            filter.set_name(Some("JSON files (*.json)"));
-            filter.add_pattern("*.json");
-            dialog.add_filter(filter);
-        } else {
-            let filter = gtk::FileFilter::new();
-            filter.set_name(Some("Text URL lists (*.txt)"));
-            filter.add_pattern("*.txt");
-            dialog.add_filter(filter);
+            FilePickerKind::OpenLegacyJson => {
+                let filter = gtk::FileFilter::new();
+                filter.set_name(Some("Legacy VidGrab config (*.json)"));
+                filter.add_pattern("*.json");
+                dialog.add_filter(filter);
+            }
+            FilePickerKind::OpenUrlList => {
+                let filter = gtk::FileFilter::new();
+                filter.set_name(Some("Text URL lists (*.txt)"));
+                filter.add_pattern("*.txt");
+                dialog.add_filter(filter);
+            }
         }
         let result = if dialog.run() == gtk::ResponseType::Accept {
             Ok(dialog.filename())
@@ -387,25 +403,36 @@ fn windows_pick_folder() -> Result<Option<String>, String> {
 }
 
 #[cfg(windows)]
-fn windows_pick_file(save: bool, initial_name: Option<&str>) -> Result<Option<PathBuf>, String> {
+fn windows_pick_file(kind: FilePickerKind, initial_name: Option<&str>) -> Result<Option<PathBuf>, String> {
     use windows_sys::Win32::UI::Controls::Dialogs::{
         GetOpenFileNameW, GetSaveFileNameW, OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR, OFN_OVERWRITEPROMPT,
         OFN_PATHMUSTEXIST, OPENFILENAMEW,
     };
 
+    let save = matches!(kind, FilePickerKind::SaveDiagnosticsJson);
     let mut buffer = vec![0u16; 32768];
     if let Some(name) = initial_name {
         let encoded: Vec<u16> = name.encode_utf16().collect();
         let count = encoded.len().min(buffer.len() - 1);
         buffer[..count].copy_from_slice(&encoded[..count]);
     }
-    let filter: Vec<u16> = if save {
-        "JSON files (*.json)\0*.json\0All files (*.*)\0*.*\0\0".encode_utf16().collect()
-    } else {
-        "Text URL lists (*.txt)\0*.txt\0All files (*.*)\0*.*\0\0".encode_utf16().collect()
+    let filter: Vec<u16> = match kind {
+        FilePickerKind::SaveDiagnosticsJson | FilePickerKind::OpenLegacyJson => {
+            "JSON files (*.json)\0*.json\0All files (*.*)\0*.*\0\0".encode_utf16().collect()
+        }
+        FilePickerKind::OpenUrlList => {
+            "Text URL lists (*.txt)\0*.txt\0All files (*.*)\0*.*\0\0".encode_utf16().collect()
+        }
     };
-    let def_ext: Vec<u16> = if save { "json\0" } else { "txt\0" }.encode_utf16().collect();
-    let title: Vec<u16> = if save { "Export diagnostics report\0" } else { "Import URL list\0" }.encode_utf16().collect();
+    let def_ext: Vec<u16> = match kind {
+        FilePickerKind::SaveDiagnosticsJson | FilePickerKind::OpenLegacyJson => "json\0",
+        FilePickerKind::OpenUrlList => "txt\0",
+    }.encode_utf16().collect();
+    let title: Vec<u16> = match kind {
+        FilePickerKind::SaveDiagnosticsJson => "Export diagnostics report\0",
+        FilePickerKind::OpenLegacyJson => "Import legacy config.json\0",
+        FilePickerKind::OpenUrlList => "Import URL list\0",
+    }.encode_utf16().collect();
     let mut ofn: OPENFILENAMEW = unsafe { std::mem::zeroed() };
     ofn.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as u32;
     ofn.lpstrFilter = filter.as_ptr();
@@ -440,11 +467,11 @@ async fn pick_download_folder(app: tauri::AppHandle, state: State<'_, DesktopSta
 #[tauri::command]
 async fn pick_url_list_file(app: tauri::AppHandle) -> Result<Option<Value>, String> {
     #[cfg(target_os = "linux")]
-    let selected = linux_pick_file(&app, false, None)?;
+    let selected = linux_pick_file(&app, FilePickerKind::OpenUrlList, None)?;
     #[cfg(windows)]
     let selected = {
         let _ = app;
-        tauri::async_runtime::spawn_blocking(|| windows_pick_file(false, None))
+        tauri::async_runtime::spawn_blocking(|| windows_pick_file(FilePickerKind::OpenUrlList, None))
             .await.map_err(|_| "File selection failed".to_owned())??
     };
     let Some(path) = selected else { return Ok(None); };
@@ -492,6 +519,57 @@ async fn pick_url_list_file(app: tauri::AppHandle) -> Result<Option<Value>, Stri
             "truncated": truncated,
         })))
     }).await.map_err(|_| "Failed to read URL list file".to_owned())?
+}
+
+#[tauri::command]
+async fn pick_and_import_legacy_config(app: tauri::AppHandle) -> Result<Option<Value>, String> {
+    #[cfg(target_os = "linux")]
+    let selected = linux_pick_file(&app, FilePickerKind::OpenLegacyJson, None)?;
+    #[cfg(windows)]
+    let selected = {
+        let _ = app;
+        tauri::async_runtime::spawn_blocking(|| windows_pick_file(FilePickerKind::OpenLegacyJson, None))
+            .await.map_err(|_| "File selection failed".to_owned())??
+    };
+    let Some(path) = selected else { return Ok(None); };
+    tauri::async_runtime::spawn_blocking(move || {
+        let imported = vidgrab_supervisor::legacy::read_legacy_config_file(&path)?;
+        Ok(Some(json!(imported)))
+    }).await.map_err(|_| "Failed to read legacy config file".to_owned())?
+}
+
+#[tauri::command]
+async fn update_status(state: State<'_, DesktopState>) -> Result<Value, String> {
+    let config = state.config.clone();
+    tauri::async_runtime::spawn_blocking(move || command(&config, "update.status", Default::default()))
+        .await.map_err(|_| "Failed to read update status".to_owned())?
+}
+
+#[tauri::command]
+async fn check_for_updates(url: Option<String>, channel: Option<String>, state: State<'_, DesktopState>) -> Result<Value, String> {
+    let config = state.config.clone();
+    let mut params = serde_json::Map::new();
+    if let Some(u) = url { params.insert("url".into(), json!(u)); }
+    if let Some(c) = channel { params.insert("channel".into(), json!(c)); }
+    tauri::async_runtime::spawn_blocking(move || command(&config, "update.check", params))
+        .await.map_err(|_| "Failed to check for updates".to_owned())?
+}
+
+#[tauri::command]
+async fn apply_update(url: Option<String>, channel: Option<String>, state: State<'_, DesktopState>) -> Result<Value, String> {
+    let config = state.config.clone();
+    let mut params = serde_json::Map::new();
+    if let Some(u) = url { params.insert("url".into(), json!(u)); }
+    if let Some(c) = channel { params.insert("channel".into(), json!(c)); }
+    tauri::async_runtime::spawn_blocking(move || command(&config, "update.apply", params))
+        .await.map_err(|_| "Failed to apply update".to_owned())?
+}
+
+#[tauri::command]
+async fn rollback_update(state: State<'_, DesktopState>) -> Result<Value, String> {
+    let config = state.config.clone();
+    tauri::async_runtime::spawn_blocking(move || command(&config, "update.rollback", Default::default()))
+        .await.map_err(|_| "Failed to roll back update".to_owned())?
 }
 
 fn validate_job_id(job_id: &str) -> Result<(), String> {
@@ -660,10 +738,13 @@ fn collect_diagnostics_report(
         .unwrap_or_else(|err| json!({"error": err}));
     let prefs = autostart::load_preferences(prefs_path).unwrap_or_default();
     let engine_log_tail = vidgrab_supervisor::read_redacted_engine_log_tail(&config.data_dir);
+    let update_info = command(config, "update.status", Default::default())
+        .unwrap_or_else(|err| json!({"error": err}));
     let mut report = json!({
         "supervisor": supervisor_status,
         "engine": engine_diagnostics,
         "desktop_preferences": preferences_payload(&prefs, tray, registration),
+        "updates": update_info,
         "engine_log_tail": engine_log_tail,
     });
     if let Some(registration) = registration.as_ref() {
@@ -695,11 +776,11 @@ async fn diagnostics_report(state: State<'_, DesktopState>) -> Result<Value, Str
 #[tauri::command]
 async fn export_diagnostics_file(app: tauri::AppHandle, state: State<'_, DesktopState>) -> Result<Option<String>, String> {
     #[cfg(target_os = "linux")]
-    let selected = linux_pick_file(&app, true, Some("vidgrab-diagnostics.json"))?;
+    let selected = linux_pick_file(&app, FilePickerKind::SaveDiagnosticsJson, Some("vidgrab-diagnostics.json"))?;
     #[cfg(windows)]
     let selected = {
         let _ = app;
-        tauri::async_runtime::spawn_blocking(|| windows_pick_file(true, Some("vidgrab-diagnostics.json")))
+        tauri::async_runtime::spawn_blocking(|| windows_pick_file(FilePickerKind::SaveDiagnosticsJson, Some("vidgrab-diagnostics.json")))
             .await.map_err(|_| "Save dialog failed".to_owned())??
     };
     let Some(path) = selected else { return Ok(None); };
@@ -967,6 +1048,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             restart_engine,
             pick_download_folder,
             pick_url_list_file,
+            pick_and_import_legacy_config,
+            update_status,
+            check_for_updates,
+            apply_update,
+            rollback_update,
             reveal_download,
             open_download,
             diagnostics_report,

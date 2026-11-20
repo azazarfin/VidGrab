@@ -19,10 +19,13 @@ class AppImagePreparationTests(OfflineTestCase):
         staged = self.root / "bundle/engine"
         for engine in (deployed, staged):
             (engine / "_internal/tools").mkdir(parents=True)
+            (engine / "_internal/notices").mkdir(parents=True)
             (engine / "vidgrab-engine").write_bytes(b"frozen engine")
             (engine / "_internal/tools/manifest.json").write_text("{}")
             for name in ("deno", "ffmpeg", "ffprobe"):
                 (engine / "_internal/tools" / name).write_bytes(b"verified tool")
+            for notice in ("LICENSE", "THIRD_PARTY.md", "GPLv3.ffmpeg.txt", "FONTS_LICENSE.txt"):
+                (engine / "_internal/notices" / notice).write_bytes(f"notice:{notice}".encode("utf-8"))
         desktop = appdir / "usr/bin/vidgrab-desktop"
         desktop.parent.mkdir(parents=True)
         desktop.write_bytes(b"deployed desktop")
@@ -39,6 +42,8 @@ class AppImagePreparationTests(OfflineTestCase):
         engine = preparer.prepare(appdir, bundle, output)
         self.assertEqual(engine, output / "usr/lib/VidGrab/engine/vidgrab-engine")
         self.assertEqual((engine.parent / "_internal/tools/deno").read_bytes(), b"verified tool")
+        for notice in ("LICENSE", "THIRD_PARTY.md", "GPLv3.ffmpeg.txt", "FONTS_LICENSE.txt"):
+            self.assertEqual((engine.parent / "_internal/notices" / notice).read_bytes(), f"notice:{notice}".encode("utf-8"))
         self.assertFalse((engine.parent / "_internal/injected.so").exists())
         self.assertTrue((engine.parent / "_internal/alias.so").is_symlink())
         self.assertEqual((output / "usr/bin/vidgrab-desktop").read_bytes(), b"deployed desktop")

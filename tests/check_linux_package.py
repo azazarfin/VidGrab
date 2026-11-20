@@ -75,6 +75,9 @@ def check(artifact):
         discovery = json.loads(run([str(binary), "--check-package"], environment).stdout)
         engine = Path(discovery["engine"])
         assert engine.is_relative_to(prefix / "usr/lib"), "Tauri must discover package resources independently of the executable directory"
+        for notice in ("LICENSE", "THIRD_PARTY.md", "GPLv3.ffmpeg.txt", "FONTS_LICENSE.txt"):
+            assert (prefix / "usr/share/doc/vidgrab" / notice).is_file(), f"Missing .deb doc notice: {notice}"
+            assert (engine.parent / "_internal/notices" / notice).is_file(), f"Missing engine notice: {notice}"
         assert not (home / "data").exists(), "Package inspection must not create state or registration"
         components = json.loads(run([str(engine), "--self-check"], {**environment, "PATH": ""}).stdout)
 

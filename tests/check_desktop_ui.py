@@ -86,6 +86,9 @@ def main():
                         }
                         if (command === 'get_desktop_preferences' || command === 'set_desktop_preferences'
                             || command === 'diagnostics_report' || command === 'restart_engine'
+                            || command === 'update_status' || command === 'check_for_updates'
+                            || command === 'apply_update' || command === 'rollback_update'
+                            || command === 'pick_and_import_legacy_config'
                             || command.startsWith('plugin:')) {
                           return window.__vidgrabControl({type:'fixture.invoke', command, arguments});
                         }

@@ -9,8 +9,10 @@ mod linux_process;
 #[cfg(windows)]
 pub mod windows;
 pub mod installation;
+pub mod legacy;
 pub mod protocol;
 pub mod transport;
+pub mod updates;
 
 use engine::Engine;
 use serde::Deserialize;
@@ -361,9 +363,9 @@ impl Owner {
                             protocol::failure(Some(&request.id), code)
                         } else if request.op == "quit" {
                             self.stop.store(true, Ordering::Release);
-                            protocol::success(&request, self.engine.snapshot())
+                            protocol::success(&request, self.engine.snapshot(&self.config.data_dir))
                         } else if request.op == "quit_if_idle" {
-                            match self.engine.request("status", &Default::default()) {
+                            match self.engine.request("status", &Default::default(), &self.config.data_dir) {
                                 Ok(data) if data.get("downloads_active").and_then(serde_json::Value::as_bool) == Some(false) => {
                                     self.stop.store(true, Ordering::Release);
                                     protocol::success(&request, data)
@@ -373,18 +375,122 @@ impl Owner {
                             }
                         } else if request.op == "activate" {
                             notify(UiEvent::Activate);
-                            protocol::success(&request, self.engine.snapshot())
+                            protocol::success(&request, self.engine.snapshot(&self.config.data_dir))
                         } else if request.op == "restart_engine" {
                             match self.engine.restart_now(&self.config) {
-                                Ok(()) => protocol::success(&request, self.engine.snapshot()),
+                                Ok(()) => protocol::success(&request, self.engine.snapshot(&self.config.data_dir)),
                                 Err(_) => protocol::failure(Some(&request.id), "ENGINE_UNAVAILABLE"),
                             }
+                        } else if request.op == "update.status" {
+                            let state = updates::load_update_state(&self.config.data_dir);
+                            protocol::success(&request, updates::status_snapshot(&self.config.data_dir, &state))
+                        } else if request.op == "update.check" {
+                            let url = request.params.get("url").and_then(serde_json::Value::as_str);
+                            let channel = request.params.get("channel").and_then(serde_json::Value::as_str);
+                            let snap = updates::check_for_updates(&self.config.data_dir, &self.config.engine, url, channel);
+                            protocol::success(&request, snap)
+                        } else if request.op == "update.apply" {
+                            let url = request.params.get("url").and_then(serde_json::Value::as_str);
+                            let channel = request.params.get("channel").and_then(serde_json::Value::as_str);
+                            let idle_ok = if self.engine.state == "failed" {
+                                Ok(true)
+                            } else {
+                                match self.engine.request("status", &Default::default(), &self.config.data_dir) {
+                                    Ok(data) if data.get("downloads_active").and_then(serde_json::Value::as_bool) == Some(false) => Ok(true),
+                                    Ok(_) => Err("DOWNLOADS_ACTIVE"),
+                                    Err(_) => Err("ENGINE_UNAVAILABLE"),
+                                }
+                            };
+                            match idle_ok {
+                                Err("DOWNLOADS_ACTIVE") => protocol::failure_message(
+                                    Some(&request.id),
+                                    "DOWNLOADS_ACTIVE",
+                                    "Finish active downloads before applying a VidGrab update",
+                                ),
+                                Err(code) => protocol::failure(Some(&request.id), code),
+                                Ok(_) => {
+                                    let needs_stage = url.is_some()
+                                        || updates::load_update_state(&self.config.data_dir).pending_bundle.is_none();
+                                    let stage_res = if needs_stage {
+                                        updates::stage_update_from_manifest_url(
+                                            &self.config.data_dir,
+                                            &self.config.engine,
+                                            url,
+                                            channel,
+                                        ).map(|_| ())
+                                    } else {
+                                        Ok(())
+                                    };
+                                    if let Err(err) = stage_res {
+                                        protocol::failure_message(Some(&request.id), "UPDATE_INVALID", &err)
+                                    } else {
+                                        self.engine.stop_cleanly();
+                                        match updates::activate_pending_update(&self.config.data_dir) {
+                                            Err(err) => {
+                                                let _ = self.engine.restart_now(&self.config);
+                                                protocol::failure_message(Some(&request.id), "UPDATE_FAILED", &err)
+                                            }
+                                            Ok(_) => match self.engine.restart_now(&self.config) {
+                                                Ok(()) => {
+                                                    let state = updates::load_update_state(&self.config.data_dir);
+                                                    protocol::success(
+                                                        &request,
+                                                        updates::status_snapshot(&self.config.data_dir, &state),
+                                                    )
+                                                }
+                                                Err(_) => {
+                                                    let state = updates::load_update_state(&self.config.data_dir);
+                                                    let msg = state.rollback_notice.as_deref().unwrap_or(
+                                                        "Update failed verification and restored the previous working version.",
+                                                    );
+                                                    protocol::failure_message(Some(&request.id), "UPDATE_FAILED", msg)
+                                                }
+                                            },
+                                        }
+                                    }
+                                }
+                            }
+                        } else if request.op == "update.rollback" {
+                            let idle_ok = if self.engine.state == "failed" {
+                                Ok(true)
+                            } else {
+                                match self.engine.request("status", &Default::default(), &self.config.data_dir) {
+                                    Ok(data) if data.get("downloads_active").and_then(serde_json::Value::as_bool) == Some(false) => Ok(true),
+                                    Ok(_) => Err("DOWNLOADS_ACTIVE"),
+                                    Err(_) => Err("ENGINE_UNAVAILABLE"),
+                                }
+                            };
+                            match idle_ok {
+                                Err("DOWNLOADS_ACTIVE") => protocol::failure_message(
+                                    Some(&request.id),
+                                    "DOWNLOADS_ACTIVE",
+                                    "Finish active downloads before rolling back VidGrab",
+                                ),
+                                Err(code) => protocol::failure(Some(&request.id), code),
+                                Ok(_) => {
+                                    self.engine.stop_cleanly();
+                                    match updates::manual_rollback(&self.config.data_dir) {
+                                        Err(err) => {
+                                            let _ = self.engine.restart_now(&self.config);
+                                            protocol::failure_message(Some(&request.id), "UPDATE_FAILED", &err)
+                                        }
+                                        Ok(_) => {
+                                            let _ = self.engine.restart_now(&self.config);
+                                            let state = updates::load_update_state(&self.config.data_dir);
+                                            protocol::success(
+                                                &request,
+                                                updates::status_snapshot(&self.config.data_dir, &state),
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         } else if request.op == "status" && self.engine.state != "ready" {
-                            protocol::success(&request, self.engine.snapshot())
+                            protocol::success(&request, self.engine.snapshot(&self.config.data_dir))
                         } else if request.op == "v1.request" && self.engine.state == "ready" && !self.engine.supports_protocol(1) {
                             protocol::failure(Some(&request.id), "APP_INCOMPATIBLE")
                         } else {
-                            match self.engine.request(&request.op, &request.params) {
+                            match self.engine.request(&request.op, &request.params, &self.config.data_dir) {
                                 Ok(data) => protocol::success(&request, data),
                                 Err(_) => protocol::failure(Some(&request.id), "ENGINE_UNAVAILABLE"),
                             }

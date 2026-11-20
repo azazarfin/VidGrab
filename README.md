@@ -74,29 +74,35 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 
 ---
 
-### 2. Load the Extension in Your Browser
+#### 2. Package the Extension Archives (Non-Destructive)
 
-Load `extension/` directly as the unpacked Chrome source. To produce browser archives:
+To produce clean Chrome and Firefox archives in a fresh output directory without touching tracked `dist/` files:
 ```bash
-bash build.sh
+python3 packaging/package_extension.py --output packaging/out/extension
 ```
-This replaces all of `dist/` with browser ZIPs; it leaves no unpacked browser folders. Do not run it when preserving locally modified archives.
+`bash build.sh` delegates to `packaging/package_extension.py --output` using a timestamped `packaging/out/extension-...` directory by default (or pass a fresh non-`dist/` directory as the first argument).
 
 #### Google Chrome / Chromium-based:
 1. Open Chrome and go to `chrome://extensions/`.
 2. Toggle **Developer mode** in the top right.
-3. Click **Load unpacked** and select `extension/`.
+3. Click **Load unpacked** and select `extension/` (or install the built `vidgrab-chrome-extension.zip`).
 
 #### Mozilla Firefox:
 1. Open Firefox and enter `about:debugging` in the address bar.
 2. Click **This Firefox** in the sidebar.
-3. Click **Load Temporary Add-on...** and select `dist/vidgrab-firefox-extension.zip`.
+3. Click **Load Temporary Add-on...** and select the built `vidgrab-firefox-extension.zip` / `.xpi`.
+
+---
+
+## 🔄 Migrating from Legacy Backend
+
+If you previously ran `installer/install.sh`, `installer/install.ps1`, or `uvicorn backend.main:app`, follow [docs/MIGRATION.md](docs/MIGRATION.md) to stop legacy background services, import compatible settings from `config.json` in **Settings**, and optionally import legacy SQLite history without touching your saved media.
 
 ---
 
 ## 🛠️ Diagnostics & Commands
 
-If running the backend manually, execute uvicorn directly from the virtual environment:
+If running the legacy backend manually during development, execute uvicorn directly from the virtual environment:
 ```bash
 cd VideoDownloadedExtension
 ./venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
@@ -110,10 +116,10 @@ journalctl --user -u vidgrab-backend.service -f
 # Manage background service state
 systemctl --user stop vidgrab-backend.service
 systemctl --user start vidgrab-backend.service
-systemctl --user restart vidgrab-backend.service
+systemctl --user disable --now vidgrab-backend.service
 ```
 
 ---
 
 ## 📝 License
-VidGrab is open-source and released under the MIT License.
+VidGrab's own code is open-source under the [MIT License](LICENSE). Third-party bundled component notices (FFmpeg GPLv3, Deno, yt-dlp, yt-dlp-ejs, bundled fonts) are documented in [packaging/THIRD_PARTY.md](packaging/THIRD_PARTY.md) and bundled into all desktop releases.

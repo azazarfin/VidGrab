@@ -184,3 +184,39 @@ class MigrationTests(OfflineTestCase):
         self.assertFalse(runtime.db_path.exists())
         self.assertTrue(list(runtime.backups_dir.glob("legacy-*.sqlite3")))
         self.assertEqual(hashlib.sha256(source.read_bytes()).digest(), before)
+
+    def test_pre_migration_backups_verify_integrity_and_enforce_retention(self):
+        import os
+        from backend.db.migrations import MAX_PRE_MIGRATION_BACKUPS
+
+        runtime = self.runtime("retention")
+        runtime.prepare()
+        # Seed 4 older schema backups with distinct mtimes.
+        for idx in range(4):
+            old = runtime.backups_dir / f"schema-v1-000000000{idx}-{idx:032x}.sqlite3"
+            legacy_database(old, version=1)
+            os.utime(old, (1000 + idx, 1000 + idx))
+
+        legacy_database(runtime.db_path, version=1, config={"max_concurrent": 4})
+        self.initialize(runtime)
+
+        retained = sorted(p.name for p in runtime.backups_dir.glob("schema-v*.sqlite3"))
+        self.assertEqual(len(retained), MAX_PRE_MIGRATION_BACKUPS)
+        self.assertFalse(any("-0000000000-" in name or "-0000000001-" in name for name in retained))
+        self.assertTrue(any("-0000000002-" in name for name in retained))
+        self.assertTrue(any("-0000000003-" in name for name in retained))
+        for path in runtime.backups_dir.glob("schema-v*.sqlite3"):
+            with closing(sqlite3.connect(path)) as db:
+                self.assertEqual(db.execute("PRAGMA quick_check").fetchall(), [("ok",)])
+
+    def test_symlinked_backup_directory_or_database_is_refused(self):
+        import os
+        if os.name == "nt":
+            self.skipTest("POSIX symlink test")
+        runtime = self.runtime("symlink-backup")
+        runtime.prepare()
+        target = self.root / "outside.sqlite3"
+        legacy_database(target, version=1)
+        runtime.db_path.symlink_to(target)
+        with self.assertRaisesRegex(Exception, "symlink"):
+            self.initialize(runtime)

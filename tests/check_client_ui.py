@@ -343,6 +343,42 @@ def desktop_journey(browser, fixture, root, url):
         page.get_by_role("button", name="Reload defaults", exact=True).click()
         expect(page.get_by_label("Default format", exact=True)).to_have_value("best[height<=240]")
 
+        # Software updates & rollback + legacy config import UI
+        expect(page.get_by_role("heading", name="Software updates & rollback")).to_be_visible()
+        page.get_by_role("button", name="Check for updates", exact=True).click()
+        expect(page.get_by_text("Update server unreachable; local downloads and settings continue normally.", exact=True)).to_be_visible(timeout=7000)
+        fixture.next_update_check = {
+            "checked_at": 1700000100,
+            "status": "update_available",
+            "available_version": "0.2.0",
+            "channel": "stable",
+            "notes": "Test update 0.2.0",
+            "message": None,
+        }
+        page.get_by_role("button", name="Check for updates", exact=True).click()
+        install_button = page.get_by_role("button", name="Install update v0.2.0", exact=True)
+        expect(install_button).to_be_visible(timeout=7000)
+        expect(install_button).to_be_disabled()
+        expect(page.get_by_text("Finish or pause active downloads before switching or rolling back the engine bundle.", exact=True)).to_be_visible()
+        for active_job in fixture.jobs():
+            if active_job["status"] in ("queued", "downloading", "paused", "waiting_for_auth"):
+                fixture.set_status(active_job["id"], "complete")
+        page.reload(wait_until="networkidle")
+        page.locator('[data-desktop-tab="settings"]').click()
+        install_button = page.get_by_role("button", name="Install update v0.2.0", exact=True)
+        expect(install_button).to_be_enabled(timeout=7000)
+        install_button.click()
+        expect(page.get_by_role("status").filter(has_text="Updated engine to v0.2.0")).to_be_visible(timeout=7000)
+        expect(page.get_by_role("button", name="Roll back to v0.1.0", exact=True)).to_be_visible(timeout=7000)
+        page.get_by_role("button", name="Roll back to v0.1.0", exact=True).click()
+        expect(page.get_by_text("Rolled back manually from v0.2.0 to v0.1.0.", exact=True)).to_be_visible(timeout=7000)
+        page.get_by_role("button", name="Import legacy config.json…", exact=True).click()
+        expect(page.get_by_text("Imported 2 settings from", exact=False)).to_be_visible(timeout=7000)
+        expect(page.get_by_text("Skipped 'custom_ytdlp_args'", exact=False)).to_be_visible()
+        expect(page.get_by_text("Skipped 'auto_update_ytdlp'", exact=False)).to_be_visible()
+        assert fixture.settings()["values"]["max_concurrent"] == 5
+        assert fixture.settings()["values"]["default_format"] == "best[height<=720]"
+
         # Browser & Diagnostics tabs
         page.locator('[data-desktop-tab="browser"]').click()
         expect(page.get_by_role("heading", name="Browser connections")).to_be_visible(timeout=7000)
@@ -350,12 +386,13 @@ def desktop_journey(browser, fixture, root, url):
         expect(page.get_by_role("heading", name="Diagnostics & components")).to_be_visible(timeout=7000)
         expect(page.get_by_text("2026.6.9", exact=True)).to_be_visible(timeout=7000)
         expect(page.get_by_text("INFO engine ready", exact=True)).to_be_visible(timeout=7000)
-        expect(page.locator(".browser-registration div", has_text="Engine generation").locator("dd")).to_have_text("1")
+        expect(page.get_by_text("v0.1.0 (engine v0.1.0, stable)", exact=True)).to_be_visible(timeout=7000)
+        expect(page.locator(".browser-registration div", has_text="Engine generation").locator("dd")).to_have_text("3")
         page.get_by_role("button", name="Copy redacted diagnostics", exact=True).click()
         expect(page.get_by_role("status").filter(has_text="Redacted diagnostics copied")).to_be_visible(timeout=7000)
         page.get_by_role("button", name="Restart engine", exact=True).click()
-        assert fixture.restarts == 1
-        expect(page.locator(".browser-registration div", has_text="Engine generation").locator("dd")).to_have_text("2", timeout=7000)
+        assert fixture.restarts == 3
+        expect(page.locator(".browser-registration div", has_text="Engine generation").locator("dd")).to_have_text("4", timeout=7000)
 
         # Queue lost-reply, responsive 390px, auth/format recovery, and pagination
         page.locator('[data-desktop-tab="queue"]').click()

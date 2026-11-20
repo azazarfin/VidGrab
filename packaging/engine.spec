@@ -1,15 +1,26 @@
-from pathlib import Path
 import os
+import shutil
 import sys
+from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 root = Path(SPECPATH).parent
 tools = Path(os.environ["VIDGRAB_COMPONENT_DIR"]).resolve()
-datas = [(str(tools / "manifest.json"), "tools"), (str(tools / "GPLv3.ffmpeg.txt"), "notices")]
+notices_stage = Path(workpath) / "notices_stage"
+notices_stage.mkdir(parents=True, exist_ok=True)
+fonts_notice = notices_stage / "FONTS_LICENSE.txt"
+shutil.copy2(root / "extension" / "fonts" / "LICENSE.txt", fonts_notice)
+
+datas = [
+    (str(tools / "manifest.json"), "tools"),
+    (str(tools / "GPLv3.ffmpeg.txt"), "notices"),
+    (str(root / "LICENSE"), "notices"),
+    (str(root / "packaging" / "THIRD_PARTY.md"), "notices"),
+    (str(fonts_notice), "notices"),
+]
 for package in ("yt-dlp", "yt-dlp-ejs"):
     datas += copy_metadata(package)
 datas += collect_data_files("yt_dlp_ejs")
-datas += [(str(root / "packaging" / "THIRD_PARTY.md"), "notices")]
 suffix = ".exe" if sys.platform == "win32" else ""
 binaries = [(str(tools / (name + suffix)), "tools") for name in ("ffmpeg", "ffprobe", "deno")]
 

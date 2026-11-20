@@ -36,8 +36,12 @@ def prepare(appdir, bundle, output):
     staged = bundle / "engine"
     required = [staged / "vidgrab-engine", staged / "_internal/tools/manifest.json"]
     required.extend(staged / "_internal/tools" / name for name in ("deno", "ffmpeg", "ffprobe"))
+    required.extend(
+        staged / "_internal/notices" / name
+        for name in ("LICENSE", "THIRD_PARTY.md", "GPLv3.ffmpeg.txt", "FONTS_LICENSE.txt")
+    )
     if staged.is_symlink() or not all(path.is_file() for path in required):
-        raise ValueError("Use a complete staged engine with its verified bundled tools")
+        raise ValueError("Use a complete staged engine with its verified bundled tools and license notices")
     shutil.copytree(appdir, output, symlinks=True)
     destination = output / relative
     shutil.rmtree(destination)

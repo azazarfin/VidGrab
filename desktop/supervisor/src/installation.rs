@@ -25,6 +25,18 @@ pub const HOST_NAME: &str = "com.vidgrab.companion";
 pub const CHROME_ORIGIN: &str = "chrome-extension://ikjpekhbbaehdhigakbahlhafaojbjpm/";
 pub const FIREFOX_ID: &str = "vidgrab@azaz.local";
 
+pub fn chrome_origin() -> &'static str {
+    option_env!("VIDGRAB_CHROME_ORIGIN")
+        .filter(|value| !value.is_empty())
+        .unwrap_or(CHROME_ORIGIN)
+}
+
+pub fn firefox_id() -> &'static str {
+    option_env!("VIDGRAB_FIREFOX_ID")
+        .filter(|value| !value.is_empty())
+        .unwrap_or(FIREFOX_ID)
+}
+
 #[derive(Clone, Debug)]
 pub struct UserDirs {
     pub home: PathBuf,
@@ -98,7 +110,7 @@ impl InstalledConfig {
         Ok(config)
     }
     fn validate(&self) -> io::Result<()> {
-        if self.package_version != 1 || self.chrome_origin != CHROME_ORIGIN || self.firefox_id != FIREFOX_ID
+        if self.package_version != 1 || self.chrome_origin != chrome_origin() || self.firefox_id != firefox_id()
             || [&self.app, &self.data_dir, &self.download_dir].iter().any(|path| !path.is_absolute())
             || self.download_dir.starts_with(&self.data_dir) {
             return Err(invalid_data("Unsupported or invalid packaged companion configuration"));
@@ -159,7 +171,7 @@ fn bridge_config(layout: &Layout, dirs: &UserDirs) -> io::Result<InstalledConfig
     let config_path = dirs.config_path();
     let mut config = if config_path.exists() { InstalledConfig::load(&config_path)? } else {
         InstalledConfig { package_version: 1, app: layout.app.clone(), data_dir: dirs.data_home.join("vidgrab-p02/state"),
-            download_dir: dirs.home.join("Downloads/VidGrab-P02"), chrome_origin: CHROME_ORIGIN.into(), firefox_id: FIREFOX_ID.into() }
+            download_dir: dirs.home.join("Downloads/VidGrab-P02"), chrome_origin: chrome_origin().into(), firefox_id: firefox_id().into() }
     };
     config.app = layout.app.clone();
     config.validate()?;
@@ -383,7 +395,7 @@ fn manifests(dirs: &UserDirs) -> [(PathBuf, bool); 2] {
 }
 fn manifest(native: &Path, firefox: bool) -> Value {
     let mut value = json!({"name": HOST_NAME, "description": "VidGrab P02 desktop companion", "path": native, "type": "stdio"});
-    if firefox { value["allowed_extensions"] = json!([FIREFOX_ID]); } else { value["allowed_origins"] = json!([CHROME_ORIGIN]); }
+    if firefox { value["allowed_extensions"] = json!([firefox_id()]); } else { value["allowed_origins"] = json!([chrome_origin()]); }
     value
 }
 fn owned_manifest(path: &Path, native: &Path, firefox: bool) -> io::Result<bool> {

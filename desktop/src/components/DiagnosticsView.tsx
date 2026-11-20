@@ -89,6 +89,20 @@ export function DiagnosticsView({
               <dt>Engine generation</dt>
               <dd>{report.supervisor.engine_generation ?? 1}</dd>
             </div>
+            {report.updates && !report.updates.error && (
+              <>
+                <div>
+                  <dt>App / engine version</dt>
+                  <dd>
+                    v{report.updates.app_version} (engine v{report.updates.engine_bundle_version}, {report.updates.channel})
+                  </dd>
+                </div>
+                <div>
+                  <dt>Backups stored</dt>
+                  <dd>{report.updates.backups_count ?? 0}</dd>
+                </div>
+              </>
+            )}
             <div>
               <dt>Tray host</dt>
               <dd>{report.desktop_preferences.tray_available ? 'Available' : 'Unavailable (visible-window fallback)'}</dd>
@@ -116,6 +130,10 @@ export function DiagnosticsView({
               </>
             )}
           </dl>
+        )}
+
+        {report?.updates?.rollback_notice && (
+          <p className="warning-banner" role="status">{report.updates.rollback_notice}</p>
         )}
 
         {engineError && <p className="error" role="alert">Engine diagnostics unavailable: {engineError}</p>}

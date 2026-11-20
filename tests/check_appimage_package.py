@@ -57,6 +57,9 @@ def check(artifact, max_glibc):
                 **{f"AppDir/{path}": value for path, value in abi["requirements"].items()}}}
         engines = list(extracted.rglob("vidgrab-engine"))
         assert len(engines) == 1, "The complete frozen engine must be shipped once"
+        for notice in ("LICENSE", "THIRD_PARTY.md", "GPLv3.ffmpeg.txt", "FONTS_LICENSE.txt"):
+            assert (engines[0].parent / "_internal/notices" / notice).is_file(), f"Missing AppImage engine notice: {notice}"
+            assert (engines[0].parent.parent / "notices" / notice).is_file(), f"Missing AppImage resource notice: {notice}"
         components = json.loads(run([engines[0], "--self-check"], env={**environment, "PATH": ""}))
         discovery = json.loads(run([image, "--check-package"]))
         assert discovery["app"] == str(image) and not (home / "data").exists()

@@ -5,6 +5,7 @@ import type {
   ComponentCheck,
   Counts,
   DiagnosticsSnapshot,
+  SettingsPatch,
 } from '../../packages/protocol/generated/client';
 
 export const companionControl = createClient(request => invoke('protocol_request', { request }));
@@ -24,6 +25,53 @@ export interface BrowserConnection {
   firefox: 'missing' | 'registered' | 'conflict';
 }
 
+export interface UpdateLastCheck {
+  checked_at: number;
+  status: 'up_to_date' | 'update_available' | 'offline' | 'error';
+  available_version?: string | null;
+  channel: string;
+  notes?: string | null;
+  message?: string | null;
+}
+
+export interface UpdateBackupSummary {
+  id: string;
+  reason: string;
+  version: string;
+  created_at: number;
+  files_count: number;
+}
+
+export interface UpdateStatus {
+  app_version: string;
+  engine_bundle_version: string;
+  protocol_version: number;
+  platform: string;
+  channel: string;
+  rollback_available: boolean;
+  previous_version?: string;
+  pending_update?: {
+    version: string;
+    channel: string;
+    sha256: string;
+    notices_sha256: string;
+    notes?: string | null;
+  } | null;
+  rollback_notice?: string | null;
+  last_check?: UpdateLastCheck | null;
+  backups_count?: number;
+  backups?: UpdateBackupSummary[];
+  error?: string;
+}
+
+export interface LegacyConfigImport {
+  source_path: string;
+  patch: SettingsPatch;
+  imported_keys: string[];
+  skipped_keys: string[];
+  warnings: string[];
+}
+
 export interface Snapshot {
   state: 'starting' | 'ready' | 'recovering' | 'failed';
   tray_available: boolean;
@@ -31,6 +79,9 @@ export interface Snapshot {
   supervisor_pid?: number;
   engine_pid?: number | null;
   engine_generation?: number;
+  app_version?: string;
+  engine_bundle_version?: string;
+  rollback_notice?: string | null;
   browser_connection?: BrowserConnection;
   browser_connection_error?: string;
   application?: ApplicationStatus;
@@ -66,6 +117,7 @@ export interface FullDiagnosticsReport {
   supervisor: Snapshot & { error?: string };
   engine: (DiagnosticsSnapshot & { error?: string }) | { error: string };
   desktop_preferences: DesktopPreferences;
+  updates?: UpdateStatus;
   browser_connection?: BrowserConnection;
   browser_connection_error?: string;
   application?: ApplicationStatus;
@@ -97,6 +149,26 @@ export function pickDownloadFolder(): Promise<string | null> {
 
 export function pickUrlListFile(): Promise<UrlListImport | null> {
   return invoke<UrlListImport | null>('pick_url_list_file');
+}
+
+export function pickAndImportLegacyConfig(): Promise<LegacyConfigImport | null> {
+  return invoke<LegacyConfigImport | null>('pick_and_import_legacy_config');
+}
+
+export function getUpdateStatus(): Promise<UpdateStatus> {
+  return invoke<UpdateStatus>('update_status');
+}
+
+export function checkForUpdates(url?: string, channel?: string): Promise<UpdateStatus> {
+  return invoke<UpdateStatus>('check_for_updates', { url, channel });
+}
+
+export function applyUpdate(url?: string, channel?: string): Promise<UpdateStatus> {
+  return invoke<UpdateStatus>('apply_update', { url, channel });
+}
+
+export function rollbackUpdate(): Promise<UpdateStatus> {
+  return invoke<UpdateStatus>('rollback_update');
 }
 
 export function revealDownload(jobId: string): Promise<void> {

@@ -1,19 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import {
+  applyUpdate,
+  checkForUpdates,
   companionSession,
   exportDiagnosticsFile,
   getCompanionStatus,
   getDesktopPreferences,
   getDiagnosticsReport,
+  getUpdateStatus,
   installAppImageNative,
   openDownload,
   openSoftwareManagerNative,
+  pickAndImportLegacyConfig,
   pickDownloadFolder,
   quitCompanionNative,
   removeApplicationNative,
   restartEngine,
   revealDownload,
+  rollbackUpdate,
   setBrowserConnectionNative,
   setDesktopPreferences,
 } from './protocol';
@@ -21,7 +26,9 @@ import type {
   DesktopPreferences,
   DesktopPreferencesPatch,
   FullDiagnosticsReport,
+  LegacyConfigImport,
   Snapshot,
+  UpdateStatus,
 } from './protocol';
 import type {
   ActionParams,
@@ -56,6 +63,8 @@ export function App() {
   const [activeNextAfter, setActiveNextAfter] = useState<string | null>(null);
   const [desktopPrefs, setDesktopPrefs] = useState<DesktopPreferences | null>(null);
   const [diagnostics, setDiagnostics] = useState<FullDiagnosticsReport | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [legacyImport, setLegacyImport] = useState<LegacyConfigImport | null>(null);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [connectionError, setConnectionError] = useState('');
@@ -94,6 +103,15 @@ export function App() {
     }
   }
 
+  async function refreshUpdateStatus() {
+    try {
+      const next = await getUpdateStatus();
+      setUpdateStatus(next);
+    } catch {
+      // Ignore in mocked/standalone environments or temporary startup gaps.
+    }
+  }
+
   useEffect(() => {
     let disposed = false;
     let timeout: ReturnType<typeof setTimeout>;
@@ -123,6 +141,9 @@ export function App() {
     }).catch(() => {});
     void getDiagnosticsReport().then(report => {
       if (!disposed) setDiagnostics(report);
+    }).catch(() => {});
+    void getUpdateStatus().then(status => {
+      if (!disposed) setUpdateStatus(status);
     }).catch(() => {});
     return () => {
       disposed = true;
@@ -177,6 +198,8 @@ export function App() {
   useEffect(() => {
     if (activeTab === 'diagnostics') {
       void refreshDiagnostics();
+    } else if (activeTab === 'settings') {
+      void refreshUpdateStatus();
     }
   }, [activeTab]);
 
@@ -337,7 +360,93 @@ export function App() {
       const next = await restartEngine();
       setSnapshot(current => ({ ...current, ...next }));
       await refreshDiagnostics();
+      await refreshUpdateStatus();
       setAnnouncement('Engine restart requested.');
+    } catch (reason) {
+      setActionError(explain(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleCheckUpdates() {
+    setBusy(true);
+    setActionError('');
+    setAnnouncement('');
+    try {
+      const next = await checkForUpdates();
+      setUpdateStatus(next);
+      if (next.last_check?.status === 'update_available') {
+        setAnnouncement(`Update v${next.last_check.available_version ?? ''} is available.`);
+      } else if (next.last_check?.status === 'up_to_date') {
+        setAnnouncement('VidGrab is up to date.');
+      } else if (next.last_check?.status === 'offline') {
+        setAnnouncement('Update server unreachable; local downloads continue normally.');
+      }
+    } catch (reason) {
+      setActionError(explain(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleApplyUpdate() {
+    setBusy(true);
+    setActionError('');
+    setAnnouncement('');
+    try {
+      const next = await applyUpdate();
+      setUpdateStatus(next);
+      await refreshControl(true).catch(() => {});
+      await refreshDiagnostics().catch(() => {});
+      setAnnouncement(`Updated engine to v${next.engine_bundle_version}.`);
+    } catch (reason) {
+      setActionError(explain(reason));
+      await refreshUpdateStatus();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRollbackUpdate() {
+    setBusy(true);
+    setActionError('');
+    setAnnouncement('');
+    try {
+      const next = await rollbackUpdate();
+      setUpdateStatus(next);
+      await refreshControl(true).catch(() => {});
+      await refreshDiagnostics().catch(() => {});
+      setAnnouncement(`Rolled back engine to v${next.engine_bundle_version}.`);
+    } catch (reason) {
+      setActionError(explain(reason));
+      await refreshUpdateStatus();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleImportLegacyConfig() {
+    if (!control.snapshot) return;
+    setBusy(true);
+    setActionError('');
+    setAnnouncement('');
+    try {
+      const imported = await pickAndImportLegacyConfig();
+      if (!imported) return;
+      setLegacyImport(imported);
+      if (imported.imported_keys.length > 0) {
+        await companionSession.mutate('settings.patch', {
+          expected_revision: control.snapshot.settings.revision,
+          patch: imported.patch,
+        });
+        await refreshControl(true);
+        setAnnouncement(
+          `Imported ${imported.imported_keys.length} setting${imported.imported_keys.length === 1 ? '' : 's'} from legacy config.`,
+        );
+      } else {
+        setAnnouncement('No compatible settings were imported; see warnings below.');
+      }
     } catch (reason) {
       setActionError(explain(reason));
     } finally {
@@ -618,12 +727,19 @@ export function App() {
             <SettingsView
               settings={control.snapshot?.settings || null}
               desktopPrefs={desktopPrefs}
+              updateStatus={updateStatus}
+              legacyImport={legacyImport}
+              activeDownloads={activeDownloads}
               busy={busy}
               connected={connected}
               onSaveDefaults={saveDefaults}
               onReloadDefaults={async () => (await refreshControl(true)).snapshot!.settings}
               onPickFolder={pickDownloadFolder}
               onUpdateDesktopPrefs={handleUpdateDesktopPrefs}
+              onCheckUpdates={handleCheckUpdates}
+              onApplyUpdate={handleApplyUpdate}
+              onRollbackUpdate={handleRollbackUpdate}
+              onImportLegacyConfig={handleImportLegacyConfig}
             />
           )}
 

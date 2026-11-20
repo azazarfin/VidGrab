@@ -31,6 +31,8 @@ pub fn same_user(stream: &UnixStream) -> io::Result<bool> {
 pub const DEFAULT_IPC_READ_TIMEOUT: Duration = Duration::from_secs(4);
 pub const RESTART_IPC_READ_TIMEOUT: Duration = Duration::from_secs(20);
 pub const PROBE_IPC_READ_TIMEOUT: Duration = Duration::from_secs(30);
+pub const UPDATE_IPC_READ_TIMEOUT: Duration = Duration::from_secs(45);
+pub const UPDATE_APPLY_IPC_READ_TIMEOUT: Duration = Duration::from_secs(300);
 pub const DEFAULT_ENGINE_READ_TIMEOUT: Duration = Duration::from_secs(2);
 pub const PROBE_ENGINE_READ_TIMEOUT: Duration = Duration::from_secs(25);
 
@@ -41,6 +43,10 @@ pub fn call(config: &Config, request: &protocol::Request) -> io::Result<Value> {
 pub fn ipc_read_timeout(request: &protocol::Request) -> Duration {
     if request.is_probe_request() {
         PROBE_IPC_READ_TIMEOUT
+    } else if request.op == "update.apply" {
+        UPDATE_APPLY_IPC_READ_TIMEOUT
+    } else if matches!(request.op.as_str(), "update.check" | "update.rollback") {
+        UPDATE_IPC_READ_TIMEOUT
     } else if request.op == "restart_engine" {
         RESTART_IPC_READ_TIMEOUT
     } else {
@@ -241,5 +247,18 @@ mod tests {
         assert!(!restart_request.is_probe_request());
         assert_eq!(ipc_read_timeout(&restart_request), RESTART_IPC_READ_TIMEOUT);
         assert!(RESTART_IPC_READ_TIMEOUT > Duration::from_secs(12));
+    }
+
+    #[test]
+    fn applying_updates_allows_download_time_without_slowing_check_or_rollback() {
+        for (op, seconds) in [("update.apply", 300), ("update.check", 45), ("update.rollback", 45)] {
+            let request = protocol::Request {
+                spike_version: 1,
+                id: "update-timeout".into(),
+                op: op.into(),
+                params: Default::default(),
+            };
+            assert_eq!(ipc_read_timeout(&request), Duration::from_secs(seconds), "{op}");
+        }
     }
 }

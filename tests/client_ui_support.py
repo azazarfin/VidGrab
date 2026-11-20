@@ -104,6 +104,31 @@ class ClientFixture:
         self.url_list_pick = None
         self.exported_diagnostics_path = None
         self.engine_log_tail = ["INFO engine ready"]
+        self.update_status = {
+            "app_version": "0.1.0",
+            "engine_bundle_version": "0.1.0",
+            "protocol_version": 1,
+            "platform": "linux-x86_64",
+            "channel": "stable",
+            "rollback_available": False,
+            "previous_version": "",
+            "pending_update": None,
+            "rollback_notice": None,
+            "last_check": None,
+            "backups_count": 0,
+            "backups": [],
+        }
+        self.next_update_check = None
+        self.legacy_config_import = {
+            "source_path": "/tmp/legacy/config.json",
+            "patch": {"max_concurrent": 5, "default_format": "best[height<=720]"},
+            "imported_keys": ["max_concurrent", "default_format"],
+            "skipped_keys": ["custom_ytdlp_args", "auto_update_ytdlp"],
+            "warnings": [
+                "Skipped 'custom_ytdlp_args': raw command-line arguments are disabled in the packaged VidGrab engine for safety.",
+                "Skipped 'auto_update_ytdlp': signed app/engine bundle updates replace runtime pip self-updates.",
+            ],
+        }
 
         def probe(url, runtime, *, auth_context=None):
             self.probe_urls.append(url)
@@ -292,10 +317,63 @@ class ClientFixture:
                                    "browser_connection": self.connection, "application": self.application},
                     "engine": diag,
                     "desktop_preferences": dict(self.desktop_preferences),
+                    "updates": dict(self.update_status),
                     "browser_connection": dict(self.connection),
                     "application": dict(self.application),
                     "engine_log_tail": list(self.engine_log_tail),
                 }
+            if command == "update_status":
+                return dict(self.update_status)
+            if command == "check_for_updates":
+                if self.next_update_check is not None:
+                    self.update_status["last_check"] = dict(self.next_update_check)
+                else:
+                    self.update_status["last_check"] = {
+                        "checked_at": int(self.now),
+                        "status": "offline",
+                        "available_version": None,
+                        "channel": self.update_status["channel"],
+                        "notes": None,
+                        "message": "Update server unreachable",
+                    }
+                return dict(self.update_status)
+            if command == "apply_update":
+                if self.request("downloads.list")["counts"]["unfinished"]:
+                    raise RuntimeError("Finish active downloads before applying a VidGrab update")
+                target = (
+                    (self.update_status.get("pending_update") or {}).get("version")
+                    or (self.update_status.get("last_check") or {}).get("available_version")
+                    or "0.2.0"
+                )
+                prev = self.update_status["engine_bundle_version"]
+                self.update_status["previous_version"] = prev
+                self.update_status["engine_bundle_version"] = target
+                self.update_status["rollback_available"] = True
+                self.update_status["pending_update"] = None
+                self.update_status["last_check"] = {
+                    "checked_at": int(self.now),
+                    "status": "up_to_date",
+                    "available_version": target,
+                    "channel": self.update_status["channel"],
+                    "notes": None,
+                    "message": None,
+                }
+                self.update_status["backups_count"] = self.update_status.get("backups_count", 0) + 1
+                self.restarts += 1
+                return dict(self.update_status)
+            if command == "rollback_update":
+                if self.request("downloads.list")["counts"]["unfinished"]:
+                    raise RuntimeError("Finish active downloads before rolling back VidGrab")
+                current = self.update_status["engine_bundle_version"]
+                prev = self.update_status.get("previous_version") or self.update_status["app_version"]
+                self.update_status["engine_bundle_version"] = prev
+                self.update_status["rollback_available"] = False
+                self.update_status["previous_version"] = ""
+                self.update_status["rollback_notice"] = f"Rolled back manually from v{current} to v{prev}."
+                self.restarts += 1
+                return dict(self.update_status)
+            if command == "pick_and_import_legacy_config":
+                return dict(self.legacy_config_import) if self.legacy_config_import else None
             if command == "export_diagnostics_file":
                 return self.exported_diagnostics_path
             if command.startswith("plugin:"):

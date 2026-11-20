@@ -68,12 +68,41 @@ RELATED_COLUMNS = {
 }
 
 
+MAX_PRE_MIGRATION_BACKUPS = 3
+
+
+def _reject_symlink_or_reparse(path: Path):
+    if path.is_symlink():
+        raise RuntimeCompatibilityError(f"Refused symlinked backup path: {path}")
+    if os.name == "nt" and path.exists():
+        import stat
+        attrs = os.lstat(path)
+        if getattr(attrs, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400):
+            raise RuntimeCompatibilityError(f"Refused reparse-point backup path: {path}")
+
+
 def _snapshot(source: Path, destination: Path):
     """SQLite's backup API includes committed WAL data, unlike a plain file copy."""
+    _reject_symlink_or_reparse(source)
+    _reject_symlink_or_reparse(destination.parent)
+    _reject_symlink_or_reparse(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     with closing(sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)) as original:
         with closing(sqlite3.connect(destination)) as backup:
             original.backup(backup)
+            if backup.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+                raise RuntimeCompatibilityError("Database backup integrity check failed")
+
+
+def _prune_schema_backups(backups_dir: Path, keep: int = MAX_PRE_MIGRATION_BACKUPS):
+    if not backups_dir.is_dir() or backups_dir.is_symlink():
+        return
+    backups = sorted(
+        (p for p in backups_dir.glob("schema-v*.sqlite3") if p.is_file() and not p.is_symlink()),
+        key=lambda p: (p.stat().st_mtime_ns, p.name),
+    )
+    for old in backups[: max(0, len(backups) - keep)]:
+        old.unlink(missing_ok=True)
 
 
 async def schema_version(path: Path) -> int:
@@ -377,8 +406,11 @@ async def migrate_database(runtime: RuntimeConfig, defaults: dict, validate_sett
     _check_version(version)
     runtime.prepare()
     if existed and version < SCHEMA_VERSION:
-        backup = runtime.backups_dir / f"schema-v{version}-{uuid4().hex}.sqlite3"
+        import time as _time
+        stamp = f"{int(_time.time()):010d}"
+        backup = runtime.backups_dir / f"schema-v{version}-{stamp}-{uuid4().hex}.sqlite3"
         await asyncio.to_thread(_snapshot, runtime.db_path, backup)
+        await asyncio.to_thread(_prune_schema_backups, runtime.backups_dir)
     async with aiosqlite.connect(runtime.db_path) as db:
         await db.execute("PRAGMA foreign_keys=ON")
         await db.execute("BEGIN IMMEDIATE")

@@ -1,0 +1,205 @@
+name: VidGrab CI
+
+on:
+  push:
+    branches:
+      - main
+      - planning/desktop-companion
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  protocol-and-unit-tests:
+    name: Protocol, Python, JS & Rust Unit Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install locked Python dependencies
+        run: uv sync --locked
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check protocol codegen is up to date
+        run: .venv/bin/python -m packages.protocol.generate --check
+
+      - name: Run Python unit test suites
+        run: .venv/bin/python -m unittest discover -s tests -p "test_*.py" -v
+
+      - name: Run extension JS unit suites
+        run: node --test tests/check_*.mjs
+
+      - name: Build desktop frontend
+        run: |
+          npm --prefix desktop ci --ignore-scripts
+          npm --prefix desktop run build
+
+      - name: Run Rust supervisor & native-host tests
+        run: cargo test --locked -p vidgrab-supervisor -p vidgrab-native-host
+
+      - name: Run offline helper & signed-update E2E suites
+        run: |
+          cargo build --locked --release -p vidgrab-supervisor
+          .venv/bin/python -m unittest tests.check_package_installation_protocol -v
+          .venv/bin/python tests/check_updates_e2e.py
+
+      - name: Verify non-destructive extension packaging
+        run: |
+          .venv/bin/python packaging/package_extension.py --output packaging/out/ci-extension
+          cat packaging/out/ci-extension/SHA256SUMS.txt
+
+  linux-package-check:
+    name: Linux .deb & AppImage Verification (Ubuntu 24.04)
+    runs-on: ubuntu-24.04
+    needs: protocol-and-unit-tests
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev libssl-dev patchelf \
+            file squashfs-tools desktop-file-utils binutils dpkg-dev libfuse2t64
+
+      - name: Set up Python & uv
+        uses: astral-sh/setup-uv@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked
+
+      - name: Set up Node.js & Rust
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build desktop frontend
+        run: |
+          npm --prefix desktop ci --ignore-scripts
+          npm --prefix desktop run build
+
+      - name: Stage verified Linux components & frozen engine
+        run: |
+          mkdir -p packaging/out/cache packaging/out/tools
+          .venv/bin/python packaging/fetch_components.py \
+            --lock packaging/components.lock.json \
+            --cache packaging/out/cache \
+            --output packaging/out/tools
+          .venv/bin/python packaging/stage_spike.py \
+            --components packaging/out/tools \
+            --output packaging/out/linux-stage \
+            --data-dir /tmp/vidgrab-ci-data \
+            --download-dir /tmp/vidgrab-ci-downloads
+          .venv/bin/python packaging/prepare_desktop.py \
+            --bundle packaging/out/linux-stage \
+            --target x86_64-unknown-linux-gnu
+
+      - name: Build .deb & AppImage bundles
+        run: |
+          cargo build --locked --release -p vidgrab-desktop
+          APPIMAGE_EXTRACT_AND_RUN=1 npx --prefix desktop tauri build --no-sign --config "$PWD/packaging/ubuntu24.bundle.json" --bundles deb,appimage
+          APPDIR=$(find target/release/bundle/appimage -maxdepth 1 -name "*.AppDir" | head -n 1)
+          RAW_APPIMAGE=$(find target/release/bundle/appimage -maxdepth 1 -name "*.AppImage" | head -n 1)
+          .venv/bin/python packaging/prepare_appimage.py \
+            --appdir "$APPDIR" \
+            --bundle packaging/out/linux-stage \
+            --output packaging/out/final.AppDir \
+            --max-glibc 2.39
+          PLUGIN_APPIMAGE=$(find "${XDG_CACHE_HOME:-$HOME/.cache}/tauri" -maxdepth 2 -name "*linuxdeploy-plugin-appimage*.AppImage" | head -n 1)
+          TOOL_DIR=$(mktemp -d)
+          (cd "$TOOL_DIR" && APPIMAGE_EXTRACT_AND_RUN=1 "$PLUGIN_APPIMAGE" --appimage-extract >/dev/null)
+          OFFSET=$(APPIMAGE_EXTRACT_AND_RUN=1 "$RAW_APPIMAGE" --appimage-offset)
+          head -c "$OFFSET" "$RAW_APPIMAGE" > "$TOOL_DIR/runtime"
+          ARCH=x86_64 \
+            PATH="$TOOL_DIR/squashfs-root/usr/bin:$PATH" \
+            LD_LIBRARY_PATH="$TOOL_DIR/squashfs-root/usr/lib:${LD_LIBRARY_PATH:-}" \
+            APPIMAGE_EXTRACT_AND_RUN=1 \
+            "$TOOL_DIR/squashfs-root/usr/bin/appimagetool" --no-appstream --runtime-file "$TOOL_DIR/runtime" packaging/out/final.AppDir packaging/out/VidGrab-final.AppImage
+          chmod +x packaging/out/VidGrab-final.AppImage
+          rm -rf "$TOOL_DIR"
+
+      - name: Run ABI and package extraction checks
+        run: |
+          DEB_PATH=$(find target/release/bundle/deb -name "*.deb" | head -n 1)
+          .venv/bin/python packaging/check_abi.py --tree packaging/out/linux-stage --max-glibc 2.39
+          .venv/bin/python tests/check_linux_package.py --deb "$DEB_PATH"
+          .venv/bin/python tests/check_appimage_package.py --appimage packaging/out/VidGrab-final.AppImage --max-glibc 2.39
+
+  windows-package-check:
+    name: Windows x64 NSIS & Native Host Verification
+    runs-on: windows-2022
+    needs: protocol-and-unit-tests
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python & uv
+        uses: astral-sh/setup-uv@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked
+
+      - name: Set up Node.js & Rust
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Rust supervisor & native-host tests on Windows
+        run: cargo test --locked -p vidgrab-supervisor -p vidgrab-native-host
+
+      - name: Build desktop frontend
+        run: |
+          npm --prefix desktop ci --ignore-scripts
+          npm --prefix desktop run build
+
+      - name: Stage verified Windows components, frozen engine & NSIS installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path packaging/out/cache, packaging/out/tools | Out-Null
+          .venv/Scripts/python.exe packaging/fetch_components.py `
+            --lock packaging/windows.components.lock.json `
+            --cache packaging/out/cache `
+            --output packaging/out/tools
+          .venv/Scripts/python.exe packaging/stage_spike.py `
+            --components packaging/out/tools `
+            --output packaging/out/win-stage `
+            --data-dir C:\Temp\vidgrab-ci-data `
+            --download-dir C:\Temp\vidgrab-ci-downloads
+          .venv/Scripts/python.exe packaging/prepare_desktop.py `
+            --bundle packaging/out/win-stage `
+            --target x86_64-pc-windows-msvc
+          $winBundleConfig = (Resolve-Path "packaging/windows.bundle.json").Path
+          npx --prefix desktop tauri build --no-sign --config "$winBundleConfig" --bundles nsis

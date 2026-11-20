@@ -65,7 +65,7 @@ def unregister(app, home):
     return value
 
 
-def missing_app(manifest, home):
+def missing_app(manifest, home, expected_code='APP_MISSING'):
     payload = json.dumps({'spike_version': 1, 'id': 'package-removal', 'op': 'status', 'params': {}}).encode()
     result = subprocess.run([manifest['path'], manifest['allowed_origins'][0]],
         input=struct.pack('=I', len(payload)) + payload, env=environment(home),
@@ -75,7 +75,7 @@ def missing_app(manifest, home):
     assert 0 < size <= 65536 and len(result.stdout) == size + 4
     response = json.loads(result.stdout[4:])
     assert response['id'] == 'package-removal' and not response['ok'], response
-    assert response['error']['code'] == 'APP_MISSING', response
+    assert response['error']['code'] == expected_code, response
     return response
 
 
@@ -111,13 +111,15 @@ def check_deb(deb, home):
     components = json.loads(run([layout['engine'], '--self-check'], {**environment(home), 'PATH': ''}))
     _, manifest = register(app, home)
     disconnected = unregister(app, home)
+    disconnected_native = missing_app(manifest, home, expected_code='BROWSER_DISCONNECTED')
+    _, manifest = register(app, home)
     assert snapshot(config) == files
     package = run(['dpkg-deb', '-f', deb, 'Package']).strip()
     try:
         removal = run(['sudo', 'apt-get', 'remove', '-y', package])
         assert not app.exists() and not Path(layout['engine']).exists()
         assert snapshot(config) == files and Path(manifest['path']).is_file()
-        absent = missing_app(manifest, home)
+        absent = missing_app(manifest, home, expected_code='APP_MISSING')
         assert snapshot(config) == files
     finally:
         if not app.exists():
@@ -133,8 +135,9 @@ def check_deb(deb, home):
     assert repaired['app'] == str(app) and snapshot(config) == files
     unregister(app, home)
     return {'result': 'passed', 'package': package, 'components_empty_path': components,
-        'disconnected': disconnected, 'native_after_removal': absent, 'preserved_files': files,
-        'checks': ['apt removal', 'stable copied bridge', 'APP_MISSING',
+        'disconnected': disconnected, 'native_when_disconnected': disconnected_native,
+        'native_after_removal': absent, 'preserved_files': files,
+        'checks': ['apt removal', 'stable copied bridge', 'BROWSER_DISCONNECTED', 'APP_MISSING',
             'apt reinstall and registration repair', 'state/media preservation']}
 
 
@@ -156,9 +159,11 @@ def check_image(app, home):
         moved, _ = register(destination, home)
         assert moved['app'] == str(destination) and snapshot(config) == files
         unregister(destination, home)
+        disconnected_native = missing_app(manifest, home, expected_code='BROWSER_DISCONNECTED')
+        register(destination, home)
         # Remove the registered launch path while retaining the original bytes for cleanup.
         destination.rename(removed)
-        absent = missing_app(manifest, home)
+        absent = missing_app(manifest, home, expected_code='APP_MISSING')
         assert snapshot(config) == files and Path(manifest['path']).is_file()
     finally:
         original = removed if removed.exists() else destination
@@ -171,9 +176,11 @@ def check_image(app, home):
     with app.open('rb') as stream:
         assert hashlib.file_digest(stream, 'sha256').hexdigest() == checksum
     return {'result': 'passed', 'image_sha256': checksum, 'components_empty_path': components,
-        'native_after_removal': absent, 'preserved_files': files,
+        'native_when_disconnected': disconnected_native, 'native_after_removal': absent,
+        'preserved_files': files,
         'checks': ['normal FUSE helper', 'actual Unicode relocation', 'registration repair',
-            'image removal and restoration', 'APP_MISSING', 'state/media preservation']}
+            'image removal and restoration', 'BROWSER_DISCONNECTED', 'APP_MISSING',
+            'state/media preservation']}
 
 
 def main():

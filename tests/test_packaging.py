@@ -22,15 +22,21 @@ class ComponentPackagingTests(OfflineTestCase):
         preparer = self.preparer()
         bundle = self.root / "bundle"
         tools = bundle / "engine" / "_internal" / "tools"
+        notices = bundle / "engine" / "_internal" / "notices"
         tools.mkdir(parents=True)
+        notices.mkdir(parents=True)
         (tools / "manifest.json").write_text("{}")
         (tools / "ffmpeg").write_bytes(b"bundled-ffmpeg")
+        for notice in ("LICENSE", "THIRD_PARTY.md", "GPLv3.ffmpeg.txt", "FONTS_LICENSE.txt"):
+            (notices / notice).write_text(f"notice:{notice}\n", encoding="utf-8")
         (bundle / "engine" / "vidgrab-engine").write_bytes(b"frozen-engine")
         (bundle / "vidgrab-native-host").write_bytes(b"native-host")
         (bundle / "vidgrab-native-host").chmod(0o755)
         tauri = self.root / "tauri"
         preparer.prepare(bundle, tauri)
         self.assertEqual((tauri / "resources" / "engine" / "_internal" / "tools" / "ffmpeg").read_bytes(), b"bundled-ffmpeg")
+        for notice in ("LICENSE", "THIRD_PARTY.md", "GPLv3.ffmpeg.txt", "FONTS_LICENSE.txt"):
+            self.assertEqual((tauri / "resources" / "notices" / notice).read_text(encoding="utf-8"), f"notice:{notice}\n")
         native = tauri / "binaries" / "vidgrab-native-host-x86_64-unknown-linux-gnu"
         self.assertEqual(native.read_bytes(), b"native-host")
         if os.name != "nt":
@@ -50,6 +56,7 @@ class ComponentPackagingTests(OfflineTestCase):
         tools.mkdir(parents=True)
         (tools / "manifest.json").write_text("{}")
         (tools / "ffmpeg.exe").write_bytes(b"windows-ffmpeg")
+        (tools / "GPLv3.ffmpeg.txt").write_text("GPL-3.0\n")
         (bundle / "engine" / "vidgrab-engine.exe").write_bytes(b"windows-engine")
         (bundle / "vidgrab-native-host.exe").write_bytes(b"windows-bridge")
         tauri = self.root / "tauri"
@@ -59,6 +66,32 @@ class ComponentPackagingTests(OfflineTestCase):
             self.fail(f"Windows target preparation is missing: {error}")
         self.assertEqual((tauri / "binaries" / "vidgrab-native-host-x86_64-pc-windows-msvc.exe").read_bytes(), b"windows-bridge")
         self.assertEqual((tauri / "resources" / "engine" / "_internal" / "tools" / "ffmpeg.exe").read_bytes(), b"windows-ffmpeg")
+
+    def test_desktop_preparation_requires_every_notice_before_writes(self):
+        preparer = self.preparer()
+        # Isolate repository fallback candidates so all four missing cases execute.
+        preparer.ROOT = self.root / "empty-repository"
+        bundle = self.root / "notice-bundle"
+        tools = bundle / "engine" / "_internal" / "tools"
+        notices = bundle / "engine" / "_internal" / "notices"
+        tools.mkdir(parents=True)
+        notices.mkdir()
+        (tools / "manifest.json").write_text("{}")
+        (bundle / "engine" / "vidgrab-engine").write_bytes(b"frozen-engine")
+        (bundle / "vidgrab-native-host").write_bytes(b"native-host")
+        names = ("LICENSE", "THIRD_PARTY.md", "GPLv3.ffmpeg.txt", "FONTS_LICENSE.txt")
+        for missing in names:
+            with self.subTest(missing=missing):
+                for name in names:
+                    path = notices / name
+                    if name == missing:
+                        path.unlink(missing_ok=True)
+                    else:
+                        path.write_text(f"notice:{name}\n")
+                tauri = self.root / f"tauri-{missing}"
+                with self.assertRaisesRegex(ValueError, missing):
+                    preparer.prepare(bundle, tauri)
+                self.assertFalse(tauri.exists())
 
     def test_desktop_preparation_refuses_overlapping_source_and_destination(self):
         preparer = self.preparer()

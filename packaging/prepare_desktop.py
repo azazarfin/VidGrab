@@ -24,6 +24,25 @@ def prepare(bundle, tauri_dir, *, target=TARGET):
     required = (engine / ("vidgrab-engine" + suffix), engine / "_internal" / "tools" / "manifest.json", native)
     if not all(path.is_file() for path in required):
         raise ValueError("Use a complete staged native bundle with its frozen engine and native host")
+    notice_sources = {
+        "LICENSE": [engine / "_internal" / "notices" / "LICENSE", ROOT / "LICENSE"],
+        "THIRD_PARTY.md": [engine / "_internal" / "notices" / "THIRD_PARTY.md", ROOT / "packaging" / "THIRD_PARTY.md"],
+        "FONTS_LICENSE.txt": [
+            engine / "_internal" / "notices" / "FONTS_LICENSE.txt",
+            ROOT / "extension" / "fonts" / "LICENSE.txt",
+        ],
+        "GPLv3.ffmpeg.txt": [
+            engine / "_internal" / "notices" / "GPLv3.ffmpeg.txt",
+            engine / "_internal" / "tools" / "GPLv3.ffmpeg.txt",
+        ],
+    }
+    resolved_notices = {}
+    for name, candidates in notice_sources.items():
+        chosen = next((p for p in candidates if p.is_file() and not p.is_symlink()), None)
+        if chosen is None:
+            raise ValueError(f"Missing required license notice file: {name}")
+        resolved_notices[name] = chosen
+
     resources = tauri_dir / "resources"
     destination = resources / "engine"
     if destination.is_symlink():
@@ -35,6 +54,19 @@ def prepare(bundle, tauri_dir, *, target=TARGET):
         if destination.exists():
             shutil.rmtree(destination)
         staged.rename(destination)
+
+    notices_dest = resources / "notices"
+    if notices_dest.is_symlink():
+        raise ValueError("The Tauri notices resource directory must not be a symlink")
+    with tempfile.TemporaryDirectory(prefix=".notices-", dir=resources) as scratch:
+        staged_notices = Path(scratch) / "notices"
+        staged_notices.mkdir(parents=True, exist_ok=True)
+        for name, chosen in resolved_notices.items():
+            shutil.copy2(chosen, staged_notices / name)
+        if notices_dest.exists():
+            shutil.rmtree(notices_dest)
+        staged_notices.rename(notices_dest)
+
     binaries = tauri_dir / "binaries"
     binaries.mkdir(parents=True, exist_ok=True)
     shutil.copy2(native, binaries / f"vidgrab-native-host-{target}{suffix}")

@@ -1,4 +1,4 @@
-use crate::{transport, Config};
+use crate::{transport, updates, Config};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::fs::OpenOptions;
@@ -30,62 +30,125 @@ pub(crate) struct Engine {
     next_restart: Option<Instant>,
     components: Value,
     protocol_range: Option<(u16, u16)>,
+    active_version: String,
+    active_unverified: bool,
+    auto_rolled_back: bool,
 }
 
 impl Engine {
     pub fn new() -> Self {
-        Self { process: None, token: String::new(), port: 0, generation: 0,
-            state: "starting", next_restart: Some(Instant::now()), components: Value::Null, protocol_range: None }
+        Self {
+            process: None,
+            token: String::new(),
+            port: 0,
+            generation: 0,
+            state: "starting",
+            next_restart: Some(Instant::now()),
+            components: Value::Null,
+            protocol_range: None,
+            active_version: updates::APP_VERSION.to_owned(),
+            active_unverified: false,
+            auto_rolled_back: false,
+        }
+    }
+
+    pub fn stop_cleanly(&mut self) {
+        self.process.take();
+        self.port = 0;
+        self.next_restart = None;
+        self.protocol_range = None;
+        self.auto_rolled_back = false;
+        self.state = "starting";
     }
 
     fn launch(&mut self, config: &Config) -> io::Result<()> {
+        let target = updates::resolve_engine_target(&config.data_dir, &config.engine);
+        self.active_version = target.version.clone();
+        self.active_unverified = target.unverified;
+        self.auto_rolled_back = false;
         self.generation += 1;
         self.state = "starting";
-        let mut random = [0_u8; 32];
-        getrandom::fill(&mut random).map_err(io::Error::other)?;
-        self.token = random.iter().map(|byte| format!("{byte:02x}")).collect();
-        let logs = config.data_dir.join("logs");
-        std::fs::create_dir_all(&logs)?;
-        let log = OpenOptions::new().create(true).append(true).open(logs.join("engine.log"))?;
-        let mut owned = OwnedProcess::spawn(&config.engine, &[], log)?;
-        let bootstrap = json!({"token": self.token, "data_dir": config.data_dir, "download_dir": config.download_dir});
-        let mut input = owned.take_input();
-        writeln!(input, "{bootstrap}")?;
-        drop(input);
-        let output = owned.take_output();
-        let (sender, receiver) = mpsc::sync_channel(1);
-        let reader = std::thread::spawn(move || {
-            let mut line = Vec::new();
-            let result = BufReader::new(output).take(4097).read_until(b'\n', &mut line).map(|_| line);
-            let _ = sender.send(result);
-        });
-        let line = receiver.recv_timeout(Duration::from_secs(12))
-            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Engine readiness deadline exceeded"))??;
-        let _ = reader.join();
-        let ready: Ready = serde_json::from_slice(&line).map_err(io::Error::other)?;
-        if line.len() > 4096 || ready.spike_version != 1 || ready.pid != owned.id() || ready.port == 0 {
-            return Err(io::Error::other("Invalid engine readiness message"));
-        }
-        transport::engine_request(ready.port, &self.token, "GET", "/health", None)?;
-        // Preserve legacy readiness framing. An old engine remains usable for
-        // lifecycle fixtures, but cannot receive versioned control mutations.
-        self.protocol_range = transport::engine_request(ready.port, &self.token, "POST", "/v1/requests",
-            Some(json!({"protocol_version":1,"request_id":"engine-negotiation","operation":"capabilities.get","params":{}})))
-            .ok().filter(|reply| reply["ok"] == true).and_then(|reply| {
-                let minimum = u16::try_from(reply["data"]["protocol_min"].as_u64()?).ok()?;
-                let maximum = u16::try_from(reply["data"]["protocol_max"].as_u64()?).ok()?;
-                (minimum > 0 && minimum <= maximum).then_some((minimum, maximum))
+
+        let attempt = (|| -> io::Result<()> {
+            let mut random = [0_u8; 32];
+            getrandom::fill(&mut random).map_err(io::Error::other)?;
+            self.token = random.iter().map(|byte| format!("{byte:02x}")).collect();
+            let logs = config.data_dir.join("logs");
+            std::fs::create_dir_all(&logs)?;
+            let log = OpenOptions::new().create(true).append(true).open(logs.join("engine.log"))?;
+            let mut owned = OwnedProcess::spawn(&target.path, &[], log)?;
+            let bootstrap = json!({"token": self.token, "data_dir": config.data_dir, "download_dir": config.download_dir});
+            let mut input = owned.take_input();
+            writeln!(input, "{bootstrap}")?;
+            drop(input);
+            let output = owned.take_output();
+            let (sender, receiver) = mpsc::sync_channel(1);
+            let reader = std::thread::spawn(move || {
+                let mut line = Vec::new();
+                let result = BufReader::new(output).take(4097).read_until(b'\n', &mut line).map(|_| line);
+                let _ = sender.send(result);
             });
-        self.port = ready.port;
-        self.components = ready.components;
-        self.process = Some(owned);
-        self.next_restart = None;
-        self.state = "ready";
+            let line = receiver.recv_timeout(Duration::from_secs(12))
+                .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Engine readiness deadline exceeded"))??;
+            let _ = reader.join();
+            let ready: Ready = serde_json::from_slice(&line).map_err(io::Error::other)?;
+            if line.len() > 4096 || ready.spike_version != 1 || ready.pid != owned.id() || ready.port == 0 {
+                return Err(io::Error::other("Invalid engine readiness message"));
+            }
+            transport::engine_request(ready.port, &self.token, "GET", "/health", None)?;
+            // Preserve legacy readiness framing. An old engine remains usable for
+            // lifecycle fixtures, but cannot receive versioned control mutations.
+            self.protocol_range = transport::engine_request(ready.port, &self.token, "POST", "/v1/requests",
+                Some(json!({"protocol_version":1,"request_id":"engine-negotiation","operation":"capabilities.get","params":{}})))
+                .ok().filter(|reply| reply["ok"] == true).and_then(|reply| {
+                    let minimum = u16::try_from(reply["data"]["protocol_min"].as_u64()?).ok()?;
+                    let maximum = u16::try_from(reply["data"]["protocol_max"].as_u64()?).ok()?;
+                    (minimum > 0 && minimum <= maximum).then_some((minimum, maximum))
+                });
+            if target.unverified && !self.supports_protocol(updates::SUPPORTED_PROTOCOL_VERSION) {
+                return Err(io::Error::other("Updated engine failed protocol v1 capabilities check"));
+            }
+            self.port = ready.port;
+            self.components = ready.components;
+            self.process = Some(owned);
+            self.next_restart = None;
+            self.state = "ready";
+            if target.unverified {
+                updates::mark_active_verified(&config.data_dir);
+                self.active_unverified = false;
+            }
+            Ok(())
+        })();
+
+        if let Err(err) = attempt {
+            self.process.take();
+            if target.unverified {
+                let _ = updates::rollback_failed_activation(&config.data_dir, &err.to_string());
+                self.active_unverified = false;
+                self.auto_rolled_back = true;
+            }
+            return Err(err);
+        }
         Ok(())
     }
 
-    fn schedule_restart(&mut self) {
+    fn schedule_restart(&mut self, config: &Config) {
         self.process.take();
+        if self.auto_rolled_back {
+            self.auto_rolled_back = false;
+            self.generation = 0;
+            self.state = "recovering";
+            self.next_restart = Some(Instant::now());
+            return;
+        }
+        if self.active_unverified || updates::load_update_state(&config.data_dir).unverified_activation {
+            let _ = updates::rollback_failed_activation(&config.data_dir, "Updated engine exited before stabilizing");
+            self.active_unverified = false;
+            self.generation = 0;
+            self.state = "recovering";
+            self.next_restart = Some(Instant::now());
+            return;
+        }
         if self.generation >= 4 {
             self.state = "failed";
             self.next_restart = None;
@@ -96,13 +159,16 @@ impl Engine {
     }
 
     pub fn restart_now(&mut self, config: &Config) -> io::Result<()> {
-        self.process.take();
+        self.stop_cleanly();
         self.generation = 0;
-        self.state = "starting";
-        self.next_restart = None;
-        self.protocol_range = None;
         if let Err(error) = self.launch(config) {
-            self.schedule_restart();
+            self.schedule_restart(config);
+            // If launch auto-rolled back to a previous known-good bundle, restart immediately on it.
+            if self.next_restart.is_some_and(|deadline| Instant::now() >= deadline) && self.generation == 0 {
+                if self.launch(config).is_err() {
+                    self.schedule_restart(config);
+                }
+            }
             return Err(error);
         }
         Ok(())
@@ -110,32 +176,41 @@ impl Engine {
 
     pub fn tick(&mut self, config: &Config) {
         if self.process.as_mut().is_some_and(|process| !matches!(process.has_exited(), Ok(false))) {
-            self.schedule_restart();
+            self.schedule_restart(config);
         }
         if self.next_restart.is_some_and(|deadline| Instant::now() >= deadline) {
             if let Err(error) = self.launch(config) {
                 eprintln!("Engine start failed: {error}");
-                self.schedule_restart();
+                self.schedule_restart(config);
             }
         }
     }
 
-    pub fn snapshot(&self) -> Value {
-        json!({"state": self.state, "supervisor_pid": std::process::id(),
+    pub fn snapshot(&self, data_dir: &std::path::Path) -> Value {
+        let upd = updates::load_update_state(data_dir);
+        json!({
+            "state": self.state,
+            "supervisor_pid": std::process::id(),
             "engine_pid": self.process.as_ref().map(|process| process.id()),
-            "engine_generation": self.generation, "components": self.components,
-            "protocol_min": self.protocol_range.map(|range| range.0), "protocol_max": self.protocol_range.map(|range| range.1)})
+            "engine_generation": self.generation,
+            "components": self.components,
+            "protocol_min": self.protocol_range.map(|range| range.0),
+            "protocol_max": self.protocol_range.map(|range| range.1),
+            "app_version": updates::APP_VERSION,
+            "engine_bundle_version": self.active_version,
+            "rollback_notice": upd.rollback_notice,
+        })
     }
 
     pub fn supports_protocol(&self, version: u16) -> bool {
         self.protocol_range.is_some_and(|(minimum, maximum)| (minimum..=maximum).contains(&version))
     }
 
-    pub fn request(&self, operation: &str, params: &serde_json::Map<String, Value>) -> io::Result<Value> {
+    pub fn request(&self, operation: &str, params: &serde_json::Map<String, Value>, data_dir: &std::path::Path) -> io::Result<Value> {
         if self.state != "ready" { return Err(io::Error::other("Engine is not ready")); }
         match operation {
             "status" => {
-                let mut snapshot = self.snapshot();
+                let mut snapshot = self.snapshot(data_dir);
                 let response = transport::engine_request(self.port, &self.token, "GET", "/spike/status", None)?;
                 snapshot["jobs"] = response["jobs"].clone();
                 snapshot["downloads_active"] = response["downloads_active"].clone();

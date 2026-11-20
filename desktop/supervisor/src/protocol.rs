@@ -24,7 +24,25 @@ impl Request {
         }
         match self.op.as_str() {
             "status" | "activate" if self.params.is_empty() => Ok(()),
-            "quit" | "quit_if_idle" | "restart_engine" if !browser && self.params.is_empty() => Ok(()),
+            "quit" | "quit_if_idle" | "restart_engine" | "update.status" | "update.rollback" if !browser && self.params.is_empty() => Ok(()),
+            "update.check" | "update.apply" if !browser => {
+                if self.params.keys().any(|k| k != "url" && k != "channel") {
+                    return Err("BAD_REQUEST");
+                }
+                if let Some(u) = self.params.get("url") {
+                    let Some(s) = u.as_str() else { return Err("BAD_REQUEST"); };
+                    if crate::updates::validate_update_url(s).is_err() {
+                        return Err("BAD_REQUEST");
+                    }
+                }
+                if let Some(c) = self.params.get("channel") {
+                    let Some(s) = c.as_str() else { return Err("BAD_REQUEST"); };
+                    if s.is_empty() || s.len() > 32 || !s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+                        return Err("BAD_REQUEST");
+                    }
+                }
+                Ok(())
+            }
             "fixture.download" => {
                 let url = self.params.get("url").and_then(Value::as_str).ok_or("BAD_REQUEST")?;
                 let local = url.strip_prefix("http://127.0.0.1:").ok_or("BAD_REQUEST")?;
@@ -41,7 +59,7 @@ impl Request {
                 if value["request_id"] != self.id { return Err("BAD_REQUEST"); }
                 Ok(())
             }
-            "status" | "activate" | "quit" | "quit_if_idle" | "restart_engine" => Err("BAD_REQUEST"),
+            "status" | "activate" | "quit" | "quit_if_idle" | "restart_engine" | "update.status" | "update.check" | "update.apply" | "update.rollback" => Err("BAD_REQUEST"),
             _ => Err("UNSUPPORTED_OPERATION"),
         }
     }
@@ -96,8 +114,14 @@ pub fn failure(id: Option<&str>, code: &str) -> Value {
         "BROWSER_CONNECTION_UNAVAILABLE" => "The browser connection settings could not be read; open VidGrab to check them",
         "REQUEST_OUTCOME_UNKNOWN" => "The request may have been accepted; check the queue before trying again",
         "BAD_FRAME" => "The native message is incomplete, oversized or invalid JSON",
+        "UPDATE_INVALID" => "The update manifest or bundle failed security or compatibility verification",
+        "UPDATE_FAILED" => "The update failed to activate and VidGrab restored the previous working version",
         _ => "The companion request was rejected",
     };
+    json!({"spike_version": 1, "id": id, "ok": false, "error": {"code": code, "message": message}})
+}
+
+pub fn failure_message(id: Option<&str>, code: &str, message: &str) -> Value {
     json!({"spike_version": 1, "id": id, "ok": false, "error": {"code": code, "message": message}})
 }
 

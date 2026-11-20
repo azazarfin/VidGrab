@@ -22,6 +22,8 @@ def main():
     parser.add_argument("--data-dir", type=Path, required=True)
     parser.add_argument("--download-dir", type=Path, required=True)
     parser.add_argument("--desktop", type=Path, help="Optional already-built Tauri executable")
+    parser.add_argument("--chrome-origin", default=os.environ.get("VIDGRAB_CHROME_ORIGIN"))
+    parser.add_argument("--firefox-id", default=os.environ.get("VIDGRAB_FIREFOX_ID"))
     arguments = parser.parse_args()
     if sys.platform not in ("linux", "win32"):
         parser.error("The spike supports native Linux and Windows builds")
@@ -57,10 +59,14 @@ def main():
     chrome = json.loads((ROOT / "extension" / "manifest.json").read_text())
     public = base64.b64decode(chrome["key"])
     identifier = "".join(chr(ord("a") + int(letter, 16)) for letter in hashlib.sha256(public).hexdigest()[:32])
+    chrome_origin = (arguments.chrome_origin or f"chrome-extension://{identifier}/").strip()
+    firefox = json.loads((ROOT / "extension" / "manifest.firefox.json").read_text())
+    default_firefox_id = firefox.get("browser_specific_settings", {}).get("gecko", {}).get("id", "vidgrab@azaz.local")
+    firefox_id = (arguments.firefox_id or default_firefox_id).strip()
     config = {
         "app": str(app), "engine": str(output / "engine" / ("vidgrab-engine" + suffix)),
         "data_dir": str(arguments.data_dir.resolve()), "download_dir": str(arguments.download_dir.resolve()),
-        "chrome_origin": f"chrome-extension://{identifier}/", "firefox_id": "vidgrab@azaz.local",
+        "chrome_origin": chrome_origin, "firefox_id": firefox_id,
     }
     (output / "host-config.json").write_text(json.dumps(config, indent=2) + "\n")
     # Manifests are reviewable artifacts; installing them is a separate command.

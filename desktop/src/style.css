@@ -97,6 +97,8 @@ input::placeholder { color: var(--muted); }
 .download-form .helper { grid-column: 1 / -1; }
 .error { color: var(--error); overflow-wrap: anywhere; margin: 4px 0; font-size: 14px; }
 .banner-alert { margin: 0; padding: 10px 14px; background: var(--surface); border: 1px solid var(--error); border-radius: 8px; }
+.warning-banner { margin: 8px 0; padding: 10px 14px; background: var(--surface-2); border: 1px solid var(--warning); border-radius: 8px; color: var(--warning); font-size: 14px; overflow-wrap: anywhere; }
+.legacy-import-summary { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
 .announcement { min-height: 20px; margin: 0; color: var(--success); font-size: 14px; }
 .pending-review { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px; background: var(--surface); border: 1px solid var(--warning); border-radius: 8px; color: var(--warning); font-size: 14px; }
 .engine-failed-card { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; border-color: var(--error); }
