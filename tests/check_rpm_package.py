@@ -1,9 +1,9 @@
 """Opt-in headless .rpm extraction and metadata checks; never install or start a runtime.
 
-Extracts a built VidGrab .rpm into a temporary root via rpm2cpio/cpio and verifies
-RPM Requires capabilities, AppStream metainfo, desktop launcher, license notices,
-Tauri resource discovery, empty-PATH frozen self-check, native-host registration
-and origin/frame guards, and maximum shipped ELF GLIBC requirements.
+Extracts a built VidGrab .rpm into a temporary root via rpm2archive/tar and verifies
+RPM header/payload digests, Requires capabilities, AppStream metainfo, desktop launcher,
+license notices, Tauri resource discovery, empty-PATH frozen self-check, native-host
+registration and origin/frame guards, and maximum shipped ELF GLIBC requirements.
 """
 
 import argparse
@@ -34,10 +34,48 @@ REQUIRED_CAPABILITIES = (
 def run(command, environment, *, success=True, input=None, cwd=None):
     result = subprocess.run(command, env=environment, input=input, cwd=cwd, capture_output=True, timeout=60)
     if success and result.returncode:
-        raise AssertionError(f"{command[0]} failed: {result.stderr.decode(errors='replace')[-3000:]}")
+        raise AssertionError(
+            f"{command[0]} failed (exit {result.returncode}): {result.stderr.decode(errors='replace')[-3000:]}"
+        )
     if not success:
         assert result.returncode, f"Expected refusal from {command}"
     return result
+
+
+def extract_rpm(artifact, destination, environment):
+    """Extract an RPM via rpm2archive -> tar.
+
+    rpm2archive verifies per-file checksums, supports RPM v3/v4/v6 payloads, and avoids
+    RPM 4.18's obsolete rpm2cpio ARCHIVESIZE exit-status mismatch on rpm-rs v4 archives.
+    """
+    with artifact.open("rb") as rpm_stream:
+        archiver = subprocess.Popen(
+            ["rpm2archive", "-n", "-"],
+            stdin=rpm_stream,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=environment,
+        )
+        extractor = subprocess.Popen(
+            ["tar", "-x", "-C", str(destination)],
+            stdin=archiver.stdout,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=environment,
+        )
+        assert archiver.stdout is not None
+        archiver.stdout.close()
+        _, tar_err = extractor.communicate(timeout=120)
+        archiver_err = archiver.stderr.read() if archiver.stderr is not None else b""
+        archiver_rc = archiver.wait(timeout=30)
+        if archiver_rc != 0:
+            raise AssertionError(
+                f"rpm2archive failed (exit {archiver_rc}): {archiver_err.decode(errors='replace')[-3000:]}"
+            )
+        if extractor.returncode != 0:
+            raise AssertionError(
+                f"tar failed (exit {extractor.returncode}): {tar_err.decode(errors='replace')[-3000:]}"
+            )
 
 
 def native_response(binary, caller, message, environment):
@@ -79,12 +117,21 @@ def check(artifact, *, max_glibc=None):
         ):
             environment.pop(key, None)
 
+        checksig = run(["rpm", "-K", "--nosignature", str(artifact)], environment).stdout.decode().strip()
+        assert "digests OK" in checksig or "OK" in checksig, f"Unexpected rpm -K output: {checksig!r}"
+
         meta_lines = run(
-            ["rpm", "-qp", "--qf", "%{NAME}\n%{VERSION}\n%{LICENSE}\n%{ARCH}\n", str(artifact)],
+            [
+                "rpm",
+                "-qp",
+                "--qf",
+                "%{NAME}\n%{VERSION}\n%{LICENSE}\n%{ARCH}\n%{PAYLOADCOMPRESSOR}\n",
+                str(artifact),
+            ],
             environment,
         ).stdout.decode().splitlines()
-        assert len(meta_lines) == 4, f"Unexpected RPM metadata output: {meta_lines}"
-        pkg_name, pkg_version, pkg_license, pkg_arch = meta_lines
+        assert len(meta_lines) == 5, f"Unexpected RPM metadata output: {meta_lines}"
+        pkg_name, pkg_version, pkg_license, pkg_arch, payload_compressor = meta_lines
         assert pkg_license == "MIT", f"Expected MIT RPM license, got {pkg_license!r}"
         assert pkg_arch == "x86_64", f"Expected x86_64 RPM arch, got {pkg_arch!r}"
 
@@ -96,8 +143,7 @@ def check(artifact, *, max_glibc=None):
         for cap in REQUIRED_CAPABILITIES:
             assert cap in requires, f"Missing required RPM capability {cap!r} in {requires}"
 
-        cpio_bytes = run(["rpm2cpio", str(artifact)], environment).stdout
-        run(["cpio", "-idmu", "--quiet"], environment, input=cpio_bytes, cwd=prefix)
+        extract_rpm(artifact, prefix, environment)
         extraction_seconds = time.monotonic() - started
 
         binary = prefix / "usr/bin/vidgrab-desktop"
@@ -193,6 +239,8 @@ def check(artifact, *, max_glibc=None):
             "version": pkg_version,
             "license": pkg_license,
             "arch": pkg_arch,
+            "payload_compressor": payload_compressor,
+            "checksig": checksig,
             "sha256": hashlib.file_digest(artifact.open("rb"), "sha256").hexdigest(),
             "artifact_bytes": artifact.stat().st_size,
             "extraction_seconds": round(extraction_seconds, 3),
@@ -203,7 +251,9 @@ def check(artifact, *, max_glibc=None):
             "components": components,
             "os_release": platform.freedesktop_os_release(),
             "checks": [
+                "RPM header/payload digests (rpm -K --nosignature)",
                 "RPM header metadata & capability Requires",
+                "rpm2archive per-file checksums & extraction",
                 "AppStream metainfo XML & desktop launcher",
                 "RPM doc notices & engine notices",
                 "compiled Tauri resource discovery under /usr/lib",
@@ -221,7 +271,7 @@ def main():
     parser.add_argument("--max-glibc", help="Maximum permitted GLIBC symbol version (e.g. 2.39)")
     parser.add_argument("--report", type=Path)
     arguments = parser.parse_args()
-    for tool in ("rpm", "rpm2cpio", "cpio", "readelf"):
+    for tool in ("rpm", "rpm2archive", "tar", "readelf"):
         if shutil.which(tool) is None:
             parser.error(f"Missing development check tool: {tool}")
     receipt = check(arguments.rpm, max_glibc=arguments.max_glibc)
