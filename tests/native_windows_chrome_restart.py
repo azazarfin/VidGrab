@@ -132,6 +132,13 @@ def restart_browser(browser, source, args, environment, playwright, identifier, 
     identity = (profile.stat().st_dev, profile.stat().st_ino)
     before = browser.permissions(source.page.url)
     assert before['request_observation_granted'] and before['navigation_granted'] and before['request_observation_enabled']
+    assert before['request_observation_restart_required'] is True
+    wait(lambda: browser.options.visible('#request-observation-restart-notice')
+        and 'restart Chrome to activate' in browser.options.text('#permission-status'),
+        'Chrome fresh-grant restart notice in options')
+    browser.popup.click('[data-tab="detected"]')
+    wait(lambda: browser.popup.visible('#detected-restart-notice'),
+        'Chrome fresh-grant restart notice in popup')
     inventory = standalone_inventory(browser, identifier)
     pages = [(page, page.page.url) for page in browser.pages]
     version = browser.version
@@ -229,6 +236,13 @@ def restart_browser(browser, source, args, environment, playwright, identifier, 
     assert before['request_observation_restart_required'] is True
     assert after['request_observation_restart_required'] is False
     assert {**after, 'request_observation_restart_required': True} == before
+    browser.popup.click('[data-tab="detected"]')
+    wait(lambda: not browser.options.visible('#request-observation-restart-notice')
+        and 'Request observation: granted' in browser.options.text('#permission-status')
+        and 'restart Chrome to activate' not in browser.options.text('#permission-status')
+        and not browser.popup.visible('#detected-restart-notice')
+        and browser.popup.script("return document.querySelector('#detected-restart-notice')?.hidden === true"),
+        'Chrome restart notice cleared after relaunch')
     record({'phase': 'same-granted-profile-reopened', 'version': version, 'permissions': after,
         'inventory': standalone_inventory(browser, identifier), 'profile_identity': identity,
         'launcher': browser.chrome_task.audit, 'extension_loaded_again': False})

@@ -87,7 +87,7 @@ def review_journey(browser, native, base, fixture, screenshots, bundle, *, expir
             # Request cooldowns bind the hostname, including other ports. Keep
             # the deliberate 429 on a separate loopback hostname so it cannot
             # suppress the subsequent real media/context probes.
-            if name == 'throttle' and os.name != 'nt':
+            if name == 'throttle':
                 url = url.replace('://127.0.0.1:', '://localhost:')
             start = counts()
             open_probe(url)
@@ -106,14 +106,6 @@ def review_journey(browser, native, base, fixture, screenshots, bundle, *, expir
             page.screenshot(root / (name + '.png'))
             result['checks'].append('actual ' + code + ' guidance without enqueue or automatic reprobe')
             save()
-            if name == 'throttle' and os.name == 'nt':
-                # Use the original Windows numeric loopback lane and honor its
-                # real host cooldown before the next explicit fixture probe.
-                deadline = error['retry_at'] + 1
-                while time.time() < deadline:
-                    print(json.dumps({'event': 'native-cooldown-wait', 'browser': browser.kind,
-                                      'seconds_remaining': round(deadline - time.time(), 1)}), flush=True)
-                    time.sleep(min(30, max(0, deadline - time.time())))
 
         with FragmentServer('dash', ffmpeg, name=browser.kind + '-dash-review') as server:
             server.gated = False

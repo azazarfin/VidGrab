@@ -129,7 +129,14 @@ impl Engine {
                 Ok(snapshot)
             }
             "fixture.download" => transport::engine_request(self.port, &self.token, "POST", "/spike/fixture", Some(Value::Object(params.clone()))),
-            "v1.request" => transport::engine_request(self.port, &self.token, "POST", "/v1/requests", Some(Value::Object(params.clone()))),
+            "v1.request" => {
+                let timeout = if params.get("operation").and_then(Value::as_str) == Some("probes.create") {
+                    transport::PROBE_ENGINE_READ_TIMEOUT
+                } else {
+                    transport::DEFAULT_ENGINE_READ_TIMEOUT
+                };
+                transport::engine_request_with_timeout(self.port, &self.token, "POST", "/v1/requests", Some(Value::Object(params.clone())), timeout)
+            }
             _ => Err(io::Error::other("Unsupported engine operation")),
         }
     }

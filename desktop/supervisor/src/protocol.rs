@@ -45,6 +45,11 @@ impl Request {
             _ => Err("UNSUPPORTED_OPERATION"),
         }
     }
+
+    pub fn is_probe_request(&self) -> bool {
+        self.op == "v1.request"
+            && self.params.get("operation").and_then(Value::as_str) == Some("probes.create")
+    }
 }
 
 pub fn read_message<T: serde::de::DeserializeOwned>(reader: &mut impl Read) -> io::Result<Option<T>> {

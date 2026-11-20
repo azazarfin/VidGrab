@@ -192,8 +192,7 @@ def observation_preference(browser, root):
             popup.wait_for_load_state("networkidle")
             popup.locator('[data-tab="detected"]').click()
             expect(popup.locator("#detected-restart-notice")).to_be_hidden()
-            popup.close()
-            popup = None
+            popup.locator('[data-tab="downloads"]').click()
 
             assert fixture.preferences["requestObservationEnabled"] is False
             fixture.permission_approval = False
@@ -222,7 +221,11 @@ def observation_preference(browser, root):
             notice_metrics["options_min_contrast"] = min(sample["contrast"] for sample in options_samples)
             page.set_viewport_size({"width": 1100, "height": 820})
 
-            # Persistent notice remains visible independently of transient footer status and in Popup Detected panel without overflow.
+            # Already-open Popup refreshes #detected-restart-notice when switching to Detected tab,
+            # and a freshly opened Popup shows it without overflow.
+            popup.locator('[data-tab="detected"]').click()
+            expect(popup.locator("#detected-restart-notice")).to_be_visible()
+            popup.close()
             popup = context.new_page()
             popup.set_viewport_size({"width": 320, "height": 580})
             popup.goto((Path.cwd() / "extension/popup/popup.html").as_uri())

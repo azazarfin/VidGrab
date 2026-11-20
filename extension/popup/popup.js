@@ -408,6 +408,7 @@ document.addEventListener("DOMContentLoaded", () => {
       btn.classList.add("active");
       const targetTab = btn.getAttribute("data-tab");
       document.getElementById(`panel-${targetTab}`).classList.add("active");
+      if (targetTab === "detected") void refreshPermissions();
     });
   });
 
@@ -1187,5 +1188,8 @@ document.addEventListener("DOMContentLoaded", () => {
       if (areaName === "local" && changes.requestObservationEnabled) void refreshPermissions();
     });
   }
+
+  chrome.permissions?.onAdded?.addListener?.(() => void refreshPermissions());
+  chrome.permissions?.onRemoved?.addListener?.(() => void refreshPermissions());
 
 });

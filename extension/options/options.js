@@ -437,6 +437,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (changes.cookieForwardingEnabled || changes.notificationPreference || changes.requestObservationEnabled) void refreshPermissions();
     if (changes.vidgrabPendingMutations) void refreshNotices();
   });
+  chrome.permissions?.onAdded?.addListener?.(() => void refreshPermissions());
+  chrome.permissions?.onRemoved?.addListener?.(() => void refreshPermissions());
   chkRequestObservation.addEventListener("change", async () => {
     const requested = chkRequestObservation.checked;
     chkRequestObservation.disabled = true;

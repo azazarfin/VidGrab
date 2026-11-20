@@ -46,14 +46,18 @@ def extension_inventory(browser, wait_identifier=None):
     manager = browser.context.new_page()
     try:
         manager.goto('chrome://extensions/')
+        def read_items():
+            return manager.evaluate('''() => new Promise(resolve => chrome.developerPrivate.getExtensionsInfo(
+                {includeDisabled:true,includeTerminated:true}, resolve))''')
         if wait_identifier:
-            manager.wait_for_function('''identifier => new Promise(resolve =>
-                chrome.developerPrivate.getExtensionsInfo({includeDisabled:true,includeTerminated:true},
-                    items => resolve(items.some(item => item.id === identifier))))''',
-                arg=wait_identifier, timeout=25000)
-        items = manager.evaluate('''() => new Promise(resolve => chrome.developerPrivate.getExtensionsInfo(
-            {includeDisabled:true,includeTerminated:true}, resolve))''')
-        return items
+            from tests.native_client_support import wait
+
+            def match():
+                items = read_items()
+                return items if any(item['id'] == wait_identifier for item in items) else None
+
+            return wait(match, 'extension inventory ' + wait_identifier)
+        return read_items()
     finally:
         manager.close()
 
@@ -77,6 +81,13 @@ def restart_browser(browser, source, args, environment, playwright, identifier, 
     profile_identity = (profile.stat().st_dev, profile.stat().st_ino)
     before = browser.permissions(source.page.url)
     assert before['request_observation_granted'] and before['navigation_granted'] and before['request_observation_enabled']
+    assert before['request_observation_restart_required'] is True
+    wait(lambda: browser.options.visible('#request-observation-restart-notice')
+        and 'restart Chrome to activate' in browser.options.text('#permission-status'),
+        'Chrome fresh-grant restart notice in options')
+    browser.popup.click('[data-tab="detected"]')
+    wait(lambda: browser.popup.visible('#detected-restart-notice'),
+        'Chrome fresh-grant restart notice in popup')
     inventory = standalone_inventory(browser, identifier)
     cdp = browser.context.browser.new_browser_cdp_session()
     processes = cdp.send('SystemInfo.getProcessInfo')['processInfo']
@@ -175,6 +186,13 @@ def restart_browser(browser, source, args, environment, playwright, identifier, 
     assert before['request_observation_restart_required'] is True
     assert after['request_observation_restart_required'] is False
     assert {**after, 'request_observation_restart_required': True} == before
+    browser.popup.click('[data-tab="detected"]')
+    wait(lambda: not browser.options.visible('#request-observation-restart-notice')
+        and 'Request observation: granted' in browser.options.text('#permission-status')
+        and 'restart Chrome to activate' not in browser.options.text('#permission-status')
+        and not browser.popup.visible('#detected-restart-notice')
+        and browser.popup.script("return document.querySelector('#detected-restart-notice')?.hidden === true"),
+        'Chrome restart notice cleared after relaunch')
     inventory = standalone_inventory(browser, identifier)
     record({'phase': 'same-granted-profile-reopened', 'pid': restarted_pid, 'version': browser.version,
         'permissions': after, 'inventory': inventory, 'sandbox': browser.sandbox,

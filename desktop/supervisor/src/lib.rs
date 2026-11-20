@@ -145,6 +145,7 @@ impl Owner {
                                 Err(_) => protocol::failure(Some(&request.id), "ENGINE_UNAVAILABLE"),
                             }
                         };
+                        connection.set_write_timeout(Some(Duration::from_secs(2)))?;
                         protocol::write_message(&mut connection, &response)
                     })();
                     if let Err(error) = result { eprintln!("Companion IPC failed: {error}"); }
